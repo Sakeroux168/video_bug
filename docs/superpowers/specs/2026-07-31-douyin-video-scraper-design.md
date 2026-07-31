@@ -12,7 +12,7 @@
 ### 1.2 范围
 
 - **产品形态**: 桌面程序（Electron + React），内嵌浏览器
-- **单次规模**: 大批量 200-1000 个视频
+- **单次规模**: 大批量，目标数量由用户在 **200-1000** 之间自定义（默认 200，上限 1000）
 - **产出**: 仅无水印 MP4 文件，文件名 `{标题}_{作者}_{aweme_id前8}.mp4`
 - **登录方式**: 内嵌浏览器扫码登录 + 持久 Cookie（`persist:douyin`）
 - **抓取方案**: 页面注入 fetch/XHR 挂钩，拦截抖音内部 API JSON 回传（方案 A）
@@ -143,7 +143,7 @@ tasks {
   query         TEXT      -- 关键词/话题文本，或 sec_uid
   filters       TEXT JSON -- {timeRange, duration, ...}
   status        TEXT      -- 'pending'|'running'|'done'|'paused'|'failed'
-  target_count  INTEGER   -- 目标抓取数（默认 200，上限 1000）
+  target_count  INTEGER   -- 目标抓取数，用户自定义 200-1000（默认 200）
   fetched_count INTEGER   -- 实际命中数
   error         TEXT      -- 失败原因（错误码）
   created_at    TIMESTAMP
@@ -215,6 +215,7 @@ authors {
 
 - 时间下拉：全部 / 近7天 / 近30天 / 自定义日期区间
 - 时长下拉：全部 / 短(<1分钟) / 中(1-5分钟) / 长(>5分钟)
+- **目标数量**：数字输入框，**200-1000 之间可自定义**（默认 200），越界时输入框即时校验提示
 - 任务列表支持单选/Ctrl多选/Shift范围选，批量重试或删除
 - 失败任务红色高亮，hover 显示错误分类和操作建议
 - 状态文案阶段化：抓取中/下载中/完成汇总
