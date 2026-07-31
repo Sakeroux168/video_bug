@@ -1424,7 +1424,7 @@ export class Downloader {
       this.emit({ type: 'video:status', id, status: 'done', localPath: dest })
     } catch (err) {
       const retry = row.retry_count + 1
-      const code = retry <= 2 ? ERROR.NETWORK : ERROR.NETWORK
+      const code = ERROR.NETWORK
       this.db.prepare("UPDATE videos SET status='failed', error=?, retry_count=? WHERE id=?")
         .run(code, retry, id)
       this.emit({ type: 'video:status', id, status: 'failed', error: code })
@@ -1581,20 +1581,27 @@ contextBridge.exposeInMainWorld('api', {
 
 - [ ] **Step 4: 主进程装配（临时接线验证）**
 
-`src/main/index.ts` 中，在 `createWindow` 后追加：
+`src/main/index.ts` 中，把 `createWindow` 改为模块级 `win`，并追加临时接线：
 ```ts
+import { app, BrowserWindow, ipcMain } from 'electron'
+import { join } from 'path'
 import { VideoBrowser } from './browser'
+import { douyinAdapter } from './adapters/douyin'
 
+let win: BrowserWindow | null = null
 let browser: VideoBrowser | null = null
 const rawLogs: Array<{ url: string }> = []
 
+function handleRawJson(url: string, json: unknown): void {
+  rawLogs.push({ url })
+  // TODO(Task 11): 正式接线，这里先打日志验证挂钩生效
+  win?.webContents.send('dbg:raw', { url, count: rawLogs.length })
+}
+
 app.whenReady().then(() => {
   createWindow()
-  const win = BrowserWindow.getAllWindows()[0]
-  browser = new VideoBrowser(win, (url, json) => {
-    rawLogs.push({ url })
-    // TODO(Task 11): 接到正式 IPC 事件流
-    win.webContents.send('dbg:raw', { url, count: rawLogs.length })
+  browser = new VideoBrowser(win!, (url, json) => {
+    if (douyinAdapter.apiUrlPatterns.some(r => r.test(url))) handleRawJson(url, json)
   })
   void browser.init().then(() => {
     if (browser) void browser.load(douyinAdapter, 'https://www.douyin.com/')
@@ -1606,10 +1613,10 @@ ipcMain.handle('browser:hide', () => { browser?.setVisible(false) })
 ipcMain.handle('browser:scroll', () => browser?.scrollToBottom())
 ipcMain.on('dy:raw', (_e, msg) => {
   const url = String(msg?.url ?? '')
-  const api = douyinAdapter.apiUrlPatterns.some(r => r.test(url))
-  if (api) browser?.apiHit(url, msg?.json)
+  if (douyinAdapter.apiUrlPatterns.some(r => r.test(url))) handleRawJson(url, msg?.json)
 })
 ```
+（注意：`createWindow` 内 `win = new BrowserWindow(...)` 赋值给模块级 `win`。）
 
 - [ ] **Step 5: 手动验证挂钩生效**
 
