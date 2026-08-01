@@ -78,3 +78,14 @@ describe('douyinAdapter 解析新 general/search 结构', () => {
     expect(collectAwemeList(json)).toHaveLength(1)
   })
 })
+
+describe('douyinAdapter 解析新版卡片结构（aweme_info 包装）', () => {
+  it('data[] 是卡片，视频在 aweme_info 里', () => {
+    const card = (id: string) => ({ type: 1, doc_type: 0, aweme_info: { ...AWEME, aweme_id: id } })
+    const json = { status_code: 0, data: [card('7300000000000000011'), card('7300000000000000012')] }
+    const items = douyinAdapter.parseApiJson('https://www.douyin.com/aweme/v1/web/general/search/single/', json)
+    expect(items).toHaveLength(2)
+    expect(items[0].awemeId).toBe('7300000000000000011')
+    expect(items[1].awemeId).toBe('7300000000000000012')
+  })
+})

@@ -1,23 +1,27 @@
 import type { Filters } from '../../shared/types'
 import type { PlatformAdapter, VideoItem } from './types'
 
-/** 是否"长得像"一条抖音视频对象（有 aweme_id，且含 video/desc/author 任一视频特征字段） */
+/** 是否"长得像"一条抖音视频对象（新版卡片有 aweme_info 包装；老版直接带 aweme_id+video/desc/author） */
 function isAwemeLike(x: unknown): boolean {
   if (!x || typeof x !== 'object') return false
   const o = x as Record<string, unknown>
+  if ('aweme_info' in o) return true // 新版 general/search 卡片
   return 'aweme_id' in o && ('video' in o || 'desc' in o || 'author' in o)
 }
 
-/** 深度收集视频对象：不依赖具体键名（老接口用 aweme_list，新 general/search 直接塞在 data 里）。
- *  命中"包含视频对象的数组"即收下这些对象，否则继续下钻。 */
+/** 深度收集视频对象：不依赖具体键名（老接口用 aweme_list，新版 general/search 是 data[] 卡片，视频在 aweme_info 里）。
+ *  命中"包含视频对象的数组"即收下这些对象（新版解包 aweme_info），否则继续下钻。 */
 export function collectAwemeList(json: unknown): unknown[] {
   const out: unknown[] = []
   const walk = (v: unknown, depth: number): void => {
     if (depth > 10 || v == null) return
     if (Array.isArray(v)) {
       const awemes = v.filter(isAwemeLike)
-      if (awemes.length > 0) out.push(...awemes)
-      else v.forEach(x => walk(x, depth + 1))
+      if (awemes.length > 0) {
+        for (const a of awemes) out.push((a as Record<string, unknown>).aweme_info ?? a)
+      } else {
+        v.forEach(x => walk(x, depth + 1))
+      }
       return
     }
     if (typeof v === 'object') {
