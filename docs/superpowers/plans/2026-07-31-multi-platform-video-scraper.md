@@ -1700,7 +1700,7 @@ export function listAdapters(): Array<{ name: string; displayName: string }> {
 ```ts
 import type { DatabaseSync } from 'node:sqlite'
 import type { PlatformAdapter } from './adapters/types'
-import type { TaskRow, TaskStatus } from '../shared/types'
+import type { TaskRow, TaskStatus, Filters } from '../shared/types'
 import { ERROR } from '../shared/types'
 import { filterVideos, dedupeVideos } from './extractor'
 import type { Analyzer } from './analyzer'
@@ -1730,6 +1730,15 @@ interface SchedulerDeps {
 
 export class Scheduler {
   private aborted = false
+  private taskId = 0
+  private adapter: PlatformAdapter | null = null
+  private filters: Filters | null = null
+  private seen = new Set<string>()
+  private fetched = 0
+  private emptyRounds = 0
+  private aiEnabled = false
+  private pendingVideoIds: number[] = []
+
   constructor(private deps: SchedulerDeps) {}
 
   stop(): void { this.aborted = true }
@@ -1743,95 +1752,93 @@ export class Scheduler {
     const adapter = getAdapter(task.platform)
     if (!adapter) { this.fail(taskId, ERROR.PARSE_ERROR); return }
 
-    db.prepare("UPDATE tasks SET status='running', error=NULL WHERE id=?").run(taskId)
-    const filters = JSON.parse(task.filters)
-    const seen = new Set<string>((db.prepare('SELECT aweme_id FROM videos WHERE platform=?').all(task.platform) as Array<{ aweme_id: string }>).map(r => r.aweme_id))
+    this.taskId = taskId
+    this.adapter = adapter
+    this.filters = JSON.parse(task.filters) as Filters
+    this.seen = new Set<string>((db.prepare('SELECT aweme_id FROM videos WHERE platform=?').all(task.platform) as Array<{ aweme_id: string }>).map(r => r.aweme_id))
+    this.fetched = task.fetched_count
+    this.emptyRounds = 0
+    this.pendingVideoIds = []
+    this.aiEnabled = !!(this.deps.analyzer) && !!this.filters.aiFilterEnabled
 
-    let fetched = task.fetched_count
-    let emptyRounds = 0
-    const aiEnabled = !!(this.deps.analyzer) && !!filters.aiFilterEnabled
+    db.prepare("UPDATE tasks SET status='running', error=NULL WHERE id=?").run(taskId)
 
     const url = task.type === 'author'
       ? adapter.buildAuthorUrl(task.query)
       : task.type === 'hashtag'
         ? adapter.buildHashtagUrl(task.query)
-        : adapter.buildSearchUrl(task.query, filters)
+        : adapter.buildSearchUrl(task.query, this.filters)
     await this.deps.browser.load(adapter, url)
 
-    const pendingVideoIds: number[] = []
-    const cookiePromise = this.getCookieHeader(task.platform)
-
-    this.deps.browser.onRaw(async (rawUrl, json) => {
-      if (!adapter.apiUrlPatterns.some(r => r.test(rawUrl))) return
-      const items = adapter.parseApiJson(rawUrl, json)
-      const kept = dedupeVideos(filterVideos(items, filters), seen)
-      if (kept.length === 0) { emptyRounds++; return }
-      emptyRounds = 0
-
-      for (const item of kept) {
-        if (this.aborted) return
-        if (aiEnabled && this.deps.analyzer) {
-          try {
-            const text = `${item.title}\n作者:${item.authorNickname}\n时长:${item.durationSec}s`
-            const v = await this.deps.analyzer.judgeFilter(text, filters.aiFilterRule ?? '', `${item.awemeId}:filter`)
-            if (!v.pass) {
-              const insertedId = db.prepare(
-                "INSERT OR IGNORE INTO videos (platform,task_id,aweme_id,title,play_addr,duration,publish_time,status,ai_verdict,fetched_at) VALUES (?,?,?,?,?,?,?,'filtered','filtered',?)"
-              ).run(task.platform, taskId, item.awemeId, item.title, item.playUrl, item.durationSec,
-                   new Date(item.publishTime * 1000).toISOString(), new Date().toISOString())
-              if (insertedId.changes > 0) db.prepare('UPDATE tasks SET fetched_count = fetched_count + 1 WHERE id=?').run(taskId)
-              continue
-            }
-          } catch { /* AI 失败降级：视为通过 */ }
-        }
-        const authorId = db.prepare('SELECT id FROM authors WHERE platform=? AND sec_uid=?').get(task.platform, item.authorSecUid) as { id: number } | undefined
-        const aiVerdict = 'pass'
-        const info = db.prepare(
-          `INSERT OR IGNORE INTO videos (platform,task_id,aweme_id,title,author_id,play_addr,duration,publish_time,stats,status,ai_verdict,fetched_at)
-           VALUES (?,?,?,?,?,?,?,?,?, 'pending',?,?)`
-        ).run(task.platform, taskId, item.awemeId, item.title, authorId?.id ?? null, item.playUrl,
-             item.durationSec, new Date(item.publishTime * 1000).toISOString(), JSON.stringify({ likes: item.likes }),
-             aiVerdict, new Date().toISOString())
-        if (info.changes > 0) {
-          fetched++
-          const vid = Number(info.lastInsertRowid)
-          pendingVideoIds.push(vid)
-          this.deps.downloader.enqueue(vid)
-        }
-      }
-      db.prepare('UPDATE tasks SET fetched_count=? WHERE id=?').run(fetched, taskId)
-      this.deps.emit({ type: 'task:progress', taskId, fetched, status: 'running' })
-    })
-
+    const target = this.filters.targetCount ?? 200
     while (!this.aborted) {
       await sleep(this.deps.scrollIntervalMs + Math.random() * 1500)
       await this.deps.browser.scrollToBottom()
-      const decision = buildStopDecision(fetched, filters.targetCount ?? 200, emptyRounds)
+      const decision = buildStopDecision(this.fetched, target, this.emptyRounds)
       if (decision === 'reached' || decision === 'stop') break
-      if (pendingVideoIds.length > 30) { /* 下载堆积，放慢抓取 */ await sleep(2000) }
+      if (this.pendingVideoIds.length > 30) { /* 下载堆积，放慢抓取 */ await sleep(2000) }
     }
-    void cookiePromise
 
     if (this.aborted) {
       db.prepare("UPDATE tasks SET status='paused' WHERE id=?").run(taskId)
       this.deps.emit({ type: 'task:paused', taskId, reason: '用户暂停或风控' })
     } else {
       db.prepare("UPDATE tasks SET status='done', finished_at=? WHERE id=?").run(new Date().toISOString(), taskId)
-      this.deps.emit({ type: 'task:done', taskId, fetched })
+      this.deps.emit({ type: 'task:done', taskId, fetched: this.fetched })
     }
+  }
+
+  /** 主进程从 ipcMain 'dy:raw' 调用来处理一个原始 JSON（任务期间持续被调用）。browser.onRaw 方法不存在，消息统一走这里。 */
+  async handleRaw(adapter: PlatformAdapter, rawUrl: string, json: unknown): Promise<void> {
+    if (this.taskId === 0 || this.adapter !== adapter) return
+    if (!adapter.apiUrlPatterns.some(r => r.test(rawUrl))) return
+    const db = this.deps.db
+    const filters = this.filters
+    if (!filters) return
+    const items = adapter.parseApiJson(rawUrl, json)
+    const kept = dedupeVideos(filterVideos(items, filters), this.seen)
+    if (kept.length === 0) { this.emptyRounds++; return }
+    this.emptyRounds = 0
+
+    for (const item of kept) {
+      if (this.aborted) return
+      if (this.aiEnabled && this.deps.analyzer) {
+        try {
+          const text = `${item.title}\n作者:${item.authorNickname}\n时长:${item.durationSec}s`
+          const v = await this.deps.analyzer.judgeFilter(text, filters.aiFilterRule ?? '', `${item.awemeId}:filter`)
+          if (!v.pass) {
+            const insertedId = db.prepare(
+              "INSERT OR IGNORE INTO videos (platform,task_id,aweme_id,title,play_addr,duration,publish_time,status,ai_verdict,fetched_at) VALUES (?,?,?,?,?,?,?,'filtered','filtered',?)"
+            ).run(adapter.name, this.taskId, item.awemeId, item.title, item.playUrl, item.durationSec,
+                 new Date(item.publishTime * 1000).toISOString(), new Date().toISOString())
+            if (insertedId.changes > 0) {
+              this.fetched++
+              db.prepare('UPDATE tasks SET fetched_count=? WHERE id=?').run(this.fetched, this.taskId)
+            }
+            continue
+          }
+        } catch { /* AI 失败降级：视为通过 */ }
+      }
+      const authorId = (db.prepare('SELECT id FROM authors WHERE platform=? AND sec_uid=?').get(adapter.name, item.authorSecUid) as { id: number } | undefined)?.id ?? null
+      const info = db.prepare(
+        `INSERT OR IGNORE INTO videos (platform,task_id,aweme_id,title,author_id,play_addr,duration,publish_time,stats,status,ai_verdict,fetched_at)
+         VALUES (?,?,?,?,?,?,?,?,?, 'pending','pass',?)`
+      ).run(adapter.name, this.taskId, item.awemeId, item.title, authorId, item.playUrl,
+           item.durationSec, new Date(item.publishTime * 1000).toISOString(), JSON.stringify({ likes: item.likes }),
+           new Date().toISOString())
+      if (info.changes > 0) {
+        this.fetched++
+        const vid = Number(info.lastInsertRowid)
+        this.pendingVideoIds.push(vid)
+        this.deps.downloader.enqueue(vid)
+      }
+    }
+    db.prepare('UPDATE tasks SET fetched_count=? WHERE id=?').run(this.fetched, this.taskId)
+    this.deps.emit({ type: 'task:progress', taskId: this.taskId, fetched: this.fetched, status: 'running' })
   }
 
   private fail(taskId: number, code: string): void {
     this.deps.db.prepare("UPDATE tasks SET status='failed', error=? WHERE id=?").run(code, taskId)
-  }
-
-  private async getCookieHeader(platform: string): Promise<string> {
-    try {
-      const { session } = await import('electron')
-      const ses = session.fromPartition(`persist:${platform}`)
-      const cookies = await ses.cookies.get({})
-      return cookies.map(c => `${c.name}=${c.value}`).join('; ')
-    } catch { return '' }
   }
 }
 
@@ -2102,7 +2109,7 @@ ipcMain.on('dy:raw', (_e, msg) => {
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit() })
 ```
 
-注意：`Scheduler` 需补一个 `handleRaw(adapter, url, json)` 方法（把 Task 10 里的 onRaw 回调逻辑提成公开方法，供主进程直接调用；同时删除 Task 10 中 browser.onRaw 注册，改为主进程统一转发）。
+注意：`Scheduler.handleRaw(adapter, url, json)` 已在 Task 10 实现为公开方法；主进程从 `ipcMain 'dy:raw'` 直接调用它，**不要再注册 browser.onRaw**（VideoBrowser 无此方法）。Task 9 遗留的 VideoBrowser 构造参数 `onRaw` 不再使用，Task 11 装配时用 `scheduler.handleRaw(douyinAdapter, url, json)` 即可。
 
 - [ ] **Step 6: 手动验证 IPC**
 
