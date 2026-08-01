@@ -11,18 +11,16 @@ describe('extractJsonObject', () => {
   })
 })
 
-function mockFetch(jsonBody: unknown): typeof fetch {
-  return (async () => new Response(JSON.stringify(jsonBody), {
-    status: 200, headers: { 'content-type': 'application/json' }
-  })) as typeof fetch
-}
-
 describe('Analyzer', () => {
   const cfg = { aiBaseUrl: 'https://api.test/v1', aiApiKey: 'k', aiModel: 'm' }
 
   it('judgeFilter 解析 pass=true', async () => {
+    let capturedUrl: unknown
+    let capturedHeaders: any
     let capturedBody: any
     const fetchImpl = (async (url: unknown, init?: any) => {
+      capturedUrl = url
+      capturedHeaders = init.headers
       capturedBody = JSON.parse(init.body)
       return new Response(JSON.stringify({ choices: [{ message: { content: '{"pass":true,"reason":"符合规则"}' } }] }), {
         status: 200, headers: { 'content-type': 'application/json' }
@@ -31,7 +29,11 @@ describe('Analyzer', () => {
     const a = new Analyzer(cfg, fetchImpl)
     const v = await a.judgeFilter('标题 文案', '只要美食', 'cache-key')
     expect(v).toEqual({ pass: true, reason: '符合规则' })
+    expect(capturedUrl).toBe('https://api.test/v1/chat/completions')
+    expect(capturedHeaders.authorization).toBe('Bearer k')
     expect(capturedBody.model).toBe('m')
+    expect(capturedBody.temperature).toBe(0)
+    expect(capturedBody.response_format.type).toBe('json_object')
     expect(capturedBody.messages.length).toBe(2)
   })
 

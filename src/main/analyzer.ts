@@ -55,7 +55,7 @@ export class Analyzer {
       '你是视频筛选助手。根据用户规则判断一条视频是否保留。只输出 JSON：{"pass": true/false, "reason": "一句话理由"}。不要输出其他内容。',
       `筛选规则：${rule}\n\n视频信息：${text}`
     ) as Partial<FilterVerdict>
-    const verdict: FilterVerdict = { pass: Boolean(parsed.pass), reason: String(parsed.reason ?? '') }
+    const verdict: FilterVerdict = { pass: parsed.pass === true, reason: String(parsed.reason ?? '') }
     this.cache.set(cacheKey, verdict)
     return verdict
   }
