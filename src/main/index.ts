@@ -155,15 +155,16 @@ app.whenReady().then(() => {
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow() })
 })
 
-// 调试：记录最近收到的 dy:raw（URL + 是否被处理），供界面"查看拦截日志"查看
-const rawLog: Array<{ at: string; url: string; handled: boolean }> = []
-ipcMain.on('dy:raw', (_e, msg) => {
+// 调试：记录最近收到的 dy:raw（URL + 是否处理 + 解析出几条/过滤剩几条），供界面"查看拦截日志"查看
+const rawLog: Array<{ at: string; url: string; handled: boolean; stats?: { items: number; kept: number } }> = []
+ipcMain.on('dy:raw', async (_e, msg) => {
   const url = String(msg?.url ?? '')
   const json = msg?.json
   const handled = douyinAdapter.apiUrlPatterns.some(r => r.test(url))
-  rawLog.push({ at: new Date().toISOString().slice(11, 19), url: url.slice(0, 120), handled })
+  let stats: { items: number; kept: number } | null = null
+  if (handled) stats = (await scheduler?.handleRaw(douyinAdapter, url, json)) ?? null
+  rawLog.push({ at: new Date().toISOString().slice(11, 19), url: url.slice(0, 120), handled, stats: stats ?? undefined })
   if (rawLog.length > 60) rawLog.shift()
-  if (handled) void scheduler?.handleRaw(douyinAdapter, url, json)
 })
 ipcMain.handle('debug:rawLog', () => rawLog.slice(-60))
 

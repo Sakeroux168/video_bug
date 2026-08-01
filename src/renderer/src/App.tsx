@@ -10,7 +10,7 @@ import type { CreateTaskInput } from '../../shared/types'
 
 export default function App(): JSX.Element {
   const [tab, setTab] = useState('panel')
-  const [rawLog, setRawLog] = useState<Array<{ at: string; url: string; handled: boolean }>>([])
+  const [rawLog, setRawLog] = useState<Array<{ at: string; url: string; handled: boolean; stats?: { items: number; kept: number } }>>([])
   const [showLog, setShowLog] = useState(false)
 
   async function startTask(input: CreateTaskInput): Promise<{ id: number | null; skipped: boolean; reason?: string }> {
@@ -60,7 +60,9 @@ export default function App(): JSX.Element {
             {rawLog.length === 0 && <span className="text-zinc-400">（空——主进程没收到任何 dy:raw 消息）</span>}
             {rawLog.map((r, i) => (
               <div key={i} className={r.handled ? 'text-emerald-700' : 'text-zinc-500'}>
-                {r.at} {r.handled ? '[已处理]' : '[忽略] '} {r.url}
+                {r.at} {r.handled ? '[已处理]' : '[忽略] '}
+                {r.stats ? `[解析${r.stats.items}→剩${r.stats.kept}] ` : ''}
+                {r.url}
               </div>
             ))}
           </div>

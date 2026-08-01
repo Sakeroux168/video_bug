@@ -165,14 +165,14 @@ export class Scheduler {
   }
 
   /** 主进程从 ipcMain 'dy:raw' 调用来处理一个原始 JSON（任务期间持续被调用）。browser.onRaw 方法不存在，消息统一走这里。 */
-  async handleRaw(adapter: PlatformAdapter, rawUrl: string, json: unknown): Promise<void> {
-    if (this.taskId === 0 || this.adapter !== adapter) return
-    if (!adapter.apiUrlPatterns.some(r => r.test(rawUrl))) return
-    if (!this.matchesTaskEndpoint(rawUrl)) return
+  async handleRaw(adapter: PlatformAdapter, rawUrl: string, json: unknown): Promise<{ items: number; kept: number } | null> {
+    if (this.taskId === 0 || this.adapter !== adapter) return null
+    if (!adapter.apiUrlPatterns.some(r => r.test(rawUrl))) return null
+    if (!this.matchesTaskEndpoint(rawUrl)) return null
     this.rawSinceLastRound = true
     const db = this.deps.db
     const filters = this.filters
-    if (!filters) return
+    if (!filters) return null
     const items = adapter.parseApiJson(rawUrl, json)
     const kept = dedupeVideos(filterVideos(items, filters), this.seen)
     if (kept.length === 0) {
@@ -225,6 +225,7 @@ export class Scheduler {
     }
     db.prepare('UPDATE tasks SET fetched_count=? WHERE id=?').run(this.fetched, this.taskId)
     this.deps.emit({ type: 'task:progress', taskId: this.taskId, fetched: this.fetched, status: 'running' })
+    return { items: items.length, kept: kept.length }
   }
 
   /** I7 下载后整理：AI 分类 → 打标签 → 文件移入 {downloadDir}/{category}/ 并更新 local_path */
