@@ -5,6 +5,7 @@ import { Readable } from 'stream'
 import { join } from 'path'
 import type { AppSettings, VideoRow } from '../shared/types'
 import { ERROR } from '../shared/types'
+import { classifyHttpError, AddressPolicy } from './errors'
 import { safeFilename, ensureUniqueName } from './filename'
 
 export function buildUserAgent(_platform: string): string {
@@ -58,6 +59,13 @@ export class Downloader {
     const row = this.db.prepare('SELECT * FROM videos WHERE id = ?').get(id) as VideoRow | undefined
     if (!row) return
     try {
+      // 下载前判地址过期：源地址超过 TTL 视为失效，直接标失败，不浪费请求
+      const policy = new AddressPolicy(this.settings.addressTtlMin)
+      if (policy.isExpired(row.fetched_at)) {
+        this.db.prepare("UPDATE videos SET status='failed', error=? WHERE id=?").run(ERROR.ADDRESS_EXPIRED, id)
+        this.emit({ type: 'video:status', id, status: 'failed', error: ERROR.ADDRESS_EXPIRED })
+        return
+      }
       this.db.prepare("UPDATE videos SET status = 'downloading' WHERE id = ?").run(id)
       this.emit({ type: 'video:status', id, status: 'downloading' })
 
@@ -82,9 +90,14 @@ export class Downloader {
       this.emit({ type: 'video:status', id, status: 'done', localPath: dest })
     } catch (err) {
       const retry = row.retry_count + 1
-      const code = ERROR.NETWORK
-      this.db.prepare("UPDATE videos SET status='failed', error=?, retry_count=? WHERE id=?")
-        .run(code, retry, id)
+      const code = classifyHttpError((err as { message?: string }).message?.startsWith('http_') ? Number((err as { message: string }).message.slice(5)) : 0) || ERROR.NETWORK
+      // 网络类错误自动重试2次（利用 retry_count）；非网络错误直接失败
+      if (retry <= 2 && code === ERROR.NETWORK) {
+        this.db.prepare("UPDATE videos SET status='pending', retry_count=?, error=NULL WHERE id=?").run(retry, id)
+        setTimeout(() => this.enqueue(id), 5000)
+      } else {
+        this.db.prepare("UPDATE videos SET status='failed', error=?, retry_count=? WHERE id=?").run(code, retry, id)
+      }
       this.emit({ type: 'video:status', id, status: 'failed', error: code })
     } finally {
       delete this.fetching[id]

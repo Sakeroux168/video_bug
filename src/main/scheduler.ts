@@ -3,6 +3,7 @@ import type { PlatformAdapter } from './adapters/types'
 import type { TaskRow, TaskStatus, Filters } from '../shared/types'
 import { ERROR } from '../shared/types'
 import { filterVideos, dedupeVideos } from './extractor'
+import { isRiskSignal } from './errors'
 import { upsertAuthor } from './db'
 import type { Analyzer } from './analyzer'
 import type { Downloader } from './downloader'
@@ -122,7 +123,14 @@ export class Scheduler {
     if (!filters) return
     const items = adapter.parseApiJson(rawUrl, json)
     const kept = dedupeVideos(filterVideos(items, filters), this.seen)
-    if (kept.length === 0) { this.emptyRounds++; return }
+    if (kept.length === 0) {
+      this.emptyRounds++
+      if (isRiskSignal(this.emptyRounds) && filters.timeRange !== 'all') {
+        // 保守起见：连续空数据→风控，暂停任务（真实风控判定以"连续N轮无有效数据"为信号，不额外发探针请求）
+        this.aborted = true
+      }
+      return
+    }
     this.emptyRounds = 0
 
     for (const item of kept) {

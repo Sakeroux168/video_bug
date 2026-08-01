@@ -61,7 +61,7 @@ describe('Downloader', () => {
     expect(events).toContain('video:status:done')
   })
 
-  it('HTTP 500 标记 failed + 错误码 network', async () => {
+  it('HTTP 500 首次触发网络重试：pending + retry_count=1，5s 后重新入队', async () => {
     const taskId = createTask(db, input)
     insertVideos(db, [item()], taskId, 'douyin')
     const [v] = listVideos(db, taskId)
@@ -71,7 +71,39 @@ describe('Downloader', () => {
     dl.start()
     await new Promise(r => setTimeout(r, 50))
     const row = listVideos(db, taskId)[0]
+    expect(row.status).toBe('pending') // 等待 5s 重试，未直接失败
+    expect(row.retry_count).toBe(1)
+    expect(row.error).toBeNull()
+  })
+
+  it('网络错误重试耗尽（第3次）→ failed + 错误码 network', async () => {
+    const taskId = createTask(db, input)
+    insertVideos(db, [item()], taskId, 'douyin')
+    const [v] = listVideos(db, taskId)
+    db.prepare('UPDATE videos SET retry_count=2 WHERE id=?').run(v.id) // 已重试2次，本次为第3次
+    const fetchImpl = (async () => new Response('err', { status: 500 })) as typeof fetch
+    const dl = new Downloader(db, { downloadDir: dir, downloadConcurrency: 3, scrollIntervalMs: 2000, addressTtlMin: 30 }, fetchImpl)
+    dl.enqueue(v.id)
+    dl.start()
+    await new Promise(r => setTimeout(r, 50))
+    const row = listVideos(db, taskId)[0]
     expect(row.status).toBe('failed')
     expect(row.error).toBe('network')
+    expect(row.retry_count).toBe(3)
+  })
+
+  it('地址过期（超过 TTL）→ failed + 错误码 address_expired，不再发起下载', async () => {
+    const taskId = createTask(db, input)
+    insertVideos(db, [item()], taskId, 'douyin')
+    const [v] = listVideos(db, taskId)
+    db.prepare('UPDATE videos SET fetched_at=? WHERE id=?').run(new Date(Date.now() - 31 * 60 * 1000).toISOString(), v.id)
+    const fetchImpl = (async () => { throw new Error('不应发起下载请求') }) as typeof fetch
+    const dl = new Downloader(db, { downloadDir: dir, downloadConcurrency: 3, scrollIntervalMs: 2000, addressTtlMin: 30 }, fetchImpl)
+    dl.enqueue(v.id)
+    dl.start()
+    await new Promise(r => setTimeout(r, 50))
+    const row = listVideos(db, taskId)[0]
+    expect(row.status).toBe('failed')
+    expect(row.error).toBe('address_expired')
   })
 })
