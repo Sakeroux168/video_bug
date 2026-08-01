@@ -17,15 +17,20 @@ let scheduler: Scheduler | null = null
 let analyzer: Analyzer | null = null
 let taskRunning = false
 let browserShown = false
+let pinPiP = false
 
 /** 根据任务状态与用户所在标签决定内置浏览器显示方式：
  *  任务运行中 → 始终可见（用户在浏览器标签=全屏，否则右下角小窗保活，避免页面被隐藏导致加载更多不触发）；
+ *  验证暂停 → 右下角小窗保持显示（pinPiP），方便用户看到验证界面；
  *  无任务 → 仅在浏览器标签时显示 */
 function updateBrowserDisplay(): void {
   if (!browser) return
   if (taskRunning) {
     browser.setVisible(true)
     browser.setPiP(!browserShown)
+  } else if (pinPiP) {
+    browser.setVisible(true)
+    browser.setPiP(true)
   } else {
     browser.setPiP(false)
     browser.setVisible(browserShown)
@@ -34,6 +39,7 @@ function updateBrowserDisplay(): void {
 
 function setBrowserVisible(v: boolean): void {
   browserShown = v
+  if (v) pinPiP = false // 用户主动切到浏览器标签，取消钉住
   updateBrowserDisplay()
 }
 
@@ -76,11 +82,31 @@ function createWindow(): void {
 
 function push(evt: unknown): void {
   win?.webContents.send('evt:task:progress', evt)
-  const t = evt as { type?: string; status?: string } | null
+  const t = evt as { type?: string; status?: string; reason?: string } | null
   if (t) {
-    // 任务进入 running → 浏览器保活；到达终态（done/paused）→ 恢复 + 放行下一个排队任务
-    if (t.type === 'task:progress' && t.status === 'running') { taskRunning = true; updateBrowserDisplay() }
-    if (t.type === 'task:done' || t.type === 'task:paused') { taskRunning = false; updateBrowserDisplay(); void dequeueAndRun() }
+    if (t.type === 'task:progress' && t.status === 'running') {
+      taskRunning = true
+      updateBrowserDisplay()
+    }
+    if (t.type === 'task:done') {
+      taskRunning = false
+      pinPiP = false
+      updateBrowserDisplay()
+      void dequeueAndRun() // 只有真正完成才放行下一个排队任务
+    }
+    if (t.type === 'task:paused') {
+      taskRunning = false
+      if (t.reason === 'stalled_verify') {
+        // 触发验证：钉住右下角小窗显示验证界面，并提示用户；不自动放行下一个任务
+        pinPiP = true
+        updateBrowserDisplay()
+        win?.webContents.send('evt:task:notice', {
+          type: 'stalled_verify', text: '任务可能触发验证，请在右下角/内置浏览器完成验证后点「继续」'
+        })
+      } else {
+        updateBrowserDisplay()
+      }
+    }
   }
 }
 

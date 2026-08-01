@@ -111,6 +111,7 @@ export class Scheduler {
       this.rawSinceLastRound = true
 
       const target = this.filters.targetCount ?? 200
+      let stopReason: 'reached' | 'stalled' | null = null
       while (!this.aborted) {
         await sleep(this.deps.scrollIntervalMs + Math.random() * 1500)
         await this.deps.browser.scrollToBottom()
@@ -119,13 +120,18 @@ export class Scheduler {
         else this.silentRounds++
         this.rawSinceLastRound = false
         const decision = buildStopDecision(this.fetched, target, this.emptyRounds + this.silentRounds)
-        if (decision === 'reached' || decision === 'stop') break
+        if (decision === 'reached') { stopReason = 'reached'; break }
+        if (decision === 'stop') { stopReason = 'stalled'; break }
         if (this.pendingVideoIds.length > 30) { /* 下载堆积，放慢抓取 */ await sleep(2000) }
       }
 
       if (this.aborted) {
         db.prepare("UPDATE tasks SET status='paused' WHERE id=?").run(taskId)
         this.deps.emit({ type: 'task:paused', taskId, reason: '用户暂停或风控' })
+      } else if (stopReason === 'stalled' && this.fetched < target) {
+        // 未达目标却停滞：多半触发验证/风控（滑块/验证码），自动暂停，等用户到内置浏览器过验证后点继续
+        db.prepare("UPDATE tasks SET status='paused', error='stalled_verify' WHERE id=?").run(taskId)
+        this.deps.emit({ type: 'task:paused', taskId, reason: 'stalled_verify' })
       } else {
         db.prepare("UPDATE tasks SET status='done', finished_at=? WHERE id=?").run(new Date().toISOString(), taskId)
         this.deps.emit({ type: 'task:done', taskId, fetched: this.fetched })

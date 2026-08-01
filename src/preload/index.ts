@@ -21,10 +21,16 @@ const api = {
   hideBrowser: (): Promise<void> => ipcRenderer.invoke('browser:hide'),
   pickDownloadDir: (): Promise<string | null> => ipcRenderer.invoke('dialog:pickDir'),
   openDir: (p: string): Promise<void> => ipcRenderer.invoke('dialog:openDir', p),
+  locateVideo: (p: string): Promise<void> => ipcRenderer.invoke('video:locate', p),
   onTaskProgress: (cb: (e: unknown) => void): (() => void) => {
     const l = (_e: unknown, data: unknown) => cb(data)
     ipcRenderer.on('evt:task:progress', l)
     return () => ipcRenderer.removeListener('evt:task:progress', l)
+  },
+  onTaskNotice: (cb: (e: unknown) => void): (() => void) => {
+    const l = (_e: unknown, data: unknown) => cb(data)
+    ipcRenderer.on('evt:task:notice', l)
+    return () => ipcRenderer.removeListener('evt:task:notice', l)
   }
 }
 

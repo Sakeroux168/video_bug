@@ -74,14 +74,23 @@ export default function TaskList() {
                 )}
                 <button className="text-xs text-red-400" onClick={() => { void api.deleteTask(t.id).then(refresh) }}>删除</button>
               </div>
+              {t.status === 'paused' && t.error === 'stalled_verify' && (
+                <div className="mt-2 rounded bg-amber-50 px-3 py-1.5 text-xs text-amber-700">
+                  任务可能触发验证，请到「内置浏览器」完成验证（滑块/扫码）后点「继续」
+                </div>
+              )}
               {expanded.has(t.id) && (
                 <div className="mt-2 max-h-48 overflow-auto border-t border-zinc-100 pl-7 text-xs">
                   {(videos[t.id] ?? []).map(v => (
                     <div key={v.id} className="flex items-center gap-2 py-1">
-                      <span className="w-10 text-zinc-400">{v.status}</span>
+                      <span className="w-10 shrink-0 text-zinc-400">{v.status}</span>
                       <span className="min-w-0 flex-1 truncate">{v.title}</span>
-                      {v.ai_verdict === 'filtered' && <span className="text-amber-500">AI已过滤</span>}
-                      {v.status === 'failed' && <button className="text-blue-500" onClick={() => { void api.retryVideos([v.id]).then(refresh) }}>重试</button>}
+                      {v.ai_verdict === 'filtered' && <span className="shrink-0 text-amber-500">AI已过滤</span>}
+                      <a className="shrink-0 text-blue-500 hover:underline" href={`https://www.douyin.com/video/${v.aweme_id}`} target="_blank" rel="noreferrer">原视频</a>
+                      {v.status === 'done' && v.local_path && (
+                        <button className="shrink-0 text-zinc-500 hover:underline" onClick={() => void api.locateVideo(v.local_path!)}>定位</button>
+                      )}
+                      {v.status === 'failed' && <button className="shrink-0 text-blue-500" onClick={() => { void api.retryVideos([v.id]).then(refresh) }}>重试</button>}
                     </div>
                   ))}
                 </div>

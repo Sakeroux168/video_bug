@@ -85,12 +85,12 @@ beforeEach(() => { vi.spyOn(Math, 'random').mockReturnValue(0) })
 afterEach(() => { vi.restoreAllMocks() })
 
 describe('Scheduler 滚动循环终止（C1）', () => {
-  it('页面静默（无任何 raw 响应）时 run 终止，任务置为 done', async () => {
+  it('页面静默（无任何 raw 响应）且未达目标时 run 终止，任务置为 paused(stalled_verify) 供人工验证', async () => {
     const db = newDb()
     const taskId = createTask(db, input)
     const { s } = setup(db, new FakeDownloader(), new FakeBrowser())
     await s.run(taskId)
-    expect(db.prepare('SELECT status FROM tasks WHERE id=?').get(taskId)).toEqual({ status: 'done' })
+    expect(db.prepare('SELECT status, error FROM tasks WHERE id=?').get(taskId)).toEqual({ status: 'paused', error: 'stalled_verify' })
   }, 10000)
 })
 
@@ -123,7 +123,7 @@ describe('Scheduler 异常兜底与串行（I3）', () => {
     browser.releaseLoad()
     await p1
     expect((s as any).running).toBe(false)
-    expect(db.prepare('SELECT status FROM tasks WHERE id=?').get(taskId)).toEqual({ status: 'done' })
+    expect(db.prepare('SELECT status, error FROM tasks WHERE id=?').get(taskId)).toEqual({ status: 'paused', error: 'stalled_verify' })
   }, 10000)
 })
 
@@ -160,7 +160,7 @@ describe('handleRaw 入库与作者（I4）+ pendingVideoIds 清理（I1）', ()
 
     browser.releaseLoad()
     await p
-    expect(db.prepare('SELECT status FROM tasks WHERE id=?').get(taskId)).toEqual({ status: 'done' })
+    expect(db.prepare('SELECT status, error FROM tasks WHERE id=?').get(taskId)).toEqual({ status: 'paused', error: 'stalled_verify' })
   }, 10000)
 })
 
@@ -170,9 +170,9 @@ describe('resume（I2）', () => {
     const taskId = createTask(db, input)
     const { s } = setup(db, new FakeDownloader(), new FakeBrowser())
     await s.run(taskId)
-    expect(db.prepare('SELECT status FROM tasks WHERE id=?').get(taskId)).toEqual({ status: 'done' })
+    expect(db.prepare('SELECT status, error FROM tasks WHERE id=?').get(taskId)).toEqual({ status: 'paused', error: 'stalled_verify' })
     await s.resume(taskId)
-    expect(db.prepare('SELECT status FROM tasks WHERE id=?').get(taskId)).toEqual({ status: 'done' })
+    expect(db.prepare('SELECT status, error FROM tasks WHERE id=?').get(taskId)).toEqual({ status: 'paused', error: 'stalled_verify' })
     expect((s as any).running).toBe(false)
   }, 10000)
 })
@@ -184,7 +184,7 @@ describe('任务结束清理上下文（I5）', () => {
     const dl = new FakeDownloader()
     const { s } = setup(db, dl, new FakeBrowser())
     await s.run(taskId)
-    expect(db.prepare('SELECT status FROM tasks WHERE id=?').get(taskId)).toEqual({ status: 'done' })
+    expect(db.prepare('SELECT status, error FROM tasks WHERE id=?').get(taskId)).toEqual({ status: 'paused', error: 'stalled_verify' })
     await s.handleRaw(douyinAdapter, rawUrl, rawJson)
     expect(listAuthors(db, 'douyin')).toHaveLength(0)
     expect(dl.enqueued).toHaveLength(0)
