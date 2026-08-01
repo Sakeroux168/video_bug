@@ -1,0 +1,159 @@
+import type { DatabaseSync, SQLInputValue } from 'node:sqlite'
+import type { CreateTaskInput, TaskRow, TaskStatus, VideoRow, AuthorRow, VideoStatus } from '../shared/types'
+import type { VideoItem } from './adapters/types'
+
+const SCHEMA = `
+CREATE TABLE IF NOT EXISTS tasks (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  platform TEXT NOT NULL DEFAULT 'douyin',
+  type TEXT NOT NULL,
+  query TEXT NOT NULL,
+  filters TEXT NOT NULL DEFAULT '{}',
+  status TEXT NOT NULL DEFAULT 'pending',
+  target_count INTEGER NOT NULL DEFAULT 200,
+  fetched_count INTEGER NOT NULL DEFAULT 0,
+  error TEXT,
+  created_at TEXT NOT NULL,
+  finished_at TEXT
+);
+CREATE TABLE IF NOT EXISTS authors (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  platform TEXT NOT NULL DEFAULT 'douyin',
+  sec_uid TEXT NOT NULL,
+  nickname TEXT NOT NULL,
+  home_url TEXT,
+  video_count INTEGER NOT NULL DEFAULT 0,
+  last_fetched_at TEXT,
+  note TEXT,
+  UNIQUE(platform, sec_uid)
+);
+CREATE TABLE IF NOT EXISTS videos (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  platform TEXT NOT NULL DEFAULT 'douyin',
+  task_id INTEGER NOT NULL,
+  aweme_id TEXT NOT NULL,
+  title TEXT NOT NULL DEFAULT '',
+  author_id INTEGER,
+  play_addr TEXT,
+  duration INTEGER NOT NULL DEFAULT 0,
+  publish_time TEXT,
+  stats TEXT NOT NULL DEFAULT '{}',
+  ai_verdict TEXT,
+  ai_tags TEXT,
+  status TEXT NOT NULL DEFAULT 'pending',
+  local_path TEXT,
+  file_size INTEGER,
+  error TEXT,
+  retry_count INTEGER NOT NULL DEFAULT 0,
+  fetched_at TEXT NOT NULL,
+  downloaded_at TEXT,
+  UNIQUE(platform, aweme_id)
+);
+CREATE INDEX IF NOT EXISTS idx_videos_status ON videos(status);
+CREATE INDEX IF NOT EXISTS idx_videos_task ON videos(task_id);
+`
+
+export function initDb(db: DatabaseSync): void {
+  db.exec(SCHEMA)
+}
+
+export function createTask(db: DatabaseSync, input: CreateTaskInput): number {
+  const info = db.prepare(
+    `INSERT INTO tasks (platform, type, query, filters, target_count, created_at)
+     VALUES (?, ?, ?, ?, ?, ?)`
+  ).run(input.platform, input.type, input.query,
+    JSON.stringify({ ...input.filters, aiFilterEnabled: input.aiFilterEnabled, aiOrganizeEnabled: input.aiOrganizeEnabled }),
+    input.filters.targetCount, new Date().toISOString())
+  return Number(info.lastInsertRowid)
+}
+
+export function updateTask(db: DatabaseSync, id: number, patch: Partial<TaskRow>): void {
+  const allowed = ['status', 'filters', 'fetched_count', 'error', 'finished_at'] as const
+  const sets: string[] = []
+  const vals: unknown[] = []
+  for (const k of allowed) {
+    if (k in patch && patch[k] !== undefined) { sets.push(`${k} = ?`); vals.push(patch[k]) }
+  }
+  if (!sets.length) return
+  vals.push(id)
+  db.prepare(`UPDATE tasks SET ${sets.join(', ')} WHERE id = ?`).run(...(vals as SQLInputValue[]))
+}
+
+export function setTaskStatus(db: DatabaseSync, id: number, status: TaskStatus, error?: string): void {
+  updateTask(db, id, { status, error: error ?? null })
+}
+
+export function incrementFetched(db: DatabaseSync, id: number, n: number): void {
+  db.prepare('UPDATE tasks SET fetched_count = fetched_count + ? WHERE id = ?').run(n, id)
+}
+
+export function finishTask(db: DatabaseSync, id: number): void {
+  updateTask(db, id, { status: 'done', finished_at: new Date().toISOString() })
+}
+
+export function listTasks(db: DatabaseSync): TaskRow[] {
+  return db.prepare('SELECT * FROM tasks ORDER BY id DESC').all() as unknown as TaskRow[]
+}
+
+export function getRunningTasks(db: DatabaseSync): TaskRow[] {
+  return db.prepare("SELECT * FROM tasks WHERE status = 'running'").all() as unknown as TaskRow[]
+}
+
+export function upsertAuthor(db: DatabaseSync, item: VideoItem, platform: string): number {
+  const now = new Date().toISOString()
+  db.prepare(
+    `INSERT INTO authors (platform, sec_uid, nickname, home_url, video_count, last_fetched_at)
+     VALUES (?, ?, ?, ?, 1, ?)
+     ON CONFLICT(platform, sec_uid) DO UPDATE SET
+       nickname = excluded.nickname,
+       home_url = excluded.home_url,
+       video_count = authors.video_count + 1,
+       last_fetched_at = excluded.last_fetched_at`
+  ).run(platform, item.authorSecUid, item.authorNickname, item.authorHomeUrl, now)
+  const row = db.prepare('SELECT id FROM authors WHERE platform = ? AND sec_uid = ?').get(platform, item.authorSecUid) as { id: number }
+  return row.id
+}
+
+export function listAuthors(db: DatabaseSync, platform?: string): AuthorRow[] {
+  if (platform) return db.prepare('SELECT * FROM authors WHERE platform = ? ORDER BY video_count DESC').all(platform) as unknown as AuthorRow[]
+  return db.prepare('SELECT * FROM authors ORDER BY video_count DESC').all() as unknown as AuthorRow[]
+}
+
+export function insertVideos(db: DatabaseSync, items: VideoItem[], taskId: number, platform: string): number {
+  let inserted = 0
+  const now = new Date().toISOString()
+  const stmt = db.prepare(
+    `INSERT OR IGNORE INTO videos
+       (platform, task_id, aweme_id, title, author_id, play_addr, duration, publish_time, stats, fetched_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+  )
+  const authorStmt = db.prepare('SELECT id FROM authors WHERE platform = ? AND sec_uid = ?')
+  for (const it of items) {
+    const authorId = upsertAuthor(db, it, platform)
+    const info = stmt.run(
+      platform, taskId, it.awemeId, it.title, authorId, it.playUrl,
+      it.durationSec, new Date(it.publishTime * 1000).toISOString(), JSON.stringify({ likes: it.likes }), now
+    )
+    if (info.changes > 0) inserted++
+  }
+  void authorStmt
+  return inserted
+}
+
+export function listVideos(db: DatabaseSync, taskId: number): VideoRow[] {
+  return db.prepare('SELECT * FROM videos WHERE task_id = ? ORDER BY id').all(taskId) as unknown as VideoRow[]
+}
+
+export function listPendingVideos(db: DatabaseSync): VideoRow[] {
+  return db.prepare("SELECT * FROM videos WHERE status = 'pending' ORDER BY id").all() as unknown as VideoRow[]
+}
+
+export function setVideoStatus(db: DatabaseSync, id: number, status: VideoStatus, patch: Partial<VideoRow> = {}): void {
+  const sets = ['status = ?']
+  const vals: unknown[] = [status]
+  for (const k of ['error', 'local_path', 'file_size', 'retry_count', 'downloaded_at', 'ai_verdict', 'ai_tags'] as const) {
+    if (k in patch && patch[k] !== undefined) { sets.push(`${k} = ?`); vals.push(patch[k]) }
+  }
+  vals.push(id)
+  db.prepare(`UPDATE videos SET ${sets.join(', ')} WHERE id = ?`).run(...(vals as SQLInputValue[]))
+}
