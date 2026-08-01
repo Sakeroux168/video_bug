@@ -1517,7 +1517,7 @@ export class VideoBrowser {
   ) {}
 
   async init(): Promise<void> {
-    const view = new WebContentsView({ webPreferences: { partition: 'persist:douyin', preload: join(__dirname, '../preload/index.js') } })
+    const view = new WebContentsView({ webPreferences: { partition: 'persist:douyin', preload: join(__dirname, '../preload/douyin.js') } })
     view.setVisible(false)
     this.host.contentView.addChildView(view)
     this.view = view
@@ -1558,24 +1558,38 @@ export class VideoBrowser {
 }
 ```
 
-- [ ] **Step 3: preload 加消息桥**
+- [ ] **Step 3: 独立 douyin preload 消息桥**
 
-`src/preload/index.ts`（整体替换）:
+**安全要点**：内嵌浏览器加载的是抖音网页（不可信内容），绝不能用渲染层的 preload——那会把带 AI Key 读取能力的 `window.api` 暴露给抖音页面。所以 WebContentsView 用**独立 preload**，只转发消息、不暴露任何 api。
+
+`src/preload/douyin.ts`（新建）:
 ```ts
-import { contextBridge, ipcRenderer } from 'electron'
+import { ipcRenderer } from 'electron'
 
-// 页面世界经 window.postMessage 发来的原始 JSON → 主进程
+// 页面世界经 window.postMessage 发来的原始 JSON → 主进程（只在 douyin 内嵌视图加载）
 window.addEventListener('message', (e: MessageEvent) => {
   const d = e.data
   if (d && typeof d === 'object' && typeof d.type === 'string' && d.type.startsWith('dy:')) {
     ipcRenderer.send('dy:raw', { url: d.url ?? '', json: d.data })
   }
 })
-
-contextBridge.exposeInMainWorld('api', {
-  ping: (): string => ipcRenderer.sendSync('api:ping') as string
-})
 ```
+
+`electron.vite.config.ts` 的 `preload` 段改为多入口（让 douyin.js 也参与构建）:
+```ts
+  preload: {
+    plugins: [externalizeDepsPlugin()],
+    build: {
+      rollupOptions: {
+        input: {
+          index: resolve('src/preload/index.ts'),
+          douyin: resolve('src/preload/douyin.ts')
+        }
+      }
+    }
+  },
+```
+（顶部 `resolve` 已从 `path` 导入，确认存在即可。）
 
 - [ ] **Step 4: 主进程装配（临时接线验证）**
 
@@ -1967,17 +1981,10 @@ export function registerIpc(deps: IpcDeps): void {
 
 - [ ] **Step 4: preload 暴露完整 API**
 
-`src/preload/index.ts`（在消息桥基础上追加）:
+`src/preload/index.ts`（渲染层用；消息桥在 douyin.ts，这里只暴露 api）:
 ```ts
 import { contextBridge, ipcRenderer } from 'electron'
 import type { CreateTaskInput, AppSettings } from '../shared/types'
-
-window.addEventListener('message', (e: MessageEvent) => {
-  const d = e.data
-  if (d && typeof d === 'object' && typeof d.type === 'string' && d.type.startsWith('dy:')) {
-    ipcRenderer.send('dy:raw', { url: d.url ?? '', json: d.data })
-  }
-})
 
 const api = {
   ping: () => ipcRenderer.sendSync('api:ping') as string,
