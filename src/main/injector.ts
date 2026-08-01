@@ -27,8 +27,15 @@ export const INJECT_SCRIPT = `(() => {
   XMLHttpRequest.prototype.send = function () {
     this.addEventListener('load', function () {
       try {
+        const u = this.__dyUrl || '';
         const ct = this.getResponseHeader('content-type') || '';
-        if (ct.includes('json')) { try { post(this.__dyUrl, JSON.parse(this.responseText)) } catch (e) { /* ignore */ } }
+        let txt = null;
+        if (this.responseType === '' || this.responseType === 'text') txt = this.responseText;
+        else if (this.responseType === 'json' && this.response != null) txt = JSON.stringify(this.response);
+        // 内容类型是 json，或 URL 是抖音接口(即便 content-type 不标准)都尝试解析
+        if (txt && (ct.includes('json') || u.includes('/aweme/') || u.includes('/search/'))) {
+          try { post(u, JSON.parse(txt)) } catch (e) { /* ignore */ }
+        }
       } catch (e) { /* ignore */ }
     });
     return origSend.apply(this, arguments);

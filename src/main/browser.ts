@@ -45,6 +45,10 @@ export class VideoBrowser {
     wc.on('did-navigate', () => {
       void wc.executeJavaScript(this.inject).catch(() => { /* ignore */ })
     })
+    // 更早注入：dom-ready 时机比 did-finish-load 早，避免错过页面启动后立即发起的接口
+    wc.on('dom-ready', () => {
+      void wc.executeJavaScript(this.inject).catch(() => { /* ignore */ })
+    })
   }
 
   async load(adapter: PlatformAdapter, url: string): Promise<void> {
