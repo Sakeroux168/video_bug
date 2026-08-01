@@ -6,7 +6,7 @@
 
 **Architecture:** 三层 + 平台适配层。渲染层 React（三标签：管理面板/内置浏览器/设置）通过 IPC 调主进程；主进程含调度器、适配器注册表、解析器、AI 分析器、下载器、SQLite；内置浏览器 WebContentsView 注入通用 fetch/XHR 挂钩，把平台内部接口的原始 JSON 经 preload 消息桥回传主进程解析。
 
-**Tech Stack:** Electron 35 / React 18 + TypeScript / electron-vite / better-sqlite3 / Tailwind CSS / Vitest
+**Tech Stack:** Electron 35 / React 18 + TypeScript / electron-vite / node:sqlite（内置 SQLite）/ Tailwind CSS / Vitest
 
 ## Global Constraints
 
@@ -19,6 +19,7 @@
 - 错误一律用分类码字符串（`network`/`address_expired`/`forbidden`/`login_expired`/`disk`/`parse_error`/`ai_auth`/`ai_quota`/`ai_timeout`）
 - AI 只分析文本元数据；任何 AI 故障降级为纯下载，不中断抓取/下载
 - 开发期 `npm run dev` 运行，不打包 exe
+- 数据库用 Node 内置 `node:sqlite`（`DatabaseSync`），Electron 主进程需 `NODE_OPTIONS=--experimental-sqlite`（已写入 dev/start 脚本）；**不用任何原生 SQLite 模块**
 
 ---
 
@@ -51,22 +52,19 @@
   "description": "多平台视频批量爬取工具",
   "main": "./out/main/index.js",
   "scripts": {
-    "dev": "electron-vite dev",
+    "dev": "cross-env NODE_OPTIONS=--experimental-sqlite electron-vite dev",
     "build": "electron-vite build",
-    "start": "electron-vite preview",
+    "start": "cross-env NODE_OPTIONS=--experimental-sqlite electron-vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
-    "test": "vitest run",
-    "postinstall": "electron-rebuild -f -w better-sqlite3"
+    "test": "vitest run"
   },
   "dependencies": {
-    "better-sqlite3": "^11.5.0",
     "react": "^18.3.0",
     "react-dom": "^18.3.0"
   },
   "devDependencies": {
-    "@electron/rebuild": "^3.7.0",
-    "@types/better-sqlite3": "^7.6.0",
     "@types/node": "^22.0.0",
+    "cross-env": "^7.0.3",
     "@types/react": "^18.3.0",
     "@types/react-dom": "^18.3.0",
     "@vitejs/plugin-react": "^4.3.0",
@@ -85,7 +83,7 @@
 - [ ] **Step 2: 安装依赖**
 
 Run: `cd "F:/123/爬取视频" && npm install`
-Expected: 安装成功；postinstall 触发 electron-rebuild 重新编译 better-sqlite3 的 electron 原生绑定（Windows 需要 VS Build Tools + Python，F:/123 下已有 BuildTools/python，若失败见全局约束文档）。
+Expected: 安装成功。无原生编译（better-sqlite3 已弃用，改用 Node 内置 node:sqlite；Electron 二进制需镜像 `ELECTRON_MIRROR=https://npmmirror.com/mirrors/electron/`，若下载失败设置后重装）。
 
 - [ ] **Step 3: 写 electron-vite 与 tsconfig 配置**
 
@@ -788,22 +786,22 @@ git add src/main/filename.ts tests/filename.test.ts && git commit -m "feat: 文�
 - Test: `tests/db.test.ts`
 
 **Interfaces:**
-- Produces: `Database` 实例（better-sqlite3）；`initDb(path: string)`；`createTask(input: CreateTaskInput): number`；`updateTask(id, patch)`；`setTaskStatus(id, status, error?)`；`incrementFetched(id, n)`；`finishTask(id)`；`listTasks()`；`getRunningTasks()`；`upsertAuthor(item: VideoItem, platform: string): number`；`listAuthors(platform?)`；`insertVideos(items, taskId, platform): number`；`listVideos(taskId)`；`getPendingVideos(platform)`；`setVideoStatus(id, status, patch?)`；`listFilteredVideos(taskId)`
+- Produces: `DatabaseSync` 实例（node:sqlite）；`initDb(db)`；`createTask(db, input: CreateTaskInput): number`；`updateTask(db, id, patch)`；`setTaskStatus(db, id, status, error?)`；`incrementFetched(db, id, n)`；`finishTask(db, id)`；`listTasks(db)`；`getRunningTasks(db)`；`upsertAuthor(db, item: VideoItem, platform: string): number`；`listAuthors(db, platform?)`；`insertVideos(db, items, taskId, platform): number`；`listVideos(db, taskId)`；`listPendingVideos(db)`；`setVideoStatus(db, id, status, patch?)`
 
 - [ ] **Step 1: 写失败测试**
 
 `tests/db.test.ts`:
 ```ts
 import { describe, it, expect, beforeEach } from 'vitest'
-import Database from 'better-sqlite3'
+import { DatabaseSync } from 'node:sqlite'
 import { initDb, createTask, insertVideos, listVideos, upsertAuthor, listAuthors, setVideoStatus, listPendingVideos, setTaskStatus } from '../src/main/db'
 import type { CreateTaskInput, Filters } from '../src/shared/types'
 import type { VideoItem } from '../src/main/adapters/types'
 
-let db: Database.Database
+let db: DatabaseSync
 
 beforeEach(() => {
-  db = new Database(':memory:')
+  db = new DatabaseSync(':memory:')
   initDb(db)
 })
 
@@ -879,7 +877,7 @@ Expected: FAIL（模块不存在）
 
 `src/main/db.ts`:
 ```ts
-import type { Database } from 'better-sqlite3'
+import type { DatabaseSync } from 'node:sqlite'
 import type { CreateTaskInput, TaskRow, TaskStatus, VideoRow, AuthorRow, VideoStatus } from '../shared/types'
 import type { VideoItem } from './adapters/types'
 
@@ -934,11 +932,11 @@ CREATE INDEX IF NOT EXISTS idx_videos_status ON videos(status);
 CREATE INDEX IF NOT EXISTS idx_videos_task ON videos(task_id);
 `
 
-export function initDb(db: Database): void {
+export function initDb(db: DatabaseSync): void {
   db.exec(SCHEMA)
 }
 
-export function createTask(db: Database, input: CreateTaskInput): number {
+export function createTask(db: DatabaseSync, input: CreateTaskInput): number {
   const info = db.prepare(
     `INSERT INTO tasks (platform, type, query, filters, target_count, created_at)
      VALUES (?, ?, ?, ?, ?, ?)`
@@ -948,7 +946,7 @@ export function createTask(db: Database, input: CreateTaskInput): number {
   return Number(info.lastInsertRowid)
 }
 
-export function updateTask(db: Database, id: number, patch: Partial<TaskRow>): void {
+export function updateTask(db: DatabaseSync, id: number, patch: Partial<TaskRow>): void {
   const allowed = ['status', 'filters', 'fetched_count', 'error', 'finished_at'] as const
   const sets: string[] = []
   const vals: unknown[] = []
@@ -960,27 +958,27 @@ export function updateTask(db: Database, id: number, patch: Partial<TaskRow>): v
   db.prepare(`UPDATE tasks SET ${sets.join(', ')} WHERE id = ?`).run(...vals)
 }
 
-export function setTaskStatus(db: Database, id: number, status: TaskStatus, error?: string): void {
+export function setTaskStatus(db: DatabaseSync, id: number, status: TaskStatus, error?: string): void {
   updateTask(db, id, { status, error: error ?? null })
 }
 
-export function incrementFetched(db: Database, id: number, n: number): void {
+export function incrementFetched(db: DatabaseSync, id: number, n: number): void {
   db.prepare('UPDATE tasks SET fetched_count = fetched_count + ? WHERE id = ?').run(n, id)
 }
 
-export function finishTask(db: Database, id: number): void {
+export function finishTask(db: DatabaseSync, id: number): void {
   updateTask(db, id, { status: 'done', finished_at: new Date().toISOString() })
 }
 
-export function listTasks(db: Database): TaskRow[] {
+export function listTasks(db: DatabaseSync): TaskRow[] {
   return db.prepare('SELECT * FROM tasks ORDER BY id DESC').all() as TaskRow[]
 }
 
-export function getRunningTasks(db: Database): TaskRow[] {
+export function getRunningTasks(db: DatabaseSync): TaskRow[] {
   return db.prepare("SELECT * FROM tasks WHERE status = 'running'").all() as TaskRow[]
 }
 
-export function upsertAuthor(db: Database, item: VideoItem, platform: string): number {
+export function upsertAuthor(db: DatabaseSync, item: VideoItem, platform: string): number {
   const now = new Date().toISOString()
   db.prepare(
     `INSERT INTO authors (platform, sec_uid, nickname, home_url, video_count, last_fetched_at)
@@ -995,12 +993,12 @@ export function upsertAuthor(db: Database, item: VideoItem, platform: string): n
   return row.id
 }
 
-export function listAuthors(db: Database, platform?: string): AuthorRow[] {
+export function listAuthors(db: DatabaseSync, platform?: string): AuthorRow[] {
   if (platform) return db.prepare('SELECT * FROM authors WHERE platform = ? ORDER BY video_count DESC').all(platform) as AuthorRow[]
   return db.prepare('SELECT * FROM authors ORDER BY video_count DESC').all() as AuthorRow[]
 }
 
-export function insertVideos(db: Database, items: VideoItem[], taskId: number, platform: string): number {
+export function insertVideos(db: DatabaseSync, items: VideoItem[], taskId: number, platform: string): number {
   let inserted = 0
   const now = new Date().toISOString()
   const stmt = db.prepare(
@@ -1021,15 +1019,15 @@ export function insertVideos(db: Database, items: VideoItem[], taskId: number, p
   return inserted
 }
 
-export function listVideos(db: Database, taskId: number): VideoRow[] {
+export function listVideos(db: DatabaseSync, taskId: number): VideoRow[] {
   return db.prepare('SELECT * FROM videos WHERE task_id = ? ORDER BY id').all(taskId) as VideoRow[]
 }
 
-export function listPendingVideos(db: Database): VideoRow[] {
+export function listPendingVideos(db: DatabaseSync): VideoRow[] {
   return db.prepare("SELECT * FROM videos WHERE status = 'pending' ORDER BY id").all() as VideoRow[]
 }
 
-export function setVideoStatus(db: Database, id: number, status: VideoStatus, patch: Partial<VideoRow> = {}): void {
+export function setVideoStatus(db: DatabaseSync, id: number, status: VideoStatus, patch: Partial<VideoRow> = {}): void {
   const sets = ['status = ?']
   const vals: unknown[] = [status]
   for (const k of ['error', 'local_path', 'file_size', 'retry_count', 'downloaded_at', 'ai_verdict', 'ai_tags'] as const) {
@@ -1255,7 +1253,7 @@ git add src/main/analyzer.ts tests/analyzer.test.ts && git commit -m "feat: AI �
 `tests/downloader.test.ts`:
 ```ts
 import { describe, it, expect, beforeEach } from 'vitest'
-import Database from 'better-sqlite3'
+import { DatabaseSync } from 'node:sqlite'
 import { initDb, createTask, insertVideos, listVideos, setVideoStatus } from '../src/main/db'
 import { Downloader, buildUserAgent } from '../src/main/downloader'
 import { mkdtempSync, readFileSync, rmSync, existsSync } from 'fs'
@@ -1264,11 +1262,11 @@ import { tmpdir } from 'os'
 import type { CreateTaskInput } from '../src/shared/types'
 import type { VideoItem } from '../src/main/adapters/types'
 
-let db: Database.Database
+let db: DatabaseSync
 let dir: string
 
 beforeEach(() => {
-  db = new Database(':memory:')
+  db = new DatabaseSync(':memory:')
   initDb(db)
   dir = mkdtempSync(join(tmpdir(), 'dl-'))
 })
@@ -1342,7 +1340,7 @@ Expected: FAIL
 
 `src/main/downloader.ts`:
 ```ts
-import type { Database } from 'better-sqlite3'
+import type { DatabaseSync } from 'node:sqlite'
 import { createWriteStream } from 'fs'
 import { pipeline } from 'stream/promises'
 import { join } from 'path'
@@ -1365,7 +1363,7 @@ export class Downloader {
   private fetching: Record<number, boolean> = {}
 
   constructor(
-    private db: Database,
+    private db: DatabaseSync,
     private settings: DlSettings,
     private fetchImpl: typeof fetch = fetch
   ) {}
@@ -1686,7 +1684,7 @@ export function listAdapters(): Array<{ name: string; displayName: string }> {
 
 `src/main/scheduler.ts`:
 ```ts
-import type { Database } from 'better-sqlite3'
+import type { DatabaseSync } from 'node:sqlite'
 import type { PlatformAdapter } from './adapters/types'
 import type { TaskRow, TaskStatus } from '../shared/types'
 import { ERROR } from '../shared/types'
@@ -1708,7 +1706,7 @@ export type SchedulerEvent =
   | { type: 'task:paused'; taskId: number; reason: string }
 
 interface SchedulerDeps {
-  db: Database
+  db: DatabaseSync
   browser: VideoBrowser
   analyzer: Analyzer | null
   downloader: Downloader
@@ -1904,7 +1902,7 @@ export function saveSettings(s: AppSettings): void {
 `src/main/ipc.ts`:
 ```ts
 import { ipcMain, BrowserWindow } from 'electron'
-import type { Database } from 'better-sqlite3'
+import type { DatabaseSync } from 'node:sqlite'
 import { createTask, listTasks, listVideos, listAuthors, setTaskStatus, setVideoStatus, listPendingVideos } from './db'
 import { getSettings, saveSettings } from './settings'
 import { listAdapters } from './adapters'
@@ -1915,7 +1913,7 @@ import { getAdapter } from './adapters'
 import type { VideoBrowser } from './browser'
 
 export interface IpcDeps {
-  db: Database
+  db: DatabaseSync
   scheduler: Scheduler
   downloader: Downloader
   analyzer: Analyzer | null
@@ -2021,7 +2019,7 @@ export {}
 ```ts
 import { app, BrowserWindow, ipcMain } from 'electron'
 import { join } from 'path'
-import Database from 'better-sqlite3'
+import { DatabaseSync } from 'node:sqlite'
 import { initDb } from './db'
 import { VideoBrowser } from './browser'
 import { Scheduler } from './scheduler'
@@ -2051,7 +2049,7 @@ function push(evt: unknown): void {
 }
 
 app.whenReady().then(() => {
-  const db = new Database(join(app.getPath('userData'), 'scraper.db'))
+  const db = new DatabaseSync(join(app.getPath('userData'), 'scraper.db'))
   initDb(db)
 
   createWindow()

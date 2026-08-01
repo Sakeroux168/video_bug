@@ -299,7 +299,7 @@ authors {
 
 - **桌面框架**: Electron
 - **前端**: React + TypeScript
-- **数据库**: SQLite (better-sqlite3)
+- **数据库**: SQLite（Node 内置 `node:sqlite` 的 `DatabaseSync`；Electron 主进程经 `NODE_OPTIONS=--experimental-sqlite` 启用。注：因本机 VS2026 无法编译 better-sqlite3 原生模块，改用内置模块，2026-08-01 确认）
 - **HTTP 客户端**: Node 内置 fetch / undici
 - **AI 客户端**: OpenAI 兼容 REST 接口（自实现轻量客户端，或 `openai` SDK），baseURL/Key/模型可配
 - **构建工具**: electron-vite
