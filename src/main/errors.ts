@@ -6,6 +6,17 @@ export function classifyHttpError(status: number): string {
   return ''
 }
 
+/** 下载错误分类：http_ 前缀按状态码；非 http 错误按 Node 错误码（ENOENT/EPERM/ENOSPC → disk） */
+export function classifyDownloadError(err: unknown): string {
+  if (err instanceof Error && err.message.startsWith('http_')) {
+    const status = Number(err.message.slice(5))
+    return classifyHttpError(status) || ERROR.NETWORK
+  }
+  const code = (err as NodeJS.ErrnoException)?.code
+  if (code === 'ENOENT' || code === 'EPERM' || code === 'ENOSPC') return ERROR.DISK
+  return ERROR.NETWORK
+}
+
 export function isRiskSignal(count: number): boolean {
   return count >= 3
 }

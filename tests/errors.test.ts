@@ -1,11 +1,32 @@
 import { describe, it, expect } from 'vitest'
-import { classifyHttpError, isRiskSignal, AddressPolicy } from '../src/main/errors'
+import { classifyHttpError, classifyDownloadError, isRiskSignal, AddressPolicy } from '../src/main/errors'
 import { ERROR } from '../src/shared/types'
 
 describe('classifyHttpError', () => {
   it('403 → forbidden', () => expect(classifyHttpError(403)).toBe(ERROR.FORBIDDEN))
   it('5xx → network', () => expect(classifyHttpError(500)).toBe(ERROR.NETWORK))
   it('200 → 空串', () => expect(classifyHttpError(200)).toBe(''))
+})
+
+describe('classifyDownloadError', () => {
+  it('http_500 → network', () => expect(classifyDownloadError(new Error('http_500'))).toBe(ERROR.NETWORK))
+  it('http_403 → forbidden', () => expect(classifyDownloadError(new Error('http_403'))).toBe(ERROR.FORBIDDEN))
+  it('ENOENT → disk', () => {
+    const e = new Error('ENOENT: no such file') as NodeJS.ErrnoException
+    e.code = 'ENOENT'
+    expect(classifyDownloadError(e)).toBe(ERROR.DISK)
+  })
+  it('ENOSPC → disk', () => {
+    const e = new Error('ENOSPC: no space') as NodeJS.ErrnoException
+    e.code = 'ENOSPC'
+    expect(classifyDownloadError(e)).toBe(ERROR.DISK)
+  })
+  it('EPERM → disk', () => {
+    const e = new Error('EPERM: operation not permitted') as NodeJS.ErrnoException
+    e.code = 'EPERM'
+    expect(classifyDownloadError(e)).toBe(ERROR.DISK)
+  })
+  it('普通错误 → network（重试兜底）', () => expect(classifyDownloadError(new Error('boom'))).toBe(ERROR.NETWORK))
 })
 
 describe('isRiskSignal', () => {

@@ -106,4 +106,23 @@ describe('Downloader', () => {
     expect(row.status).toBe('failed')
     expect(row.error).toBe('address_expired')
   })
+
+  it('磁盘错误（ENOENT）→ 直接 failed + 错误码 disk，不重试', async () => {
+    const taskId = createTask(db, input)
+    insertVideos(db, [item()], taskId, 'douyin')
+    const [v] = listVideos(db, taskId)
+    const fetchImpl = (async () => {
+      const e = new Error('ENOENT: no such file or directory') as NodeJS.ErrnoException
+      e.code = 'ENOENT'
+      throw e
+    }) as typeof fetch
+    const dl = new Downloader(db, { downloadDir: dir, downloadConcurrency: 3, scrollIntervalMs: 2000, addressTtlMin: 30 }, fetchImpl)
+    dl.enqueue(v.id)
+    dl.start()
+    await new Promise(r => setTimeout(r, 50))
+    const row = listVideos(db, taskId)[0]
+    expect(row.status).toBe('failed') // 磁盘错误不进入 5s 重试，直接失败
+    expect(row.error).toBe('disk')
+    expect(row.retry_count).toBe(1)
+  })
 })

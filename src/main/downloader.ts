@@ -1,11 +1,11 @@
 import type { DatabaseSync } from 'node:sqlite'
-import { createWriteStream } from 'fs'
+import { createWriteStream, mkdirSync } from 'fs'
 import { pipeline } from 'stream/promises'
 import { Readable } from 'stream'
 import { join } from 'path'
 import type { AppSettings, VideoRow } from '../shared/types'
 import { ERROR } from '../shared/types'
-import { classifyHttpError, AddressPolicy } from './errors'
+import { classifyDownloadError, AddressPolicy } from './errors'
 import { safeFilename, ensureUniqueName } from './filename'
 
 export function buildUserAgent(_platform: string): string {
@@ -26,7 +26,13 @@ export class Downloader {
     private db: DatabaseSync,
     private settings: DlSettings,
     private fetchImpl: typeof fetch = fetch
-  ) {}
+  ) {
+    // C1: 确保下载目录存在（recursive 幂等）；目录不可写时由下载错误分类兜底为 ERROR.DISK
+    try { mkdirSync(this.settings.downloadDir, { recursive: true }) } catch { /* ignore */ }
+  }
+
+  /** 设置保存后热更新下载参数（目录/并发/地址TTL），无需重建 Downloader */
+  updateSettings(s: DlSettings): void { this.settings = s }
 
   onEvent(cb: (e: DlEvent) => void): void { this.listeners.push(cb) }
 
@@ -90,8 +96,8 @@ export class Downloader {
       this.emit({ type: 'video:status', id, status: 'done', localPath: dest })
     } catch (err) {
       const retry = row.retry_count + 1
-      const code = classifyHttpError((err as { message?: string }).message?.startsWith('http_') ? Number((err as { message: string }).message.slice(5)) : 0) || ERROR.NETWORK
-      // 网络类错误自动重试2次（利用 retry_count）；非网络错误直接失败
+      const code = classifyDownloadError(err)
+      // 网络类错误自动重试2次（利用 retry_count）；磁盘(ENOENT/EPERM/ENOSPC)/风控等非网络错误直接失败
       if (retry <= 2 && code === ERROR.NETWORK) {
         this.db.prepare("UPDATE videos SET status='pending', retry_count=?, error=NULL WHERE id=?").run(retry, id)
         setTimeout(() => this.enqueue(id), 5000)
