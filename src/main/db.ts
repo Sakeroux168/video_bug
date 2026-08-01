@@ -164,6 +164,25 @@ export function listVideos(db: DatabaseSync, taskId: number): VideoRow[] {
   return db.prepare('SELECT * FROM videos WHERE task_id = ? ORDER BY id').all(taskId) as unknown as VideoRow[]
 }
 
+export interface TaskStats {
+  total: number; done: number; failed: number; downloading: number; pending: number; filtered: number
+}
+
+/** 一个任务的视频按状态计数（供"下载 X/Y"进度展示） */
+export function taskStats(db: DatabaseSync, taskId: number): TaskStats {
+  const rows = db.prepare('SELECT status, COUNT(*) c FROM videos WHERE task_id=? GROUP BY status').all(taskId) as unknown as Array<{ status: string; c: number }>
+  const s: TaskStats = { total: 0, done: 0, failed: 0, downloading: 0, pending: 0, filtered: 0 }
+  for (const r of rows) {
+    s.total += r.c
+    if (r.status === 'done') s.done = r.c
+    else if (r.status === 'failed') s.failed = r.c
+    else if (r.status === 'downloading') s.downloading = r.c
+    else if (r.status === 'pending') s.pending = r.c
+    else if (r.status === 'filtered') s.filtered = r.c
+  }
+  return s
+}
+
 export function listPendingVideos(db: DatabaseSync): VideoRow[] {
   return db.prepare("SELECT * FROM videos WHERE status = 'pending' ORDER BY id").all() as unknown as VideoRow[]
 }

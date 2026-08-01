@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { DatabaseSync } from 'node:sqlite'
-import { initDb, createTask, listTasks, insertVideos, listVideos, upsertAuthor, listAuthors, setVideoStatus, listPendingVideos, setTaskStatus } from '../src/main/db'
+import { initDb, createTask, listTasks, insertVideos, listVideos, upsertAuthor, listAuthors, setVideoStatus, listPendingVideos, setTaskStatus, taskStats } from '../src/main/db'
 import type { CreateTaskInput, Filters } from '../src/shared/types'
 import type { VideoItem } from '../src/main/adapters/types'
 
@@ -79,5 +79,18 @@ describe('db', () => {
     setTaskStatus(db, id, 'running')
     setTaskStatus(db, id, 'done')
     expect(listTasks(db)[0].status).toBe('done')
+  })
+})
+
+describe('taskStats', () => {
+  it('按状态统计一个任务的视频数量', () => {
+    const id = createTask(db, input)
+    insertVideos(db, [item({ awemeId: 'S1' }), item({ awemeId: 'S2' })], id, 'douyin')
+    const vs = listVideos(db, id)
+    setVideoStatus(db, vs[0].id, 'done')
+    const s = taskStats(db, id)
+    expect(s.total).toBe(2)
+    expect(s.done).toBe(1)
+    expect(s.pending).toBe(1)
   })
 })

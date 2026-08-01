@@ -5,13 +5,23 @@ import { Card, btnPrimary, inputCls } from './ui'
 
 const STATUS_LABEL: Record<string, string> = { pending: '等待中', running: '进行中', done: '完成', paused: '已暂停', failed: '失败' }
 
-export default function TaskList() {
+export default function TaskList({ notify }: { notify: (text: string) => void }) {
   const [tasks, setTasks] = useState<TaskRow[]>([])
   const [videos, setVideos] = useState<Record<number, VideoRow[]>>({})
   const [expanded, setExpanded] = useState<Set<number>>(new Set())
   const [selected, setSelected] = useState<Set<number>>(new Set())
+  const [stats, setStats] = useState<Record<number, { total: number; done: number; failed: number; downloading: number; pending: number; filtered: number }>>({})
 
-  const refresh = () => { void api.listTasks().then(setTasks) }
+  const refresh = () => {
+    void api.listTasks().then(ts => {
+      setTasks(ts)
+      void Promise.all(ts.map(t => api.getTaskStats(t.id))).then(all => {
+        const m: Record<number, { total: number; done: number; failed: number; downloading: number; pending: number; filtered: number }> = {}
+        ts.forEach((t, i) => { m[t.id] = all[i] })
+        setStats(m)
+      })
+    })
+  }
 
   useEffect(() => {
     refresh()
@@ -52,6 +62,8 @@ export default function TaskList() {
       <div className="space-y-2">
         {tasks.map(t => {
           const pct = t.target_count ? Math.min(100, Math.round((t.fetched_count / t.target_count) * 100)) : 0
+          const s = stats[t.id]
+          const dp = s && s.total ? Math.min(100, Math.round((s.done / s.total) * 100)) : 0
           return (
             <div key={t.id} className="rounded-md border border-zinc-200 p-3">
               <div className="flex items-center gap-3 text-sm">
@@ -74,6 +86,14 @@ export default function TaskList() {
                 )}
                 <button className="text-xs text-red-400" onClick={() => { void api.deleteTask(t.id).then(refresh) }}>删除</button>
               </div>
+              {s && s.total > 0 && (
+                <div className="mt-1 flex items-center gap-2 text-[11px] text-zinc-500">
+                  <span>下载 {s.done}/{s.total}{s.downloading > 0 ? `（下载中 ${s.downloading}）` : ''}{s.failed > 0 ? `（失败 ${s.failed}）` : ''}</span>
+                  <div className="h-1.5 w-32 overflow-hidden rounded bg-zinc-200">
+                    <div className="h-full bg-emerald-500" style={{ width: `${dp}%` }} />
+                  </div>
+                </div>
+              )}
               {t.status === 'paused' && t.error === 'stalled_verify' && (
                 <div className="mt-2 rounded bg-amber-50 px-3 py-1.5 text-xs text-amber-700">
                   任务可能触发验证，请到「内置浏览器」完成验证（滑块/扫码）后点「继续」

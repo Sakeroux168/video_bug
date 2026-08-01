@@ -7,6 +7,7 @@ const api = {
   createTask: (input: CreateTaskInput): Promise<{ id: number | null; skipped: boolean; reason?: string }> => ipcRenderer.invoke('task:create', input),
   listTasks: (): Promise<TaskRow[]> => ipcRenderer.invoke('task:list'),
   listTaskVideos: (taskId: number): Promise<VideoRow[]> => ipcRenderer.invoke('task:video:list', taskId),
+  getTaskStats: (taskId: number): Promise<{ total: number; done: number; failed: number; downloading: number; pending: number; filtered: number }> => ipcRenderer.invoke('task:stats', taskId),
   pauseTask: (id: number): Promise<void> => ipcRenderer.invoke('task:pause', id),
   resumeTask: (id: number): Promise<void> => ipcRenderer.invoke('task:resume', id),
   deleteTask: (id: number): Promise<void> => ipcRenderer.invoke('task:delete', id),
