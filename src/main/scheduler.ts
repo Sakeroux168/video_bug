@@ -181,12 +181,12 @@ export class Scheduler {
         // 保守起见：连续空数据→风控，暂停任务（真实风控判定以"连续N轮无有效数据"为信号，不额外发探针请求）
         this.aborted = true
       }
-      return
+      return { items: items.length, kept: 0 }
     }
     this.emptyRounds = 0
 
     for (const item of kept) {
-      if (this.aborted) return
+      if (this.aborted) return { items: items.length, kept: kept.length }
       if (this.aiEnabled && this.deps.analyzer) {
         try {
           const text = `${item.title}\n作者:${item.authorNickname}\n时长:${item.durationSec}s`
