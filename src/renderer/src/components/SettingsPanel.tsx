@@ -28,10 +28,20 @@ export default function SettingsPanel() {
   return (
     <div className="max-w-2xl space-y-4">
       <Card title="下载">
-        <label className="flex flex-col gap-1 text-xs text-zinc-500">
-          下载目录
-          <input className={inputCls} value={s.downloadDir} onChange={e => set('downloadDir', e.target.value)} />
-        </label>
+        <div className="flex items-end gap-2 text-xs text-zinc-500">
+          <label className="flex flex-1 flex-col gap-1">
+            下载目录
+            <input className={inputCls} value={s.downloadDir} onChange={e => set('downloadDir', e.target.value)} />
+          </label>
+          <button type="button" className="rounded-md border border-zinc-300 px-3 py-1.5 hover:bg-zinc-100"
+            onClick={async () => { const dir = await api.pickDownloadDir(); if (dir) set('downloadDir', dir) }}>
+            浏览…
+          </button>
+          <button type="button" className="rounded-md border border-zinc-300 px-3 py-1.5 hover:bg-zinc-100"
+            onClick={() => void api.openDir(s.downloadDir)}>
+            打开
+          </button>
+        </div>
       </Card>
       <Card title="AI 配置（OpenAI 兼容）">
         <div className="space-y-3 text-xs text-zinc-500">

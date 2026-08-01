@@ -1,6 +1,6 @@
-import { ipcMain, BrowserWindow } from 'electron'
+import { ipcMain, BrowserWindow, dialog, shell } from 'electron'
 import type { DatabaseSync } from 'node:sqlite'
-import { createTask, listTasks, listVideos, listAuthors, setTaskStatus, setVideoStatus } from './db'
+import { createTask, listTasks, listVideos, listAuthors, setTaskStatus, setVideoStatus, updateAuthorCategory } from './db'
 import { getSettings, saveSettings } from './settings'
 import { listAdapters } from './adapters'
 import type { Scheduler } from './scheduler'
@@ -28,9 +28,15 @@ export function registerIpc(deps: IpcDeps): void {
   ipcMain.handle('platforms:list', () => listAdapters())
 
   ipcMain.handle('task:create', (_e, input: Parameters<typeof createTask>[1]) => {
+    // #5 重复作者不再爬取：作者已在库中则跳过
+    if (input.type === 'author') {
+      const existing = db.prepare('SELECT id FROM authors WHERE platform = ? AND sec_uid = ?')
+        .get(input.platform, input.query) as { id: number } | undefined
+      if (existing) return { id: null, skipped: true, reason: '该作者已爬取过，可在作者表格中直接管理' }
+    }
     const id = createTask(db, input)
     deps.enqueueTask(id)
-    return id
+    return { id, skipped: false }
   })
 
   ipcMain.handle('task:list', () => listTasks(db))
@@ -48,6 +54,10 @@ export function registerIpc(deps: IpcDeps): void {
   })
 
   ipcMain.handle('authors:list', () => listAuthors(db))
+  ipcMain.handle('authors:updateCategory', (_e, id: number, category: string) => {
+    updateAuthorCategory(db, id, category)
+    return true
+  })
 
   ipcMain.handle('settings:get', () => getSettings())
   ipcMain.handle('settings:save', (_e, s: Parameters<typeof saveSettings>[0]) => {
@@ -67,4 +77,14 @@ export function registerIpc(deps: IpcDeps): void {
 
   ipcMain.handle('browser:show', () => browser.setVisible(true))
   ipcMain.handle('browser:hide', () => browser.setVisible(false))
+
+  // 选择下载目录（#1）
+  ipcMain.handle('dialog:pickDir', async () => {
+    const { canceled, filePaths } = await dialog.showOpenDialog(deps.getWindow(), {
+      title: '选择下载目录', properties: ['openDirectory', 'createDirectory']
+    })
+    return canceled || filePaths.length === 0 ? null : filePaths[0]
+  })
+  // 在系统文件管理器中打开某个目录（#8）
+  ipcMain.handle('dialog:openDir', (_e, p: string) => { void shell.openPath(p) })
 }
