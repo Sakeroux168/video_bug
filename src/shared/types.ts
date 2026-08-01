@@ -53,6 +53,8 @@ export interface AppSettings {
   downloadConcurrency: number
   scrollIntervalMs: number
   addressTtlMin: number
+  /** 勾选=允许重复爬取已爬过主页的作者；取消=去重跳过 */
+  allowDuplicateAuthor: boolean
 }
 
 export const ERROR = {

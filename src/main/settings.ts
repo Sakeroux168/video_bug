@@ -10,7 +10,8 @@ const DEFAULTS: AppSettings = {
   aiModel: 'gpt-4o-mini',
   downloadConcurrency: 3,
   scrollIntervalMs: 2000,
-  addressTtlMin: 30
+  addressTtlMin: 30,
+  allowDuplicateAuthor: false
 }
 
 export function settingsFile(): string {

@@ -1,6 +1,6 @@
 import { ipcMain, BrowserWindow, dialog, shell } from 'electron'
 import type { DatabaseSync } from 'node:sqlite'
-import { createTask, listTasks, listVideos, listAuthors, setTaskStatus, setVideoStatus, updateAuthorCategory, deleteAuthors } from './db'
+import { createTask, listTasks, listVideos, listAuthors, setTaskStatus, setVideoStatus, updateAuthorCategory, deleteAuthors, taskStats } from './db'
 import { getSettings, saveSettings } from './settings'
 import { listAdapters } from './adapters'
 import type { Scheduler } from './scheduler'
@@ -30,11 +30,12 @@ export function registerIpc(deps: IpcDeps): void {
   ipcMain.handle('platforms:list', () => listAdapters())
 
   ipcMain.handle('task:create', (_e, input: Parameters<typeof createTask>[1]) => {
-    // #5 重复作者不再爬取：作者已在库中则跳过
-    if (input.type === 'author') {
-      const existing = db.prepare('SELECT id FROM authors WHERE platform = ? AND sec_uid = ?')
-        .get(input.platform, input.query) as { id: number } | undefined
-      if (existing) return { id: null, skipped: true, reason: '该作者已爬取过，可在作者表格中直接管理' }
+    // 作者去重：仅当该作者的"主页爬取"任务已完成才跳过（作者在搜索里出现过不算爬过主页）。
+    // 设置里勾选"允许重复爬取作者"时放行。
+    if (input.type === 'author' && !getSettings().allowDuplicateAuthor) {
+      const done = db.prepare("SELECT id FROM tasks WHERE type='author' AND query=? AND status='done' LIMIT 1")
+        .get(input.query) as { id: number } | undefined
+      if (done) return { id: null, skipped: true, reason: '该作者主页已爬取过，可在作者表格中直接管理' }
     }
     const id = createTask(db, input)
     deps.enqueueTask(id)
@@ -43,6 +44,7 @@ export function registerIpc(deps: IpcDeps): void {
 
   ipcMain.handle('task:list', () => listTasks(db))
   ipcMain.handle('task:video:list', (_e, taskId: number) => listVideos(db, taskId))
+  ipcMain.handle('task:stats', (_e, taskId: number) => taskStats(db, taskId))
   ipcMain.handle('task:pause', (_e, id: number) => { scheduler.pause(); setTaskStatus(db, id, 'paused', 'user') })
   ipcMain.handle('task:resume', (_e, id: number) => { void scheduler.run(id) })
   ipcMain.handle('task:delete', (_e, id: number) => { db.prepare('DELETE FROM videos WHERE task_id=?').run(id); db.prepare('DELETE FROM tasks WHERE id=?').run(id) })

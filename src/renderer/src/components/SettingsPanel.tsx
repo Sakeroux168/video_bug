@@ -75,6 +75,10 @@ export default function SettingsPanel() {
             <input type="number" className={inputCls} value={s.addressTtlMin} onChange={e => set('addressTtlMin', Number(e.target.value))} />
           </label>
         </div>
+        <label className="mt-3 flex items-center gap-2 text-xs text-zinc-600">
+          <input type="checkbox" checked={s.allowDuplicateAuthor} onChange={e => set('allowDuplicateAuthor', e.target.checked)} />
+          允许重复爬取已爬过主页的作者（取消勾选则自动去重跳过）
+        </label>
       </Card>
       <div className="flex items-center gap-3">
         <button className={btnPrimary} onClick={() => void save()}>保存设置</button>
