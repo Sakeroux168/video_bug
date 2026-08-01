@@ -17,7 +17,16 @@ export default function App(): JSX.Element {
 
   return (
     <div className="flex h-screen flex-col bg-zinc-50 text-zinc-800">
-      <header className="border-b border-zinc-200 bg-white px-4 py-2 text-base font-semibold">视频爬取工具</header>
+      <header className="flex items-center justify-between border-b border-zinc-200 bg-white px-4 py-2">
+        <span className="text-base font-semibold">视频爬取工具</span>
+        <button
+          type="button"
+          className="rounded-md border border-zinc-300 px-2 py-0.5 text-xs text-zinc-500 hover:bg-zinc-100"
+          onClick={() => void api.openBrowserDevtools()}
+        >
+          抖音调试控制台
+        </button>
+      </header>
       <Tabs
         active={tab} onChange={k => {
           setTab(k)
