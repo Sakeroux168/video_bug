@@ -90,4 +90,6 @@ export function registerIpc(deps: IpcDeps): void {
   })
   // 在系统文件管理器中打开某个目录（#8）
   ipcMain.handle('dialog:openDir', (_e, p: string) => { void shell.openPath(p) })
+  // 定位已下载的视频文件（在资源管理器中选中该文件）
+  ipcMain.handle('video:locate', (_e, p: string) => { if (p) shell.showItemInFolder(p) })
 }
