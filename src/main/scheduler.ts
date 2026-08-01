@@ -151,10 +151,22 @@ export class Scheduler {
     }
   }
 
+  /** 只处理当前任务类型对应的接口响应，避免把推荐页/自己主页等无关 feed 当结果爬进来（用户反馈爬到了不该爬的内容） */
+  private matchesTaskEndpoint(rawUrl: string): boolean {
+    if (!this.task) return false
+    switch (this.task.type) {
+      case 'keyword': return /\/aweme\/v1\/web\/search\//.test(rawUrl) // 关键词搜索
+      case 'author': return /\/aweme\/v1\/web\/aweme\/post\//.test(rawUrl) // 作者主页视频列表
+      case 'hashtag': return /\/aweme\/v1\/web\/challenge\//.test(rawUrl) || /\/aweme\/v1\/web\/search\//.test(rawUrl)
+      default: return false
+    }
+  }
+
   /** 主进程从 ipcMain 'dy:raw' 调用来处理一个原始 JSON（任务期间持续被调用）。browser.onRaw 方法不存在，消息统一走这里。 */
   async handleRaw(adapter: PlatformAdapter, rawUrl: string, json: unknown): Promise<void> {
     if (this.taskId === 0 || this.adapter !== adapter) return
     if (!adapter.apiUrlPatterns.some(r => r.test(rawUrl))) return
+    if (!this.matchesTaskEndpoint(rawUrl)) return
     this.rawSinceLastRound = true
     const db = this.deps.db
     const filters = this.filters
