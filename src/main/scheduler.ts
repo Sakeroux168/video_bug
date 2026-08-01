@@ -49,6 +49,7 @@ export class Scheduler {
   private organizeTaskId = 0
   private pendingVideoIds: number[] = []
   private running = false
+  private task: TaskRow | null = null
 
   /** 供主进程任务队列判断当前是否有任务在跑（避免重复入队/串行丢任务） */
   get isRunning(): boolean { return this.running }
@@ -85,6 +86,7 @@ export class Scheduler {
     this.running = true
     try {
       this.taskId = taskId
+      this.task = task
       this.adapter = adapter
       this.filters = JSON.parse(task.filters) as Filters
       this.seen = new Set<string>((db.prepare('SELECT aweme_id FROM videos WHERE platform=?').all(task.platform) as Array<{ aweme_id: string }>).map(r => r.aweme_id))
@@ -136,6 +138,7 @@ export class Scheduler {
       // I5 清理残留任务上下文：handleRaw 的 taskId===0 守卫会拒绝任务结束后的任何流量，
       // 避免浏览流量污染已完成任务。organizeEnabled/TaskId 保留供迟到的下载完成继续整理。
       this.taskId = 0
+      this.task = null
       this.adapter = null
       this.filters = null
       this.pendingVideoIds = []
@@ -181,7 +184,11 @@ export class Scheduler {
           }
         } catch { /* AI 失败降级：视为通过 */ }
       }
-      const author = upsertAuthor(db, item, adapter.name, extractCategory(item.title))
+      // #4 关键词任务：品类直接用搜索词（如搜"农村搞笑"→品类"农村搞笑"）；其它类型用视频第一个 #话题
+      const category = this.task?.type === 'keyword' && this.task.query
+        ? this.task.query.slice(0, 20)
+        : extractCategory(item.title)
+      const author = upsertAuthor(db, item, adapter.name, category)
       const info = db.prepare(
         `INSERT OR IGNORE INTO videos (platform,task_id,aweme_id,title,author_id,play_addr,duration,publish_time,stats,status,ai_verdict,fetched_at)
          VALUES (?,?,?,?,?,?,?,?,?, 'pending','pass',?)`
