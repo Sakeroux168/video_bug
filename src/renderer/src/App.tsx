@@ -1,3 +1,38 @@
+import React, { useState } from 'react'
+import { Tabs } from './components/ui'
+import FilterForm from './components/FilterForm'
+import { api } from './api'
+import type { CreateTaskInput } from '../../shared/types'
+
 export default function App(): JSX.Element {
-  return <div className="flex h-screen items-center justify-center text-lg">视频爬取工具</div>
+  const [tab, setTab] = useState('panel')
+
+  async function startTask(input: CreateTaskInput): Promise<void> {
+    await api.createTask(input)
+  }
+
+  return (
+    <div className="flex h-screen flex-col bg-zinc-50 text-zinc-800">
+      <header className="border-b border-zinc-200 bg-white px-4 py-2 text-base font-semibold">视频爬取工具</header>
+      <Tabs
+        active={tab} onChange={k => {
+          setTab(k)
+          if (k === 'browser') void api.showBrowser()
+          else void api.hideBrowser()
+        }}
+        tabs={[{ key: 'panel', label: '管理面板' }, { key: 'browser', label: '内置浏览器' }, { key: 'settings', label: '设置' }]}
+      />
+      <main className="flex-1 overflow-auto p-4">
+        {tab === 'panel' && (
+          <div className="space-y-4">
+            <FilterForm onSubmit={startTask} />
+            {/* Task 13 任务列表 / 作者收藏 */}
+            <div id="task-list-slot" className="text-sm text-zinc-400">任务列表区域（下一步实现）</div>
+            <div id="authors-slot" className="text-sm text-zinc-400">作者收藏区域（下一步实现）</div>
+          </div>
+        )}
+        {tab === 'settings' && <div className="text-sm text-zinc-400">设置页（下一步实现）</div>}
+      </main>
+    </div>
+  )
 }
