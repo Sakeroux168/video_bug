@@ -1,12 +1,11 @@
 import { ipcMain, BrowserWindow } from 'electron'
 import type { DatabaseSync } from 'node:sqlite'
-import { createTask, listTasks, listVideos, listAuthors, setTaskStatus, setVideoStatus, listPendingVideos } from './db'
+import { createTask, listTasks, listVideos, listAuthors, setTaskStatus, setVideoStatus } from './db'
 import { getSettings, saveSettings } from './settings'
 import { listAdapters } from './adapters'
 import type { Scheduler } from './scheduler'
 import type { Downloader } from './downloader'
 import { Analyzer } from './analyzer'
-import { getAdapter } from './adapters'
 import type { VideoBrowser } from './browser'
 
 export interface IpcDeps {
@@ -21,7 +20,7 @@ export interface IpcDeps {
 export function registerIpc(deps: IpcDeps): void {
   const { db, scheduler, downloader, browser } = deps
 
-  ipcMain.handle('api:ping', () => 'pong')
+  ipcMain.on('api:ping', (e) => { e.returnValue = 'pong' })
   ipcMain.handle('platforms:list', () => listAdapters())
 
   ipcMain.handle('task:create', (_e, input: Parameters<typeof createTask>[1]) => {
