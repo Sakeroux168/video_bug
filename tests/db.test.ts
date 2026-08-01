@@ -48,6 +48,15 @@ describe('db', () => {
     expect(authors[0].video_count).toBe(2)
   })
 
+  it('重复视频不虚增 author.video_count', () => {
+    const id = createTask(db, input)
+    insertVideos(db, [item()], id, 'douyin')
+    insertVideos(db, [item()], id, 'douyin')
+    expect(listAuthors(db)[0].video_count).toBe(1)
+    insertVideos(db, [item({ awemeId: 'AW2' })], id, 'douyin')
+    expect(listAuthors(db)[0].video_count).toBe(2)
+  })
+
   it('setVideoStatus 更新状态', () => {
     const id = createTask(db, input)
     insertVideos(db, [item()], id, 'douyin')

@@ -99,19 +99,20 @@ export function getRunningTasks(db: DatabaseSync): TaskRow[] {
   return db.prepare("SELECT * FROM tasks WHERE status = 'running'").all() as unknown as TaskRow[]
 }
 
-export function upsertAuthor(db: DatabaseSync, item: VideoItem, platform: string): number {
+export function upsertAuthor(db: DatabaseSync, item: VideoItem, platform: string): { id: number; created: boolean } {
   const now = new Date().toISOString()
-  db.prepare(
-    `INSERT INTO authors (platform, sec_uid, nickname, home_url, video_count, last_fetched_at)
-     VALUES (?, ?, ?, ?, 1, ?)
-     ON CONFLICT(platform, sec_uid) DO UPDATE SET
-       nickname = excluded.nickname,
-       home_url = excluded.home_url,
-       video_count = authors.video_count + 1,
-       last_fetched_at = excluded.last_fetched_at`
+  const info = db.prepare(
+    `INSERT OR IGNORE INTO authors (platform, sec_uid, nickname, home_url, video_count, last_fetched_at)
+     VALUES (?, ?, ?, ?, 1, ?)`
   ).run(platform, item.authorSecUid, item.authorNickname, item.authorHomeUrl, now)
+  const created = info.changes > 0
+  if (!created) {
+    db.prepare(
+      `UPDATE authors SET nickname = ?, home_url = ?, last_fetched_at = ? WHERE platform = ? AND sec_uid = ?`
+    ).run(item.authorNickname, item.authorHomeUrl, now, platform, item.authorSecUid)
+  }
   const row = db.prepare('SELECT id FROM authors WHERE platform = ? AND sec_uid = ?').get(platform, item.authorSecUid) as { id: number }
-  return row.id
+  return { id: row.id, created }
 }
 
 export function listAuthors(db: DatabaseSync, platform?: string): AuthorRow[] {
@@ -127,16 +128,18 @@ export function insertVideos(db: DatabaseSync, items: VideoItem[], taskId: numbe
        (platform, task_id, aweme_id, title, author_id, play_addr, duration, publish_time, stats, fetched_at)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   )
-  const authorStmt = db.prepare('SELECT id FROM authors WHERE platform = ? AND sec_uid = ?')
+  const bumpAuthorStmt = db.prepare('UPDATE authors SET video_count = video_count + 1 WHERE id = ?')
   for (const it of items) {
-    const authorId = upsertAuthor(db, it, platform)
+    const { id: authorId, created } = upsertAuthor(db, it, platform)
     const info = stmt.run(
       platform, taskId, it.awemeId, it.title, authorId, it.playUrl,
       it.durationSec, new Date(it.publishTime * 1000).toISOString(), JSON.stringify({ likes: it.likes }), now
     )
-    if (info.changes > 0) inserted++
+    if (info.changes > 0) {
+      inserted++
+      if (!created) bumpAuthorStmt.run(authorId)
+    }
   }
-  void authorStmt
   return inserted
 }
 
