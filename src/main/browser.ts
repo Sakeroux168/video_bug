@@ -73,14 +73,23 @@ export class VideoBrowser {
         });
         for (const b of btns.slice(0, 2)) { try { b.click(); } catch (e) {} }
       };
-      for (let round = 0; round < 3; round++) {
-        for (let i = 0; i < 6; i++) {
+      // 模拟真实鼠标滚轮事件（部分站点只监听 wheel，程序化 scrollTop 不触发加载）
+      const wheel = (dy) => {
+        try {
+          window.dispatchEvent(new WheelEvent('wheel', { deltaY: dy, bubbles: true, cancelable: true, clientX: 300, clientY: 300 }));
+          document.dispatchEvent(new WheelEvent('wheel', { deltaY: dy, bubbles: true, cancelable: true, clientX: 300, clientY: 300 }));
+        } catch (e) {}
+      };
+      for (let round = 0; round < 4; round++) {
+        for (let i = 0; i < 8; i++) {
           targets.forEach(t => { try { t.scrollTop += 700; } catch (e) {} });
-          await sleep(260);
+          wheel(700);
+          await sleep(280);
         }
         targets.forEach(t => { try { t.scrollTop = t.scrollHeight; } catch (e) {} });
+        wheel(2000);
         clickMore();
-        await sleep(500);
+        await sleep(600);
       }
       return targets.length;
     })()`
