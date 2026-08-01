@@ -124,6 +124,14 @@ export function updateAuthorCategory(db: DatabaseSync, id: number, category: str
   db.prepare('UPDATE authors SET category = ? WHERE id = ?').run(category, id)
 }
 
+/** 删除作者及其关联视频（#3：不要的作者整组清理） */
+export function deleteAuthors(db: DatabaseSync, ids: number[]): void {
+  if (!ids.length) return
+  const ph = ids.map(() => '?').join(',')
+  db.prepare(`DELETE FROM videos WHERE author_id IN (${ph})`).run(...(ids as unknown as SQLInputValue[]))
+  db.prepare(`DELETE FROM authors WHERE id IN (${ph})`).run(...(ids as unknown as SQLInputValue[]))
+}
+
 export function listAuthors(db: DatabaseSync, platform?: string): AuthorRow[] {
   if (platform) return db.prepare('SELECT * FROM authors WHERE platform = ? ORDER BY video_count DESC').all(platform) as unknown as AuthorRow[]
   return db.prepare('SELECT * FROM authors ORDER BY video_count DESC').all() as unknown as AuthorRow[]

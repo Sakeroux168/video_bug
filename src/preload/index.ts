@@ -13,6 +13,7 @@ const api = {
   retryVideos: (ids: number[]): Promise<boolean> => ipcRenderer.invoke('video:retry', ids),
   listAuthors: (): Promise<AuthorRow[]> => ipcRenderer.invoke('authors:list'),
   updateAuthorCategory: (id: number, category: string): Promise<boolean> => ipcRenderer.invoke('authors:updateCategory', id, category),
+  deleteAuthors: (ids: number[]): Promise<boolean> => ipcRenderer.invoke('authors:delete', ids),
   getSettings: (): Promise<AppSettings> => ipcRenderer.invoke('settings:get'),
   saveSettings: (s: AppSettings): Promise<void> => ipcRenderer.invoke('settings:save', s),
   testAi: (): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke('ai:test'),
