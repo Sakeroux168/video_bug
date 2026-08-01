@@ -17,29 +17,20 @@ let scheduler: Scheduler | null = null
 let analyzer: Analyzer | null = null
 let taskRunning = false
 let browserShown = false
-let pinPiP = false
+let forceBrowserFull = false
 
 /** 根据任务状态与用户所在标签决定内置浏览器显示方式：
- *  任务运行中 → 始终可见（用户在浏览器标签=全屏，否则右下角小窗保活，避免页面被隐藏导致加载更多不触发）；
- *  验证暂停 → 右下角小窗保持显示（pinPiP），方便用户看到验证界面；
- *  无任务 → 仅在浏览器标签时显示 */
+ *  任务运行中 / 验证暂停 → 浏览器保持全屏（页面完整不跳小窗；验证时强制全屏方便过验证）；
+ *  无任务 → 仅在用户切到浏览器标签时显示 */
 function updateBrowserDisplay(): void {
   if (!browser) return
-  if (taskRunning) {
-    browser.setVisible(true)
-    browser.setPiP(!browserShown)
-  } else if (pinPiP) {
-    browser.setVisible(true)
-    browser.setPiP(true)
-  } else {
-    browser.setPiP(false)
-    browser.setVisible(browserShown)
-  }
+  if (taskRunning || forceBrowserFull) browser.setVisible(true)
+  else browser.setVisible(browserShown)
 }
 
 function setBrowserVisible(v: boolean): void {
   browserShown = v
-  if (v) pinPiP = false // 用户主动切到浏览器标签，取消钉住
+  if (v) forceBrowserFull = false // 用户主动切到浏览器标签，解除强制全屏
   updateBrowserDisplay()
 }
 
@@ -86,22 +77,23 @@ function push(evt: unknown): void {
   if (t) {
     if (t.type === 'task:progress' && t.status === 'running') {
       taskRunning = true
+      forceBrowserFull = false
       updateBrowserDisplay()
     }
     if (t.type === 'task:done') {
       taskRunning = false
-      pinPiP = false
+      forceBrowserFull = false
       updateBrowserDisplay()
       void dequeueAndRun() // 只有真正完成才放行下一个排队任务
     }
     if (t.type === 'task:paused') {
       taskRunning = false
       if (t.reason === 'stalled_verify') {
-        // 触发验证：钉住右下角小窗显示验证界面，并提示用户；不自动放行下一个任务
-        pinPiP = true
+        // 触发验证：强制浏览器全屏显示验证界面，并提示用户；不自动放行下一个任务
+        forceBrowserFull = true
         updateBrowserDisplay()
         win?.webContents.send('evt:task:notice', {
-          type: 'stalled_verify', text: '任务可能触发验证，请在右下角/内置浏览器完成验证后点「继续」'
+          type: 'stalled_verify', text: '任务可能触发验证，请在浏览器完成验证后点「继续」'
         })
       } else {
         updateBrowserDisplay()

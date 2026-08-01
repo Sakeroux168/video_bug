@@ -9,7 +9,6 @@ const TOP_OFFSET = 96
 export class VideoBrowser {
   private view: WebContentsView | null = null
   private visible = false
-  private pip = false
 
   constructor(
     private host: BrowserWindow,
@@ -84,17 +83,19 @@ export class VideoBrowser {
           document.dispatchEvent(new WheelEvent('wheel', { deltaY: dy, bubbles: true, cancelable: true, clientX: 300, clientY: 300 }));
         } catch (e) {}
       };
+      // 放慢节奏：单步小、间隔长，每轮到底后多停一会儿让页面把当页结果加载完，避免漏抓
       for (let round = 0; round < 4; round++) {
-        for (let i = 0; i < 8; i++) {
-          targets.forEach(t => { try { t.scrollTop += 700; } catch (e) {} });
-          wheel(700);
-          await sleep(280);
+        for (let i = 0; i < 10; i++) {
+          targets.forEach(t => { try { t.scrollTop += 500; } catch (e) {} });
+          wheel(500);
+          await sleep(450);
         }
         targets.forEach(t => { try { t.scrollTop = t.scrollHeight; } catch (e) {} });
-        wheel(2000);
+        wheel(1500);
         clickMore();
-        await sleep(600);
+        await sleep(1200);
       }
+      await sleep(1500); // 最后再等一拍，等网络/渲染落定
       return targets.length;
     })()`
     await this.view.webContents.executeJavaScript(script).catch(() => {})
@@ -107,23 +108,12 @@ export class VideoBrowser {
     this.view.setVisible(v)
   }
 
-  /** 任务运行时把视图缩成右下角小窗：既保持页面活跃（触发加载更多），又不挡管理面板 */
-  setPiP(active: boolean): void {
-    this.pip = active
-    if (this.visible) this.applyBounds()
-  }
-
   /** 视图置于渲染层下方，顶部留出标题+标签栏高度，避免整窗覆盖后无法切回面板 */
   private applyBounds(): void {
     if (!this.view) return
     const [w, h] = this.host.getContentSize()
-    if (this.pip) {
-      const pw = Math.min(520, Math.round(w * 0.5)), ph = Math.min(320, Math.round(h * 0.4))
-      this.view.setBounds({ x: Math.max(0, w - pw - 12), y: Math.max(0, h - ph - 12), width: pw, height: ph })
-    } else {
-      const top = Math.min(TOP_OFFSET, h)
-      this.view.setBounds({ x: 0, y: top, width: w, height: Math.max(0, h - top) })
-    }
+    const top = Math.min(TOP_OFFSET, h)
+    this.view.setBounds({ x: 0, y: top, width: w, height: Math.max(0, h - top) })
   }
 
   /** 打开抖音页面的开发者工具（调试用） */
