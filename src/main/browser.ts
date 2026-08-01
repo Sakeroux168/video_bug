@@ -25,11 +25,24 @@ export class VideoBrowser {
     this.host.contentView.addChildView(view)
     this.view = view
 
-    view.webContents.on('did-finish-load', () => {
-      void view.webContents.executeJavaScript(this.inject).catch(() => { /* 页面脚本执行失败不影响主流程 */ })
+    const wc = view.webContents
+    // 关键：隐藏/切后台时不被 Chromium 节流，否则切到管理面板后页面停止发请求，爬取到一页就停
+    wc.setBackgroundThrottling(false)
+    // 拦截自定义协议（bytedance:// 等）：不走 Windows 协议处理，避免弹微软商店
+    wc.on('will-navigate', (e, url) => {
+      if (!/^https?:/.test(url)) e.preventDefault()
     })
-    view.webContents.on('did-navigate', () => {
-      void view.webContents.executeJavaScript(this.inject).catch(() => { /* ignore */ })
+    // 一律不允许页面开新窗口/新标签（也拦截协议型 window.open）
+    wc.setWindowOpenHandler(({ url }) => {
+      if (/^https?:/.test(url)) void import('electron').then(({ shell }) => shell.openExternal(url))
+      return { action: 'deny' }
+    })
+
+    wc.on('did-finish-load', () => {
+      void wc.executeJavaScript(this.inject).catch(() => { /* 页面脚本执行失败不影响主流程 */ })
+    })
+    wc.on('did-navigate', () => {
+      void wc.executeJavaScript(this.inject).catch(() => { /* ignore */ })
     })
   }
 
@@ -39,9 +52,21 @@ export class VideoBrowser {
     await wc.loadURL(url)
   }
 
+  /** 渐进滚动到底：分步滚动更易触发抖音的"加载更多"（一次性跳底常被忽略） */
   async scrollToBottom(): Promise<void> {
     if (!this.view) return
-    await this.view.webContents.executeJavaScript('window.scrollTo(0, document.body.scrollHeight)').catch(() => {})
+    const script = `(async () => {
+      const step = () => new Promise(r => setTimeout(r, 350));
+      const h0 = document.body.scrollHeight;
+      window.scrollBy(0, 1600);
+      await step();
+      window.scrollBy(0, 2000);
+      await step();
+      window.scrollTo(0, document.body.scrollHeight);
+      await step();
+      return document.body.scrollHeight;
+    })()`
+    await this.view.webContents.executeJavaScript(script).catch(() => {})
   }
 
   setVisible(v: boolean): void {
