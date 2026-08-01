@@ -3,6 +3,8 @@ import { Tabs } from './components/ui'
 import FilterForm from './components/FilterForm'
 import TaskList from './components/TaskList'
 import AuthorCollection from './components/AuthorCollection'
+import BrowserPanel from './components/BrowserPanel'
+import SettingsPanel from './components/SettingsPanel'
 import { api } from './api'
 import type { CreateTaskInput } from '../../shared/types'
 
@@ -32,7 +34,8 @@ export default function App(): JSX.Element {
             <AuthorCollection />
           </div>
         )}
-        {tab === 'settings' && <div className="text-sm text-zinc-400">设置页（下一步实现）</div>}
+        {tab === 'browser' && <BrowserPanel />}
+        {tab === 'settings' && <SettingsPanel />}
       </main>
     </div>
   )
