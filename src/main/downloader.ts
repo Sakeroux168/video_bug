@@ -82,19 +82,25 @@ export class Downloader {
       const finalName = ensureUniqueName(this.settings.downloadDir, `${name}.mp4`)
       const dest = join(this.settings.downloadDir, finalName)
 
-      const res = await this.fetchImpl(row.play_addr!, {
-        headers: { 'user-agent': buildUserAgent(row.platform), referer: `https://www.${row.platform}.com/` }
-      })
-      if (!res.ok || !res.body) throw new Error(`http_${res.status}`)
-      // Response.body 是 Web ReadableStream，不是 Node 流，需经 Readable.fromWeb 转成 Node Readable
-      await pipeline(Readable.fromWeb(res.body as import('stream/web').ReadableStream), createWriteStream(dest))
-
-      const size = await import('fs').then(m => m.statSync(dest).size)
-      // 校验下载内容是否真是 MP4：避免把 CDN 错误页/空文件当视频（黑屏源头之一）
-      if (size < 1024 || !(await isMp4(dest))) {
+      // 候选下载地址：原始地址优先（网页播放器即用，通常无水印）；失败/坏文件则回退 playwm→play 无水印变体
+      const candidates = [row.play_addr]
+      if (row.play_addr && row.play_addr.includes('playwm')) candidates.push(row.play_addr.replace('playwm', 'play'))
+      let size = 0
+      let lastErr: unknown = new Error('bad_mp4')
+      for (const url of candidates) {
+        const res = await this.fetchImpl(url!, {
+          headers: { 'user-agent': buildUserAgent(row.platform), referer: `https://www.${row.platform}.com/` }
+        })
+        if (!res.ok || !res.body) { lastErr = new Error(`http_${res.status}`); continue }
+        // Response.body 是 Web ReadableStream，不是 Node 流，需经 Readable.fromWeb 转成 Node Readable
+        await pipeline(Readable.fromWeb(res.body as import('stream/web').ReadableStream), createWriteStream(dest))
+        size = await import('fs').then(m => m.statSync(dest).size)
+        // 校验是否真是 MP4：避免把 CDN 错误页/空文件当视频（黑屏源头之一）
+        if (size >= 1024 && (await isMp4(dest))) { lastErr = null; break }
         await import('fs').then(m => m.rmSync(dest, { force: true }))
-        throw new Error('bad_mp4')
+        lastErr = new Error('bad_mp4')
       }
+      if (lastErr) throw lastErr
       const downloadedAt = new Date().toISOString()
       this.db.prepare("UPDATE videos SET status='done', local_path=?, file_size=?, downloaded_at=?, error=NULL WHERE id=?")
         .run(dest, size, downloadedAt, id)

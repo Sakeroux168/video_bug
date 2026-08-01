@@ -20,7 +20,7 @@ describe('douyinAdapter.parseApiJson', () => {
       awemeId: '7300000000000000001', title: '美食探店 第3期',
       authorSecUid: 'MS4wLjABAAAA1', authorNickname: '探店小王',
       authorHomeUrl: 'https://www.douyin.com/user/MS4wLjABAAAA1',
-      playUrl: 'https://v.douyin.com/xxx/play/?foo=bar',
+      playUrl: 'https://v.douyin.com/xxx/playwm/?foo=bar',
       durationSec: 45, publishTime: 1710000000, likes: 1234
     })
   })

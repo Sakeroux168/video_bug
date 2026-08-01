@@ -38,7 +38,8 @@ function parseAweme(a: unknown): VideoItem | null {
     authorSecUid: secUid,
     authorNickname: nickname,
     authorHomeUrl: secUid ? `https://www.douyin.com/user/${secUid}` : '',
-    playUrl: normalizePlayUrl(playRaw),
+    // 优先用原始地址（网页播放器即用它，通常已是无水印）；转换留作下载失败时的回退变体
+    playUrl: playRaw,
     durationSec: Math.round(Number(o.duration ?? 0) / 1000),
     publishTime: Number(o.create_time ?? 0),
     likes: Number(stats.digg_count ?? 0)
