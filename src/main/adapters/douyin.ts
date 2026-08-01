@@ -28,8 +28,19 @@ function parseAweme(a: unknown): VideoItem | null {
   const secUid = String(author.sec_uid ?? '')
   const nickname = String(author.nickname ?? '')
   const video = asObj(o.video)
-  const play = asObj(video.play_addr)
-  const playRaw = Array.isArray(play.url_list) && play.url_list.length > 0 ? String(play.url_list[0]) : ''
+  // 播放地址可能出现在多个字段：play_addr / play_url / play_addr_h264/265 / bit_rate[].play_addr
+  const firstUrl = (obj: unknown): string => {
+    const p = asObj(obj)
+    return Array.isArray(p.url_list) && p.url_list.length > 0 ? String(p.url_list[0]) : ''
+  }
+  let playRaw = firstUrl(video.play_addr) || firstUrl(video.play_url)
+    || firstUrl(video.play_addr_h264) || firstUrl(video.play_addr_265)
+  if (!playRaw && Array.isArray(video.bit_rate)) {
+    for (const br of video.bit_rate) {
+      playRaw = firstUrl(asObj(br).play_addr)
+      if (playRaw) break
+    }
+  }
   const stats = asObj(o.statistics)
   if (!id || !playRaw) return null
   return {
