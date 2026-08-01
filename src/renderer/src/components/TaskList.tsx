@@ -36,12 +36,19 @@ export default function TaskList() {
     setSelected(next)
   }
 
-  const selectedVideoIds = Object.entries(videos).flatMap(([tid, vs]) =>
-    selected.has(Number(tid)) ? [] : vs.filter(v => v.status === 'failed' && selected.has(v.id)).map(v => v.id)
-  )
+  const selectedFailedIds = [...selected].flatMap(tid => (videos[tid] ?? []).filter(v => v.status === 'failed').map(v => v.id))
 
   return (
     <Card title="任务列表">
+      <div className="mb-3">
+        <button
+          className={`${btnPrimary} !px-3 !py-1.5 !text-xs`}
+          disabled={selectedFailedIds.length === 0}
+          onClick={() => { void api.retryVideos(selectedFailedIds).then(refresh) }}
+        >
+          重试选中失败项{selectedFailedIds.length > 0 ? ` (${selectedFailedIds.length})` : ''}
+        </button>
+      </div>
       <div className="space-y-2">
         {tasks.map(t => {
           const pct = t.target_count ? Math.min(100, Math.round((t.fetched_count / t.target_count) * 100)) : 0
@@ -59,9 +66,12 @@ export default function TaskList() {
                   {STATUS_LABEL[t.status]}
                 </span>
                 <button className="text-xs text-zinc-400" onClick={() => void toggleExpand(t.id)}>{expanded.has(t.id) ? '收起' : '展开'}</button>
-                <button className="text-xs text-zinc-400" onClick={() => { void (t.status === 'running' ? api.pauseTask(t.id) : api.resumeTask(t.id)).then(refresh) }}>
-                  {t.status === 'running' ? '暂停' : t.status === 'paused' ? '继续' : ''}
-                </button>
+                {t.status === 'running' && (
+                  <button className="text-xs text-zinc-400" onClick={() => { void api.pauseTask(t.id).then(refresh) }}>暂停</button>
+                )}
+                {t.status === 'paused' && (
+                  <button className="text-xs text-zinc-400" onClick={() => { void api.resumeTask(t.id).then(refresh) }}>继续</button>
+                )}
                 <button className="text-xs text-red-400" onClick={() => { void api.deleteTask(t.id).then(refresh) }}>删除</button>
               </div>
               {expanded.has(t.id) && (
