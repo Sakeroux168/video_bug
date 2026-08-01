@@ -1,11 +1,11 @@
 import type { Filters } from '../../shared/types'
 import type { PlatformAdapter, VideoItem } from './types'
 
-/** 是否"长得像"一条抖音视频对象（有 aweme_id + video 字段） */
+/** 是否"长得像"一条抖音视频对象（有 aweme_id，且含 video/desc/author 任一视频特征字段） */
 function isAwemeLike(x: unknown): boolean {
   if (!x || typeof x !== 'object') return false
   const o = x as Record<string, unknown>
-  return 'aweme_id' in o && 'video' in o
+  return 'aweme_id' in o && ('video' in o || 'desc' in o || 'author' in o)
 }
 
 /** 深度收集视频对象：不依赖具体键名（老接口用 aweme_list，新 general/search 直接塞在 data 里）。
