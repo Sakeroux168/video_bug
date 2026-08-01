@@ -115,6 +115,8 @@ export class Scheduler {
       while (!this.aborted) {
         await sleep(this.deps.scrollIntervalMs + Math.random() * 1500)
         await this.deps.browser.scrollToBottom()
+        // 放慢节奏：滚动后多等一拍让当页结果加载完再进下一轮（生产约1.5s，测试环境按间隔缩放保持快速）
+        await sleep(Math.min(1500, this.deps.scrollIntervalMs * 2))
         // 按轮次计静默：本轮收到 raw 则重置，否则累加；与空解析轮合并判断停止
         if (this.rawSinceLastRound) this.silentRounds = 0
         else this.silentRounds++
