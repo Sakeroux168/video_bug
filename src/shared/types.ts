@@ -11,6 +11,8 @@ export interface Filters {
   duration: DurationFilter
   targetCount: number
   aiFilterRule?: string
+  aiFilterEnabled?: boolean // createTask 会把它序列化进 filters JSON 列（Task 6）
+  aiOrganizeEnabled?: boolean // 同上，任务级开关随 filters 落库
 }
 
 export interface CreateTaskInput {
