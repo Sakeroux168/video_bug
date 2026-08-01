@@ -15,6 +15,27 @@ let browser: VideoBrowser | null = null
 let downloader: Downloader | null = null
 let scheduler: Scheduler | null = null
 let analyzer: Analyzer | null = null
+let taskRunning = false
+let browserShown = false
+
+/** 根据任务状态与用户所在标签决定内置浏览器显示方式：
+ *  任务运行中 → 始终可见（用户在浏览器标签=全屏，否则右下角小窗保活，避免页面被隐藏导致加载更多不触发）；
+ *  无任务 → 仅在浏览器标签时显示 */
+function updateBrowserDisplay(): void {
+  if (!browser) return
+  if (taskRunning) {
+    browser.setVisible(true)
+    browser.setPiP(!browserShown)
+  } else {
+    browser.setPiP(false)
+    browser.setVisible(browserShown)
+  }
+}
+
+function setBrowserVisible(v: boolean): void {
+  browserShown = v
+  updateBrowserDisplay()
+}
 
 // I4 简单 FIFO 任务队列：串行执行，任务终态后自动出队跑下一个；去重防同一任务重复入队
 const pendingTasks: number[] = []
@@ -55,9 +76,12 @@ function createWindow(): void {
 
 function push(evt: unknown): void {
   win?.webContents.send('evt:task:progress', evt)
-  // 任务到达终态（done/paused）后放行下一个排队任务
-  const t = evt as { type?: string } | null
-  if (t && (t.type === 'task:done' || t.type === 'task:paused')) void dequeueAndRun()
+  const t = evt as { type?: string; status?: string } | null
+  if (t) {
+    // 任务进入 running → 浏览器保活；到达终态（done/paused）→ 恢复 + 放行下一个排队任务
+    if (t.type === 'task:progress' && t.status === 'running') { taskRunning = true; updateBrowserDisplay() }
+    if (t.type === 'task:done' || t.type === 'task:paused') { taskRunning = false; updateBrowserDisplay(); void dequeueAndRun() }
+  }
 }
 
 app.whenReady().then(() => {
@@ -85,7 +109,8 @@ app.whenReady().then(() => {
     db, scheduler, downloader, analyzer, browser,
     getWindow: () => win!,
     reloadAnalyzer,
-    enqueueTask
+    enqueueTask,
+    setBrowserVisible
   })
 
   void browser.init().then(() => {

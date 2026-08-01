@@ -1,6 +1,6 @@
 import { ipcMain, BrowserWindow, dialog, shell } from 'electron'
 import type { DatabaseSync } from 'node:sqlite'
-import { createTask, listTasks, listVideos, listAuthors, setTaskStatus, setVideoStatus, updateAuthorCategory } from './db'
+import { createTask, listTasks, listVideos, listAuthors, setTaskStatus, setVideoStatus, updateAuthorCategory, deleteAuthors } from './db'
 import { getSettings, saveSettings } from './settings'
 import { listAdapters } from './adapters'
 import type { Scheduler } from './scheduler'
@@ -19,10 +19,12 @@ export interface IpcDeps {
   reloadAnalyzer: () => void
   /** 把新建任务投入 FIFO 队列（串行执行，去重） */
   enqueueTask: (id: number) => void
+  /** 渲染层切换浏览器标签时通知主进程（主进程据此结合任务状态决定显示/小窗/隐藏） */
+  setBrowserVisible: (v: boolean) => void
 }
 
 export function registerIpc(deps: IpcDeps): void {
-  const { db, scheduler, downloader, browser } = deps
+  const { db, scheduler, downloader } = deps
 
   ipcMain.on('api:ping', (e) => { e.returnValue = 'pong' })
   ipcMain.handle('platforms:list', () => listAdapters())
@@ -58,6 +60,7 @@ export function registerIpc(deps: IpcDeps): void {
     updateAuthorCategory(db, id, category)
     return true
   })
+  ipcMain.handle('authors:delete', (_e, ids: number[]) => { deleteAuthors(db, ids); return true })
 
   ipcMain.handle('settings:get', () => getSettings())
   ipcMain.handle('settings:save', (_e, s: Parameters<typeof saveSettings>[0]) => {
@@ -75,8 +78,8 @@ export function registerIpc(deps: IpcDeps): void {
     catch (err) { return { ok: false, error: String(err) } }
   })
 
-  ipcMain.handle('browser:show', () => browser.setVisible(true))
-  ipcMain.handle('browser:hide', () => browser.setVisible(false))
+  ipcMain.handle('browser:show', () => deps.setBrowserVisible(true))
+  ipcMain.handle('browser:hide', () => deps.setBrowserVisible(false))
 
   // 选择下载目录（#1）
   ipcMain.handle('dialog:pickDir', async () => {
