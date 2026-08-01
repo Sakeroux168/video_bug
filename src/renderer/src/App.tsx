@@ -1,6 +1,8 @@
 import React, { useState } from 'react'
 import { Tabs } from './components/ui'
 import FilterForm from './components/FilterForm'
+import TaskList from './components/TaskList'
+import AuthorCollection from './components/AuthorCollection'
 import { api } from './api'
 import type { CreateTaskInput } from '../../shared/types'
 
@@ -26,9 +28,8 @@ export default function App(): JSX.Element {
         {tab === 'panel' && (
           <div className="space-y-4">
             <FilterForm onSubmit={startTask} />
-            {/* Task 13 任务列表 / 作者收藏 */}
-            <div id="task-list-slot" className="text-sm text-zinc-400">任务列表区域（下一步实现）</div>
-            <div id="authors-slot" className="text-sm text-zinc-400">作者收藏区域（下一步实现）</div>
+            <TaskList />
+            <AuthorCollection />
           </div>
         )}
         {tab === 'settings' && <div className="text-sm text-zinc-400">设置页（下一步实现）</div>}
