@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { Tabs } from './components/ui'
 import FilterForm from './components/FilterForm'
 import TaskList from './components/TaskList'
@@ -12,6 +12,15 @@ export default function App(): JSX.Element {
   const [tab, setTab] = useState('panel')
   const [rawLog, setRawLog] = useState<Array<{ at: string; url: string; handled: boolean; stats?: { items: number; kept: number } }>>([])
   const [showLog, setShowLog] = useState(false)
+  const [toast, setToast] = useState<{ text: string } | null>(null)
+  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // Fix6: 固定右上角 toast，不随内容滚动消失
+  function notify(text: string): void {
+    setToast({ text })
+    if (toastTimer.current) clearTimeout(toastTimer.current)
+    toastTimer.current = setTimeout(() => setToast(null), 3000)
+  }
 
   async function startTask(input: CreateTaskInput): Promise<{ id: number | null; skipped: boolean; reason?: string }> {
     return api.createTask(input)
@@ -20,6 +29,15 @@ export default function App(): JSX.Element {
     setRawLog(await api.getRawLog())
     setShowLog(true)
   }
+
+  // 主进程主动通知（如触发验证暂停）→ 显示为固定 toast
+  useEffect(() => {
+    const off = api.onTaskNotice((e) => {
+      const n = e as { text?: string } | null
+      if (n?.text) notify(n.text)
+    })
+    return off
+  }, [])
 
   return (
     <div className="flex h-screen flex-col bg-zinc-50 text-zinc-800">
@@ -68,12 +86,18 @@ export default function App(): JSX.Element {
           </div>
         </div>
       )}
+      {/* 固定右上角 toast：不随内容滚动，且在内置浏览器全屏（盖住面板）时也可见（位于顶部标题区） */}
+      {toast && (
+        <div className="pointer-events-none fixed right-4 top-2 z-50 max-w-[70vw] rounded-lg bg-zinc-800/90 px-4 py-2 text-sm text-white shadow-lg">
+          {toast.text}
+        </div>
+      )}
       <main className="flex-1 overflow-auto p-4">
         {tab === 'panel' && (
           <div className="space-y-4">
             <FilterForm onSubmit={startTask} />
-            <TaskList />
-            <AuthorCollection />
+            <TaskList notify={notify} />
+            <AuthorCollection notify={notify} />
           </div>
         )}
         {tab === 'browser' && <BrowserPanel />}

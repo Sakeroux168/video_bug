@@ -5,19 +5,17 @@ import { Card, btnPrimary } from './ui'
 
 interface Rect { x: number; y: number; w: number; h: number }
 
-export default function AuthorCollection() {
+export default function AuthorCollection({ notify }: { notify: (text: string) => void }) {
   const [authors, setAuthors] = useState<AuthorRow[]>([])
   const [selected, setSelected] = useState<Set<number>>(new Set())
   const [editingId, setEditingId] = useState<number | null>(null)
   const [editVal, setEditVal] = useState('')
-  const [msg, setMsg] = useState('')
   const [marquee, setMarquee] = useState<Rect | null>(null)
   const boxRef = useRef<HTMLDivElement>(null)
   const dragStart = useRef<{ x: number; y: number } | null>(null)
 
   useEffect(() => { void api.listAuthors().then(setAuthors) }, [])
 
-  function flash(m: string): void { setMsg(m); setTimeout(() => setMsg(''), 2500) }
   function refresh(): void { void api.listAuthors().then(setAuthors) }
 
   function toggle(id: number): void {
@@ -77,23 +75,25 @@ export default function AuthorCollection() {
     if (selected.size === 0) return
     await api.deleteAuthors([...selected])
     setSelected(new Set())
-    flash(`已删除 ${selected.size} 个作者`)
+    notify(`已删除 ${selected.size} 个作者`)
     refresh()
   }
   async function deleteOne(id: number): Promise<void> {
     await api.deleteAuthors([id])
-    flash('已删除该作者')
+    notify('已删除该作者')
     refresh()
   }
 
   async function crawlHome(a: AuthorRow): Promise<void> {
+    // Fix5: 点击立即反馈，让用户知道主页爬取已开始（此前静默启动，用户不知道）
+    notify(`正在爬取 ${a.nickname} 的主页…`)
     const r = await api.createTask({
       platform: a.platform, type: 'author', query: a.sec_uid,
       filters: { timeRange: 'all', duration: 'all', targetCount: 200 },
       aiFilterEnabled: false, aiOrganizeEnabled: false
     })
-    if (r.skipped) flash(r.reason ?? '该作者已爬取过')
-    else flash(`已开始爬取 ${a.nickname} 的主页`)
+    if (r.skipped) notify(r.reason ?? '该作者主页已爬取过')
+    else notify(`已开始爬取 ${a.nickname} 的主页，可在任务列表查看进度`)
   }
 
   async function saveCategory(a: AuthorRow): Promise<void> {
@@ -108,7 +108,6 @@ export default function AuthorCollection() {
   return (
     <Card title="作者收藏">
       <div className="mb-2 flex items-center gap-3 text-xs">
-        {msg && <span className="rounded bg-blue-50 px-2 py-1 text-blue-600">{msg}</span>}
         {authors.length > 0 && (
           <button
             className={`rounded-md px-2 py-1 ${selected.size ? 'bg-red-50 text-red-500 hover:bg-red-100' : 'text-zinc-300'}`}
