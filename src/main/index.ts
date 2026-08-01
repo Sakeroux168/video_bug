@@ -155,12 +155,16 @@ app.whenReady().then(() => {
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow() })
 })
 
+// 调试：记录最近收到的 dy:raw（URL + 是否被处理），供界面"查看拦截日志"查看
+const rawLog: Array<{ at: string; url: string; handled: boolean }> = []
 ipcMain.on('dy:raw', (_e, msg) => {
   const url = String(msg?.url ?? '')
   const json = msg?.json
-  if (douyinAdapter.apiUrlPatterns.some(r => r.test(url))) {
-    void scheduler?.handleRaw(douyinAdapter, url, json)
-  }
+  const handled = douyinAdapter.apiUrlPatterns.some(r => r.test(url))
+  rawLog.push({ at: new Date().toISOString().slice(11, 19), url: url.slice(0, 120), handled })
+  if (rawLog.length > 60) rawLog.shift()
+  if (handled) void scheduler?.handleRaw(douyinAdapter, url, json)
 })
+ipcMain.handle('debug:rawLog', () => rawLog.slice(-60))
 
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit() })

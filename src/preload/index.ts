@@ -23,6 +23,7 @@ const api = {
   openDir: (p: string): Promise<void> => ipcRenderer.invoke('dialog:openDir', p),
   locateVideo: (p: string): Promise<void> => ipcRenderer.invoke('video:locate', p),
   openBrowserDevtools: (): Promise<void> => ipcRenderer.invoke('browser:devtools'),
+  getRawLog: (): Promise<Array<{ at: string; url: string; handled: boolean }>> => ipcRenderer.invoke('debug:rawLog'),
   onTaskProgress: (cb: (e: unknown) => void): (() => void) => {
     const l = (_e: unknown, data: unknown) => cb(data)
     ipcRenderer.on('evt:task:progress', l)
