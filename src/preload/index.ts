@@ -22,6 +22,7 @@ const api = {
   pickDownloadDir: (): Promise<string | null> => ipcRenderer.invoke('dialog:pickDir'),
   openDir: (p: string): Promise<void> => ipcRenderer.invoke('dialog:openDir', p),
   locateVideo: (p: string): Promise<void> => ipcRenderer.invoke('video:locate', p),
+  openBrowserDevtools: (): Promise<void> => ipcRenderer.invoke('browser:devtools'),
   onTaskProgress: (cb: (e: unknown) => void): (() => void) => {
     const l = (_e: unknown, data: unknown) => cb(data)
     ipcRenderer.on('evt:task:progress', l)

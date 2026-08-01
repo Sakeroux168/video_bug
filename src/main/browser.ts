@@ -113,6 +113,11 @@ export class VideoBrowser {
     }
   }
 
+  /** 打开抖音页面的开发者工具（调试用） */
+  openDevTools(): void {
+    if (this.view) this.view.webContents.openDevTools({ mode: 'detach' })
+  }
+
   dispose(): void {
     if (this.view) {
       this.host.contentView.removeChildView(this.view)

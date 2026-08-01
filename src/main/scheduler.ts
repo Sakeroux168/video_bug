@@ -151,13 +151,15 @@ export class Scheduler {
     }
   }
 
-  /** 只处理当前任务类型对应的接口响应，避免把推荐页/自己主页等无关 feed 当结果爬进来（用户反馈爬到了不该爬的内容） */
+  /** 只处理当前任务类型对应的接口响应，避免把推荐页/自己主页等无关 feed 当结果爬进来（用户反馈爬到了不该爬的内容）。
+   *  匹配放宽：搜索接口路径多变（/search/item/、/general/search/ 等），用宽松的 /search/ 判断；
+   *  推荐feed(/tab/feed/ 等)与个人主页(/user/profile/ 或 /aweme/post/ 之外的)不会含 /search/。 */
   private matchesTaskEndpoint(rawUrl: string): boolean {
     if (!this.task) return false
     switch (this.task.type) {
-      case 'keyword': return /\/aweme\/v1\/web\/search\//.test(rawUrl) // 关键词搜索
-      case 'author': return /\/aweme\/v1\/web\/aweme\/post\//.test(rawUrl) // 作者主页视频列表
-      case 'hashtag': return /\/aweme\/v1\/web\/challenge\//.test(rawUrl) || /\/aweme\/v1\/web\/search\//.test(rawUrl)
+      case 'keyword': return /\/search\//.test(rawUrl) // 关键词搜索（宽匹配）
+      case 'author': return /\/aweme\/post\//.test(rawUrl) // 作者主页视频列表
+      case 'hashtag': return /\/challenge\//.test(rawUrl) || /\/search\//.test(rawUrl)
       default: return false
     }
   }

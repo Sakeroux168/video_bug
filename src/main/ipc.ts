@@ -24,7 +24,7 @@ export interface IpcDeps {
 }
 
 export function registerIpc(deps: IpcDeps): void {
-  const { db, scheduler, downloader } = deps
+  const { db, scheduler, downloader, browser } = deps
 
   ipcMain.on('api:ping', (e) => { e.returnValue = 'pong' })
   ipcMain.handle('platforms:list', () => listAdapters())
@@ -80,6 +80,7 @@ export function registerIpc(deps: IpcDeps): void {
 
   ipcMain.handle('browser:show', () => deps.setBrowserVisible(true))
   ipcMain.handle('browser:hide', () => deps.setBrowserVisible(false))
+  ipcMain.handle('browser:devtools', () => browser.openDevTools())
 
   // 选择下载目录（#1）
   ipcMain.handle('dialog:pickDir', async () => {
