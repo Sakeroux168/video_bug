@@ -15,6 +15,10 @@ export interface IpcDeps {
   analyzer: Analyzer | null
   browser: VideoBrowser
   getWindow: () => BrowserWindow
+  /** 设置保存后重建 Analyzer（AI 配置热加载） */
+  reloadAnalyzer: () => void
+  /** 把新建任务投入 FIFO 队列（串行执行，去重） */
+  enqueueTask: (id: number) => void
 }
 
 export function registerIpc(deps: IpcDeps): void {
@@ -25,7 +29,7 @@ export function registerIpc(deps: IpcDeps): void {
 
   ipcMain.handle('task:create', (_e, input: Parameters<typeof createTask>[1]) => {
     const id = createTask(db, input)
-    void scheduler.run(id)
+    deps.enqueueTask(id)
     return id
   })
 
@@ -46,7 +50,12 @@ export function registerIpc(deps: IpcDeps): void {
   ipcMain.handle('authors:list', () => listAuthors(db))
 
   ipcMain.handle('settings:get', () => getSettings())
-  ipcMain.handle('settings:save', (_e, s: Parameters<typeof saveSettings>[0]) => saveSettings(s))
+  ipcMain.handle('settings:save', (_e, s: Parameters<typeof saveSettings>[0]) => {
+    saveSettings(s)
+    // I3: 保存后立即重建 Analyzer，下载参数热更新，无需重启程序
+    deps.reloadAnalyzer()
+    deps.downloader.updateSettings(s)
+  })
 
   ipcMain.handle('ai:test', async () => {
     const s = getSettings()

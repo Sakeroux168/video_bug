@@ -16,6 +16,34 @@ let downloader: Downloader | null = null
 let scheduler: Scheduler | null = null
 let analyzer: Analyzer | null = null
 
+// I4 简单 FIFO 任务队列：串行执行，任务终态后自动出队跑下一个；去重防同一任务重复入队
+const pendingTasks: number[] = []
+const queuedTaskIds = new Set<number>()
+
+/** I3 根据当前设置重建 Analyzer（settings:save 后调用，让 AI 配置即时生效） */
+function reloadAnalyzer(): void {
+  const s = getSettings()
+  analyzer = s.aiApiKey ? new Analyzer(s) : null
+}
+
+function dequeueAndRun(): void {
+  // setImmediate 延迟到当前调用栈结束：任务 emit 终态事件时 running 尚未复位，直接 run 会被静默丢弃
+  setImmediate(() => {
+    if (scheduler?.isRunning) return
+    const next = pendingTasks.shift()
+    if (next === undefined) return
+    queuedTaskIds.delete(next)
+    void scheduler?.run(next)
+  })
+}
+
+function enqueueTask(id: number): void {
+  if (queuedTaskIds.has(id)) return
+  queuedTaskIds.add(id)
+  pendingTasks.push(id)
+  void dequeueAndRun()
+}
+
 function createWindow(): void {
   win = new BrowserWindow({
     width: 1280, height: 820, title: '视频爬取工具',
@@ -27,6 +55,9 @@ function createWindow(): void {
 
 function push(evt: unknown): void {
   win?.webContents.send('evt:task:progress', evt)
+  // 任务到达终态（done/paused）后放行下一个排队任务
+  const t = evt as { type?: string } | null
+  if (t && (t.type === 'task:done' || t.type === 'task:paused')) void dequeueAndRun()
 }
 
 app.whenReady().then(() => {
@@ -36,7 +67,7 @@ app.whenReady().then(() => {
   createWindow()
 
   const settings = getSettings()
-  analyzer = settings.aiApiKey ? new Analyzer(settings) : null
+  reloadAnalyzer()
   downloader = new Downloader(db, settings)
   browser = new VideoBrowser(win!, (url, json) => {
     if (douyinAdapter.apiUrlPatterns.some(r => r.test(url))) {
@@ -50,7 +81,12 @@ app.whenReady().then(() => {
     scrollIntervalMs: settings.scrollIntervalMs
   })
 
-  registerIpc({ db, scheduler, downloader, analyzer, browser, getWindow: () => win! })
+  registerIpc({
+    db, scheduler, downloader, analyzer, browser,
+    getWindow: () => win!,
+    reloadAnalyzer,
+    enqueueTask
+  })
 
   void browser.init()
   downloader.onEvent(e => push(e))

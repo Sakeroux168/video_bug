@@ -1,8 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { DatabaseSync } from 'node:sqlite'
+import { mkdtempSync, writeFileSync, rmSync, existsSync } from 'fs'
+import { join } from 'path'
+import { tmpdir } from 'os'
 import { buildStopDecision, Scheduler } from '../src/main/scheduler'
 import { initDb, createTask, listAuthors } from '../src/main/db'
 import { douyinAdapter } from '../src/main/adapters/douyin'
+import { Analyzer } from '../src/main/analyzer'
 import type { PlatformAdapter } from '../src/main/adapters/types'
 import type { CreateTaskInput } from '../src/shared/types'
 
@@ -49,6 +53,19 @@ const input: CreateTaskInput = {
   platform: 'douyin', type: 'keyword', query: '测试',
   filters: { timeRange: 'all', duration: 'all', targetCount: 200 },
   aiFilterEnabled: false, aiOrganizeEnabled: false
+}
+
+const rawUrl = 'https://www.douyin.com/aweme/v1/web/search/item/?device_platform=webapp'
+const rawJson = {
+  aweme_list: [{
+    aweme_id: '7330000000000000001',
+    desc: '测试视频标题',
+    create_time: 1710000000,
+    author: { sec_uid: 'SEC_001', nickname: '作者一号' },
+    video: { play_addr: { url_list: ['https://cdn.test/v1.mp4'] } },
+    statistics: { digg_count: 42 },
+    duration: 8000
+  }]
 }
 
 function newDb(): DatabaseSync {
@@ -111,25 +128,15 @@ describe('Scheduler 异常兜底与串行（I3）', () => {
 })
 
 describe('handleRaw 入库与作者（I4）+ pendingVideoIds 清理（I1）', () => {
-  const rawUrl = 'https://www.douyin.com/aweme/v1/web/search/item/?device_platform=webapp'
-  const rawJson = {
-    aweme_list: [{
-      aweme_id: '7330000000000000001',
-      desc: '测试视频标题',
-      create_time: 1710000000,
-      author: { sec_uid: 'SEC_001', nickname: '作者一号' },
-      video: { play_addr: { url_list: ['https://cdn.test/v1.mp4'] } },
-      statistics: { digg_count: 42 },
-      duration: 8000
-    }]
-  }
-
   it('写入作者、入库视频、入队下载；下载完成从 pendingVideoIds 移除', async () => {
     const db = newDb()
     const taskId = createTask(db, input)
     const dl = new FakeDownloader()
-    const { s } = setup(db, dl, new FakeBrowser())
-    await s.run(taskId) // 先让 run 完成，taskId/adapter 就绪
+    const browser = new FakeBrowser()
+    const { s } = setup(db, dl, browser)
+    browser.blockNextLoad() // 任务挂起在 load：保持 taskId/adapter 就绪且任务仍在运行（I5 后任务结束即清理上下文）
+    const p = s.run(taskId)
+    await new Promise(r => setTimeout(r, 10))
 
     await s.handleRaw(douyinAdapter, rawUrl, rawJson)
     const authors = listAuthors(db, 'douyin')
@@ -150,6 +157,10 @@ describe('handleRaw 入库与作者（I4）+ pendingVideoIds 清理（I1）', ()
     // 下载器报告 done → pendingVideoIds 清理
     dl.emit({ type: 'video:status', id: videos[0].id, status: 'done' })
     expect((s as any).pendingVideoIds).toEqual([])
+
+    browser.releaseLoad()
+    await p
+    expect(db.prepare('SELECT status FROM tasks WHERE id=?').get(taskId)).toEqual({ status: 'done' })
   }, 10000)
 })
 
@@ -163,5 +174,64 @@ describe('resume（I2）', () => {
     await s.resume(taskId)
     expect(db.prepare('SELECT status FROM tasks WHERE id=?').get(taskId)).toEqual({ status: 'done' })
     expect((s as any).running).toBe(false)
+  }, 10000)
+})
+
+describe('任务结束清理上下文（I5）', () => {
+  it('run 结束后 handleRaw 被拒绝，浏览流量不污染已完成任务', async () => {
+    const db = newDb()
+    const taskId = createTask(db, input)
+    const dl = new FakeDownloader()
+    const { s } = setup(db, dl, new FakeBrowser())
+    await s.run(taskId)
+    expect(db.prepare('SELECT status FROM tasks WHERE id=?').get(taskId)).toEqual({ status: 'done' })
+    await s.handleRaw(douyinAdapter, rawUrl, rawJson)
+    expect(listAuthors(db, 'douyin')).toHaveLength(0)
+    expect(dl.enqueued).toHaveLength(0)
+  }, 10000)
+})
+
+describe('下载后整理（I7）', () => {
+  const organizeInput: CreateTaskInput = { ...input, aiOrganizeEnabled: true }
+
+  it('视频 done 时 AI 分类归档：移动文件 + 写 ai_tags + 更新 local_path', async () => {
+    const db = newDb()
+    const dir = mkdtempSync(join(tmpdir(), 'org-'))
+    try {
+      const taskId = createTask(db, organizeInput)
+      const dl = new FakeDownloader()
+      const browser = new FakeBrowser()
+      const fetchImpl = (async () => new Response(
+        JSON.stringify({ choices: [{ message: { content: '{"category":"美食","tags":["探店","小吃"]}' } }] }),
+        { status: 200, headers: { 'content-type': 'application/json' } }
+      )) as typeof fetch
+      const analyzer = new Analyzer({ aiBaseUrl: 'https://api.test/v1', aiApiKey: 'k', aiModel: 'm' }, fetchImpl)
+      const events: unknown[] = []
+      const s = new Scheduler({ db, browser, analyzer, downloader: dl, emit: e => events.push(e), scrollIntervalMs: 1 })
+      browser.blockNextLoad()
+      const p = s.run(taskId)
+      await new Promise(r => setTimeout(r, 10))
+
+      await s.handleRaw(douyinAdapter, rawUrl, rawJson)
+      const [vid] = db.prepare('SELECT * FROM videos WHERE task_id=?').all(taskId) as Array<{ id: number }>
+
+      // 模拟下载器写盘完成：源文件已存在，且 DB local_path 已更新（与真实 Downloader 一致）
+      const src = join(dir, '标题_作者_AW00000001.mp4')
+      writeFileSync(src, Buffer.from([1, 2, 3]))
+      db.prepare("UPDATE videos SET status='done', local_path=? WHERE id=?").run(src, vid.id)
+      dl.emit({ type: 'video:status', id: vid.id, status: 'done', localPath: src })
+      await new Promise(r => setTimeout(r, 80))
+
+      const row = db.prepare('SELECT ai_tags, local_path FROM videos WHERE id=?').get(vid.id) as { ai_tags: string; local_path: string }
+      expect(JSON.parse(row.ai_tags)).toEqual({ category: '美食', tags: ['探店', '小吃'] })
+      expect(existsSync(src)).toBe(false) // 原文件已移动
+      expect(row.local_path).toContain(join(dir, '美食'))
+      expect(existsSync(row.local_path!)).toBe(true)
+
+      browser.releaseLoad()
+      await p
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
   }, 10000)
 })

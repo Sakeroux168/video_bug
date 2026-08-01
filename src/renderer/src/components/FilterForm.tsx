@@ -13,6 +13,7 @@ export default function FilterForm({ onSubmit }: { onSubmit: (t: CreateTaskInput
   const [target, setTarget] = useState(200)
   const [aiFilter, setAiFilter] = useState(false)
   const [aiRule, setAiRule] = useState('')
+  const [aiOrganize, setAiOrganize] = useState(false)
   const [err, setErr] = useState('')
 
   useEffect(() => { void api.listPlatforms().then(setPlatforms) }, [])
@@ -27,7 +28,7 @@ export default function FilterForm({ onSubmit }: { onSubmit: (t: CreateTaskInput
     onSubmit({
       platform, type, query: query.trim(),
       filters: { timeRange, duration, targetCount: target, aiFilterRule: aiFilter ? aiRule.trim() : undefined },
-      aiFilterEnabled: aiFilter, aiOrganizeEnabled: false
+      aiFilterEnabled: aiFilter, aiOrganizeEnabled: aiOrganize
     })
     setQuery('')
   }
@@ -82,6 +83,10 @@ export default function FilterForm({ onSubmit }: { onSubmit: (t: CreateTaskInput
           <input className={`${inputCls} flex-1`} value={aiRule} onChange={e => setAiRule(e.target.value)}
             placeholder="筛选规则，如：只要美食教程，不要游戏直播" />
         )}
+        <label className="flex items-center gap-1">
+          <input type="checkbox" checked={aiOrganize} onChange={e => setAiOrganize(e.target.checked)} />
+          AI 下载后整理
+        </label>
       </div>
       {err && <p className="mt-2 text-xs text-red-500">{err}</p>}
     </Card>

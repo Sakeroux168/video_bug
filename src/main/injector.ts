@@ -1,4 +1,6 @@
 export const INJECT_SCRIPT = `(() => {
+  if (window.__dyHookInstalled) return;
+  window.__dyHookInstalled = true;
   const post = (url, data) => {
     try { window.postMessage({ type: 'dy:raw', url, data }, '*') } catch (e) { /* ignore */ }
   };

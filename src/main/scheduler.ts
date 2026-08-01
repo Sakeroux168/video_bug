@@ -1,10 +1,14 @@
 import type { DatabaseSync } from 'node:sqlite'
+import { mkdirSync } from 'fs'
+import { rename } from 'fs/promises'
+import { join, dirname, basename } from 'path'
 import type { PlatformAdapter } from './adapters/types'
-import type { TaskRow, TaskStatus, Filters } from '../shared/types'
+import type { TaskRow, TaskStatus, Filters, VideoRow } from '../shared/types'
 import { ERROR } from '../shared/types'
 import { filterVideos, dedupeVideos } from './extractor'
 import { isRiskSignal } from './errors'
 import { upsertAuthor } from './db'
+import { ensureUniqueName } from './filename'
 import type { Analyzer } from './analyzer'
 import type { Downloader } from './downloader'
 import type { VideoBrowser } from './browser'
@@ -38,17 +42,29 @@ export class Scheduler {
   private seen = new Set<string>()
   private fetched = 0
   private emptyRounds = 0
+  private silentRounds = 0
+  private rawSinceLastRound = false
   private aiEnabled = false
+  private organizeEnabled = false
+  private organizeTaskId = 0
   private pendingVideoIds: number[] = []
   private running = false
-  private lastRawAt = 0
+
+  /** 供主进程任务队列判断当前是否有任务在跑（避免重复入队/串行丢任务） */
+  get isRunning(): boolean { return this.running }
 
   constructor(private deps: SchedulerDeps) {
     // 只订阅一次下载器事件；video 完成/失败后从 pendingVideoIds 移除，避免下载堆积放慢永久生效
     this.deps.downloader.onEvent(e => {
-      if (e.type === 'video:status' && (e.status === 'done' || e.status === 'failed')) {
-        const i = this.pendingVideoIds.indexOf(e.id)
-        if (i >= 0) this.pendingVideoIds.splice(i, 1)
+      if (e.type === 'video:status') {
+        if (e.status === 'done' || e.status === 'failed') {
+          const i = this.pendingVideoIds.indexOf(e.id)
+          if (i >= 0) this.pendingVideoIds.splice(i, 1)
+        }
+        // I7 下载后整理：视频 done 且任务开启 AI 整理时分类归档 + 打标签；AI 未配置/失败静默跳过
+        if (e.status === 'done' && this.organizeEnabled && this.deps.analyzer) {
+          void this.organizeVideo(e.id)
+        }
       }
     })
   }
@@ -74,8 +90,12 @@ export class Scheduler {
       this.seen = new Set<string>((db.prepare('SELECT aweme_id FROM videos WHERE platform=?').all(task.platform) as Array<{ aweme_id: string }>).map(r => r.aweme_id))
       this.fetched = task.fetched_count
       this.emptyRounds = 0
+      this.silentRounds = 0
+      this.rawSinceLastRound = false
       this.pendingVideoIds = []
       this.aiEnabled = !!(this.deps.analyzer) && !!this.filters.aiFilterEnabled
+      this.organizeEnabled = !!this.filters.aiOrganizeEnabled
+      this.organizeTaskId = taskId
 
       db.prepare("UPDATE tasks SET status='running', error=NULL WHERE id=?").run(taskId)
 
@@ -85,15 +105,18 @@ export class Scheduler {
           ? adapter.buildHashtagUrl(task.query)
           : adapter.buildSearchUrl(task.query, this.filters)
       await this.deps.browser.load(adapter, url)
-      this.lastRawAt = Date.now()
+      // 首轮不计静默，避免加载后立即以 0 抓取误停
+      this.rawSinceLastRound = true
 
       const target = this.filters.targetCount ?? 200
       while (!this.aborted) {
-        // 页面静默（接口长时间无 raw 响应）时强制触发 stop，防止无限空转
-        if (Date.now() - this.lastRawAt > this.deps.scrollIntervalMs * 5) this.emptyRounds = 5
         await sleep(this.deps.scrollIntervalMs + Math.random() * 1500)
         await this.deps.browser.scrollToBottom()
-        const decision = buildStopDecision(this.fetched, target, this.emptyRounds)
+        // 按轮次计静默：本轮收到 raw 则重置，否则累加；与空解析轮合并判断停止
+        if (this.rawSinceLastRound) this.silentRounds = 0
+        else this.silentRounds++
+        this.rawSinceLastRound = false
+        const decision = buildStopDecision(this.fetched, target, this.emptyRounds + this.silentRounds)
         if (decision === 'reached' || decision === 'stop') break
         if (this.pendingVideoIds.length > 30) { /* 下载堆积，放慢抓取 */ await sleep(2000) }
       }
@@ -110,6 +133,12 @@ export class Scheduler {
       this.deps.emit({ type: 'task:paused', taskId, reason: 'scheduler_error' })
     } finally {
       this.running = false
+      // I5 清理残留任务上下文：handleRaw 的 taskId===0 守卫会拒绝任务结束后的任何流量，
+      // 避免浏览流量污染已完成任务。organizeEnabled/TaskId 保留供迟到的下载完成继续整理。
+      this.taskId = 0
+      this.adapter = null
+      this.filters = null
+      this.pendingVideoIds = []
     }
   }
 
@@ -117,7 +146,7 @@ export class Scheduler {
   async handleRaw(adapter: PlatformAdapter, rawUrl: string, json: unknown): Promise<void> {
     if (this.taskId === 0 || this.adapter !== adapter) return
     if (!adapter.apiUrlPatterns.some(r => r.test(rawUrl))) return
-    this.lastRawAt = Date.now()
+    this.rawSinceLastRound = true
     const db = this.deps.db
     const filters = this.filters
     if (!filters) return
@@ -171,9 +200,41 @@ export class Scheduler {
     this.deps.emit({ type: 'task:progress', taskId: this.taskId, fetched: this.fetched, status: 'running' })
   }
 
+  /** I7 下载后整理：AI 分类 → 打标签 → 文件移入 {downloadDir}/{category}/ 并更新 local_path */
+  private async organizeVideo(id: number): Promise<void> {
+    const db = this.deps.db
+    const row = db.prepare('SELECT * FROM videos WHERE id = ?').get(id) as VideoRow | undefined
+    if (!row || row.task_id !== this.organizeTaskId || !row.local_path) return
+    const task = db.prepare('SELECT filters FROM tasks WHERE id = ?').get(row.task_id) as { filters: string } | undefined
+    if (!task) return
+    const filters = JSON.parse(task.filters) as Filters
+    if (!filters.aiOrganizeEnabled || !this.deps.analyzer) return
+    const author = row.author_id
+      ? (db.prepare('SELECT nickname FROM authors WHERE id = ?').get(row.author_id) as { nickname: string } | undefined)?.nickname ?? ''
+      : ''
+    const text = `${row.title}\n作者:${author}\n时长:${row.duration}s`
+    try {
+      const result = await this.deps.analyzer.classify(text, `${row.platform}:${row.aweme_id}:organize`)
+      const category = sanitizeCategory(result.category)
+      const src = row.local_path
+      const destDir = join(dirname(src), category)
+      mkdirSync(destDir, { recursive: true })
+      const finalName = ensureUniqueName(destDir, basename(src))
+      const dest = join(destDir, finalName)
+      await rename(src, dest)
+      db.prepare('UPDATE videos SET ai_tags=?, local_path=? WHERE id=?').run(JSON.stringify(result), dest, id)
+    } catch { /* AI 失败/未配置/文件缺失 → 静默跳过整理，不影响下载 */ }
+  }
+
   private fail(taskId: number, code: string): void {
     this.deps.db.prepare("UPDATE tasks SET status='failed', error=? WHERE id=?").run(code, taskId)
   }
+}
+
+/** 分类名清洗为合法目录名（Windows 非法字符替换，限长，空则回落"未分类"） */
+function sanitizeCategory(category: string): string {
+  const cleaned = category.replace(/[\\/:*?"<>|\r\n]/g, '_').trim().slice(0, 32)
+  return cleaned || '未分类'
 }
 
 function sleep(ms: number): Promise<void> { return new Promise(r => setTimeout(r, ms)) }

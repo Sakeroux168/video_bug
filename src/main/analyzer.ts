@@ -29,6 +29,8 @@ export class Analyzer {
     const url = this.cfg.aiBaseUrl.replace(/\/+$/, '') + '/chat/completions'
     const res = await this.fetchImpl(url, {
       method: 'POST',
+      // 60s 超时，防止 AI 端点挂起导致任务卡死；超时/失败抛错由调度器降级捕获
+      signal: AbortSignal.timeout(60_000),
       headers: {
         'content-type': 'application/json',
         authorization: `Bearer ${this.cfg.aiApiKey}`
