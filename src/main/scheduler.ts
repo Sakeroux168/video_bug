@@ -3,6 +3,7 @@ import type { PlatformAdapter } from './adapters/types'
 import type { TaskRow, TaskStatus, Filters } from '../shared/types'
 import { ERROR } from '../shared/types'
 import { filterVideos, dedupeVideos } from './extractor'
+import { upsertAuthor } from './db'
 import type { Analyzer } from './analyzer'
 import type { Downloader } from './downloader'
 import type { VideoBrowser } from './browser'
@@ -38,13 +39,25 @@ export class Scheduler {
   private emptyRounds = 0
   private aiEnabled = false
   private pendingVideoIds: number[] = []
+  private running = false
+  private lastRawAt = 0
 
-  constructor(private deps: SchedulerDeps) {}
+  constructor(private deps: SchedulerDeps) {
+    // 只订阅一次下载器事件；video 完成/失败后从 pendingVideoIds 移除，避免下载堆积放慢永久生效
+    this.deps.downloader.onEvent(e => {
+      if (e.type === 'video:status' && (e.status === 'done' || e.status === 'failed')) {
+        const i = this.pendingVideoIds.indexOf(e.id)
+        if (i >= 0) this.pendingVideoIds.splice(i, 1)
+      }
+    })
+  }
 
   stop(): void { this.aborted = true }
   pause(): void { this.aborted = true }
+  async resume(taskId: number): Promise<void> { await this.run(taskId) }
 
   async run(taskId: number): Promise<void> {
+    if (this.running) return
     this.aborted = false
     const db = this.deps.db
     const task = db.prepare('SELECT * FROM tasks WHERE id = ?').get(taskId) as TaskRow | undefined
@@ -52,39 +65,50 @@ export class Scheduler {
     const adapter = getAdapter(task.platform)
     if (!adapter) { this.fail(taskId, ERROR.PARSE_ERROR); return }
 
-    this.taskId = taskId
-    this.adapter = adapter
-    this.filters = JSON.parse(task.filters) as Filters
-    this.seen = new Set<string>((db.prepare('SELECT aweme_id FROM videos WHERE platform=?').all(task.platform) as Array<{ aweme_id: string }>).map(r => r.aweme_id))
-    this.fetched = task.fetched_count
-    this.emptyRounds = 0
-    this.pendingVideoIds = []
-    this.aiEnabled = !!(this.deps.analyzer) && !!this.filters.aiFilterEnabled
+    this.running = true
+    try {
+      this.taskId = taskId
+      this.adapter = adapter
+      this.filters = JSON.parse(task.filters) as Filters
+      this.seen = new Set<string>((db.prepare('SELECT aweme_id FROM videos WHERE platform=?').all(task.platform) as Array<{ aweme_id: string }>).map(r => r.aweme_id))
+      this.fetched = task.fetched_count
+      this.emptyRounds = 0
+      this.pendingVideoIds = []
+      this.aiEnabled = !!(this.deps.analyzer) && !!this.filters.aiFilterEnabled
 
-    db.prepare("UPDATE tasks SET status='running', error=NULL WHERE id=?").run(taskId)
+      db.prepare("UPDATE tasks SET status='running', error=NULL WHERE id=?").run(taskId)
 
-    const url = task.type === 'author'
-      ? adapter.buildAuthorUrl(task.query)
-      : task.type === 'hashtag'
-        ? adapter.buildHashtagUrl(task.query)
-        : adapter.buildSearchUrl(task.query, this.filters)
-    await this.deps.browser.load(adapter, url)
+      const url = task.type === 'author'
+        ? adapter.buildAuthorUrl(task.query)
+        : task.type === 'hashtag'
+          ? adapter.buildHashtagUrl(task.query)
+          : adapter.buildSearchUrl(task.query, this.filters)
+      await this.deps.browser.load(adapter, url)
+      this.lastRawAt = Date.now()
 
-    const target = this.filters.targetCount ?? 200
-    while (!this.aborted) {
-      await sleep(this.deps.scrollIntervalMs + Math.random() * 1500)
-      await this.deps.browser.scrollToBottom()
-      const decision = buildStopDecision(this.fetched, target, this.emptyRounds)
-      if (decision === 'reached' || decision === 'stop') break
-      if (this.pendingVideoIds.length > 30) { /* 下载堆积，放慢抓取 */ await sleep(2000) }
-    }
+      const target = this.filters.targetCount ?? 200
+      while (!this.aborted) {
+        // 页面静默（接口长时间无 raw 响应）时强制触发 stop，防止无限空转
+        if (Date.now() - this.lastRawAt > this.deps.scrollIntervalMs * 5) this.emptyRounds = 5
+        await sleep(this.deps.scrollIntervalMs + Math.random() * 1500)
+        await this.deps.browser.scrollToBottom()
+        const decision = buildStopDecision(this.fetched, target, this.emptyRounds)
+        if (decision === 'reached' || decision === 'stop') break
+        if (this.pendingVideoIds.length > 30) { /* 下载堆积，放慢抓取 */ await sleep(2000) }
+      }
 
-    if (this.aborted) {
-      db.prepare("UPDATE tasks SET status='paused' WHERE id=?").run(taskId)
-      this.deps.emit({ type: 'task:paused', taskId, reason: '用户暂停或风控' })
-    } else {
-      db.prepare("UPDATE tasks SET status='done', finished_at=? WHERE id=?").run(new Date().toISOString(), taskId)
-      this.deps.emit({ type: 'task:done', taskId, fetched: this.fetched })
+      if (this.aborted) {
+        db.prepare("UPDATE tasks SET status='paused' WHERE id=?").run(taskId)
+        this.deps.emit({ type: 'task:paused', taskId, reason: '用户暂停或风控' })
+      } else {
+        db.prepare("UPDATE tasks SET status='done', finished_at=? WHERE id=?").run(new Date().toISOString(), taskId)
+        this.deps.emit({ type: 'task:done', taskId, fetched: this.fetched })
+      }
+    } catch {
+      this.fail(taskId, 'network')
+      this.deps.emit({ type: 'task:paused', taskId, reason: 'scheduler_error' })
+    } finally {
+      this.running = false
     }
   }
 
@@ -92,6 +116,7 @@ export class Scheduler {
   async handleRaw(adapter: PlatformAdapter, rawUrl: string, json: unknown): Promise<void> {
     if (this.taskId === 0 || this.adapter !== adapter) return
     if (!adapter.apiUrlPatterns.some(r => r.test(rawUrl))) return
+    this.lastRawAt = Date.now()
     const db = this.deps.db
     const filters = this.filters
     if (!filters) return
@@ -119,15 +144,16 @@ export class Scheduler {
           }
         } catch { /* AI 失败降级：视为通过 */ }
       }
-      const authorId = (db.prepare('SELECT id FROM authors WHERE platform=? AND sec_uid=?').get(adapter.name, item.authorSecUid) as { id: number } | undefined)?.id ?? null
+      const author = upsertAuthor(db, item, adapter.name)
       const info = db.prepare(
         `INSERT OR IGNORE INTO videos (platform,task_id,aweme_id,title,author_id,play_addr,duration,publish_time,stats,status,ai_verdict,fetched_at)
          VALUES (?,?,?,?,?,?,?,?,?, 'pending','pass',?)`
-      ).run(adapter.name, this.taskId, item.awemeId, item.title, authorId, item.playUrl,
+      ).run(adapter.name, this.taskId, item.awemeId, item.title, author.id, item.playUrl,
            item.durationSec, new Date(item.publishTime * 1000).toISOString(), JSON.stringify({ likes: item.likes }),
            new Date().toISOString())
       if (info.changes > 0) {
         this.fetched++
+        if (!author.created) db.prepare('UPDATE authors SET video_count = video_count + 1 WHERE id = ?').run(author.id)
         const vid = Number(info.lastInsertRowid)
         this.pendingVideoIds.push(vid)
         this.deps.downloader.enqueue(vid)

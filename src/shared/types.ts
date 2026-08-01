@@ -1,6 +1,6 @@
 export type TaskType = 'keyword' | 'author' | 'hashtag'
 export type TaskStatus = 'pending' | 'running' | 'done' | 'paused' | 'failed'
-export type VideoStatus = 'pending' | 'downloading' | 'done' | 'failed'
+export type VideoStatus = 'pending' | 'downloading' | 'done' | 'failed' | 'filtered'
 export type TimeRange = 'all' | '7d' | '30d' | 'custom'
 export type DurationFilter = 'all' | 'short' | 'medium' | 'long'
 
