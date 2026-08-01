@@ -88,7 +88,10 @@ app.whenReady().then(() => {
     enqueueTask
   })
 
-  void browser.init()
+  void browser.init().then(() => {
+    // 内嵌浏览器默认加载抖音首页（此前只创建视图未加载，导致「内置浏览器」标签空白）
+    void browser?.load(douyinAdapter, 'https://www.douyin.com/')
+  })
   downloader.onEvent(e => push(e))
 
   // 断点续传：running→paused；pending 视频重新入队
