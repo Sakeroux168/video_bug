@@ -53,25 +53,36 @@ export class VideoBrowser {
     await wc.loadURL(url)
   }
 
-  /** 渐进滚动到底：定位真正的滚动容器（抖音列表常是内层 div 而非 window），触发"加载更多" */
+  /** 渐进滚动到底：滚 window + 所有可滚容器，多轮小步，并点击"加载更多"，尽力触发抖音加载更多 */
   async scrollToBottom(): Promise<void> {
     if (!this.view) return
     const script = `(async () => {
       const sleep = ms => new Promise(r => setTimeout(r, ms));
-      // 收集所有可滚动元素（含 document.scrollingElement）
-      const candidates = [document.scrollingElement];
-      document.querySelectorAll('*').forEach(el => {
-        try { if (el.scrollHeight > el.clientHeight + 50) candidates.push(el); } catch (e) {}
+      const sc = document.scrollingElement || document.documentElement;
+      // 收集所有明显可滚动的元素（列表容器）
+      const bigs = [];
+      document.querySelectorAll('div, main, section').forEach(el => {
+        try { if (el.scrollHeight > el.clientHeight + 300 && el.scrollHeight > 600) bigs.push(el); } catch (e) {}
       });
-      // 选 scrollHeight 最大的那个（最外层列表容器）
-      let target = candidates[0];
-      for (const c of candidates) if (c.scrollHeight > (target ? target.scrollHeight : 0)) target = c;
-      if (!target) return 0;
-      const steps = Math.max(1, Math.ceil((target.scrollHeight - target.scrollTop - target.clientHeight) / 900));
-      for (let i = 0; i < steps; i++) { target.scrollTop += 900; await sleep(220); }
-      target.scrollTop = target.scrollHeight;
-      await sleep(220);
-      return target.scrollHeight;
+      bigs.sort((a, b) => b.scrollHeight - a.scrollHeight);
+      const targets = [sc, ...bigs.slice(0, 3)];
+      const clickMore = () => {
+        const btns = [...document.querySelectorAll('button, [role="button"]')].filter(b => {
+          const t = (b.textContent || '').trim();
+          return t.includes('加载更多') || t.includes('查看更多') || t.includes('展开');
+        });
+        for (const b of btns.slice(0, 2)) { try { b.click(); } catch (e) {} }
+      };
+      for (let round = 0; round < 3; round++) {
+        for (let i = 0; i < 6; i++) {
+          targets.forEach(t => { try { t.scrollTop += 700; } catch (e) {} });
+          await sleep(260);
+        }
+        targets.forEach(t => { try { t.scrollTop = t.scrollHeight; } catch (e) {} });
+        clickMore();
+        await sleep(500);
+      }
+      return targets.length;
     })()`
     await this.view.webContents.executeJavaScript(script).catch(() => {})
   }
@@ -94,7 +105,7 @@ export class VideoBrowser {
     if (!this.view) return
     const [w, h] = this.host.getContentSize()
     if (this.pip) {
-      const pw = 320, ph = 200
+      const pw = Math.min(520, Math.round(w * 0.5)), ph = Math.min(320, Math.round(h * 0.4))
       this.view.setBounds({ x: Math.max(0, w - pw - 12), y: Math.max(0, h - ph - 12), width: pw, height: ph })
     } else {
       const top = Math.min(TOP_OFFSET, h)
