@@ -51,7 +51,7 @@ describe('Downloader', () => {
       return new Response(mp4, { status: 200, headers: { 'content-type': 'video/mp4' } })
     }) as typeof fetch
 
-    const dl = new Downloader(db, { downloadDir: dir, downloadConcurrency: 3, scrollIntervalMs: 2000, addressTtlMin: 30 }, fetchImpl)
+    const dl = new Downloader(db, { downloadDir: dir, downloadConcurrency: 3, scrollIntervalMs: 2000, addressTtlMin: 30 }, fetchImpl, { validator: async () => true })
     const events: string[] = []
     dl.onEvent(e => events.push(`${e.type}:${e.status}`))
     dl.enqueue(v.id)

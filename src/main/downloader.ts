@@ -1,8 +1,9 @@
 import type { DatabaseSync } from 'node:sqlite'
-import { createWriteStream, mkdirSync } from 'fs'
+import { createWriteStream, mkdirSync, readdirSync, existsSync } from 'fs'
 import { pipeline } from 'stream/promises'
 import { Readable } from 'stream'
 import { join } from 'path'
+import { execFile, spawnSync } from 'child_process'
 import type { AppSettings, VideoRow } from '../shared/types'
 import { ERROR } from '../shared/types'
 import { classifyDownloadError, AddressPolicy } from './errors'
@@ -21,14 +22,17 @@ export class Downloader {
   private active = 0
   private listeners: Array<(e: DlEvent) => void> = []
   private fetching: Record<number, boolean> = {}
+  private validator: ((file: string) => Promise<boolean>) | null
 
   constructor(
     private db: DatabaseSync,
     private settings: DlSettings,
-    private fetchImpl: typeof fetch = fetch
+    private fetchImpl: typeof fetch = fetch,
+    opts?: { validator?: (file: string) => Promise<boolean> }
   ) {
     // C1: 确保下载目录存在（recursive 幂等）；目录不可写时由下载错误分类兜底为 ERROR.DISK
     try { mkdirSync(this.settings.downloadDir, { recursive: true }) } catch { /* ignore */ }
+    this.validator = opts?.validator ?? null
   }
 
   /** 设置保存后热更新下载参数（目录/并发/地址TTL），无需重建 Downloader */
@@ -95,8 +99,11 @@ export class Downloader {
         // Response.body 是 Web ReadableStream，不是 Node 流，需经 Readable.fromWeb 转成 Node Readable
         await pipeline(Readable.fromWeb(res.body as import('stream/web').ReadableStream), createWriteStream(dest))
         size = await import('fs').then(m => m.statSync(dest).size)
-        // 校验是否真是 MP4：避免把 CDN 错误页/空文件当视频（黑屏源头之一）
-        if (size >= 1024 && (await isMp4(dest))) { lastErr = null; break }
+        // 校验是否真是带视频轨的 MP4：避免把 CDN 错误页/空文件/纯音频当视频（黑屏源头）
+        const validContent = this.validator
+          ? await this.validator(dest)
+          : (await isMp4(dest)) && (await hasVideoStream(dest))
+        if (size >= 1024 && validContent) { lastErr = null; break }
         await import('fs').then(m => m.rmSync(dest, { force: true }))
         lastErr = new Error('bad_mp4')
       }
@@ -135,4 +142,34 @@ async function isMp4(file: string): Promise<boolean> {
       fs.closeSync(fh)
     }
   } catch { return false }
+}
+
+let ffprobePath: string | null | undefined
+/** 在常见路径/PATH 里找 ffprobe（本机装在 F:/123 下的 ffmpeg 目录的 bin 里） */
+function findFfprobe(): string | null {
+  if (ffprobePath !== undefined) return ffprobePath
+  try {
+    for (const d of readdirSync('F:/123', { withFileTypes: true })) {
+      if (!d.isDirectory() || !/^ffmpeg/i.test(d.name)) continue
+      const p = `F:/123/${d.name}/bin/ffprobe.exe`
+      if (existsSync(p)) { ffprobePath = p; return p }
+    }
+  } catch { /* F 盘不存在等 */ }
+  try {
+    const r = spawnSync('where', ['ffprobe'], { encoding: 'utf8' })
+    if (r.status === 0 && r.stdout) { ffprobePath = r.stdout.trim().split('\n')[0]; return ffprobePath }
+  } catch { /* ignore */ }
+  ffprobePath = null
+  return null
+}
+
+/** 用 ffprobe 确认文件含视频轨（纯音频/损坏文件→黑屏）。找不到 ffprobe 时跳过校验（兜底放行）。 */
+function hasVideoStream(file: string): Promise<boolean> {
+  const fp = findFfprobe()
+  if (!fp) return Promise.resolve(true)
+  return new Promise(resolve => {
+    execFile(fp, ['-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=codec_type', '-of', 'csv=p=0', file], (err, stdout) => {
+      resolve(!err && /video/i.test(stdout))
+    })
+  })
 }
