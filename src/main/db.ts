@@ -25,6 +25,7 @@ CREATE TABLE IF NOT EXISTS authors (
   video_count INTEGER NOT NULL DEFAULT 0,
   last_fetched_at TEXT,
   note TEXT,
+  category TEXT,
   UNIQUE(platform, sec_uid)
 );
 CREATE TABLE IF NOT EXISTS videos (
@@ -55,6 +56,9 @@ CREATE INDEX IF NOT EXISTS idx_videos_task ON videos(task_id);
 
 export function initDb(db: DatabaseSync): void {
   db.exec(SCHEMA)
+  // 迁移：老库 authors 表没有 category 列（#6 品类）
+  const cols = db.prepare('PRAGMA table_info(authors)').all() as unknown as Array<{ name: string }>
+  if (!cols.some(c => c.name === 'category')) db.exec('ALTER TABLE authors ADD COLUMN category TEXT')
 }
 
 export function createTask(db: DatabaseSync, input: CreateTaskInput): number {
@@ -99,20 +103,25 @@ export function getRunningTasks(db: DatabaseSync): TaskRow[] {
   return db.prepare("SELECT * FROM tasks WHERE status = 'running'").all() as unknown as TaskRow[]
 }
 
-export function upsertAuthor(db: DatabaseSync, item: VideoItem, platform: string): { id: number; created: boolean } {
+export function upsertAuthor(db: DatabaseSync, item: VideoItem, platform: string, category?: string | null): { id: number; created: boolean } {
   const now = new Date().toISOString()
   const info = db.prepare(
-    `INSERT OR IGNORE INTO authors (platform, sec_uid, nickname, home_url, video_count, last_fetched_at)
-     VALUES (?, ?, ?, ?, 1, ?)`
-  ).run(platform, item.authorSecUid, item.authorNickname, item.authorHomeUrl, now)
+    `INSERT OR IGNORE INTO authors (platform, sec_uid, nickname, home_url, video_count, last_fetched_at, category)
+     VALUES (?, ?, ?, ?, 1, ?, ?)`
+  ).run(platform, item.authorSecUid, item.authorNickname, item.authorHomeUrl, now, category ?? null)
   const created = info.changes > 0
   if (!created) {
+    // 已存在作者：刷新昵称/链接，品类只在为空时补（首次抓到的话题标签为准，不覆盖人工修改）
     db.prepare(
-      `UPDATE authors SET nickname = ?, home_url = ?, last_fetched_at = ? WHERE platform = ? AND sec_uid = ?`
-    ).run(item.authorNickname, item.authorHomeUrl, now, platform, item.authorSecUid)
+      `UPDATE authors SET nickname = ?, home_url = ?, last_fetched_at = ?, category = COALESCE(category, ?) WHERE platform = ? AND sec_uid = ?`
+    ).run(item.authorNickname, item.authorHomeUrl, now, category ?? null, platform, item.authorSecUid)
   }
   const row = db.prepare('SELECT id FROM authors WHERE platform = ? AND sec_uid = ?').get(platform, item.authorSecUid) as { id: number }
   return { id: row.id, created }
+}
+
+export function updateAuthorCategory(db: DatabaseSync, id: number, category: string): void {
+  db.prepare('UPDATE authors SET category = ? WHERE id = ?').run(category, id)
 }
 
 export function listAuthors(db: DatabaseSync, platform?: string): AuthorRow[] {

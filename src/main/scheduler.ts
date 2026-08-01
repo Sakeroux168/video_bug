@@ -5,7 +5,7 @@ import { join, dirname, basename } from 'path'
 import type { PlatformAdapter } from './adapters/types'
 import type { TaskRow, TaskStatus, Filters, VideoRow } from '../shared/types'
 import { ERROR } from '../shared/types'
-import { filterVideos, dedupeVideos } from './extractor'
+import { filterVideos, dedupeVideos, extractCategory } from './extractor'
 import { isRiskSignal } from './errors'
 import { upsertAuthor } from './db'
 import { ensureUniqueName } from './filename'
@@ -181,7 +181,7 @@ export class Scheduler {
           }
         } catch { /* AI 失败降级：视为通过 */ }
       }
-      const author = upsertAuthor(db, item, adapter.name)
+      const author = upsertAuthor(db, item, adapter.name, extractCategory(item.title))
       const info = db.prepare(
         `INSERT OR IGNORE INTO videos (platform,task_id,aweme_id,title,author_id,play_addr,duration,publish_time,stats,status,ai_verdict,fetched_at)
          VALUES (?,?,?,?,?,?,?,?,?, 'pending','pass',?)`

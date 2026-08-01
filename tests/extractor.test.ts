@@ -50,3 +50,13 @@ describe('dedupeVideos', () => {
     expect(seen.has('c')).toBe(true)
   })
 })
+
+describe('extractCategory', () => {
+  it('提取第一个 #话题 为品类', async () => {
+    const { extractCategory } = await import('../src/main/extractor')
+    expect(extractCategory('周末撸猫日常 #猫咪 #萌宠 #搞笑')).toBe('猫咪')
+    expect(extractCategory('没有话题的标题')).toBeNull()
+    expect(extractCategory('#探店 某餐厅')).toBe('探店')
+    expect(extractCategory('#' + '猫'.repeat(30))).toBe('猫'.repeat(20))
+  })
+})

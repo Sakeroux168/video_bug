@@ -3,7 +3,7 @@ import { api } from '../api'
 import type { CreateTaskInput, Filters, TaskType } from '../../../shared/types'
 import { btnPrimary, inputCls, Card } from './ui'
 
-export default function FilterForm({ onSubmit }: { onSubmit: (t: CreateTaskInput) => void }) {
+export default function FilterForm({ onSubmit }: { onSubmit: (t: CreateTaskInput) => Promise<{ id: number | null; skipped: boolean; reason?: string }> }) {
   const [platforms, setPlatforms] = useState<Array<{ name: string; displayName: string }>>([])
   const [platform, setPlatform] = useState('douyin')
   const [type, setType] = useState<TaskType>('keyword')
@@ -20,17 +20,18 @@ export default function FilterForm({ onSubmit }: { onSubmit: (t: CreateTaskInput
 
   const targetValid = target >= 200 && target <= 1000
 
-  function submit(): void {
+  async function submit(): Promise<void> {
     if (!query.trim()) { setErr('请输入关键词/作者/话题'); return }
     if (!targetValid) { setErr('目标数量需在 200-1000 之间'); return }
     if (aiFilter && !aiRule.trim()) { setErr('开启先审后下需填写筛选规则'); return }
     setErr('')
-    onSubmit({
+    const r = await onSubmit({
       platform, type, query: query.trim(),
       filters: { timeRange, duration, targetCount: target, aiFilterRule: aiFilter ? aiRule.trim() : undefined },
       aiFilterEnabled: aiFilter, aiOrganizeEnabled: aiOrganize
     })
-    setQuery('')
+    if (r.skipped) setErr(r.reason ?? '已跳过：该作者已爬取过')
+    else setQuery('')
   }
 
   return (

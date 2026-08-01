@@ -42,6 +42,7 @@ export interface VideoRow {
 export interface AuthorRow {
   id: number; platform: string; sec_uid: string; nickname: string
   home_url: string | null; video_count: number; last_fetched_at: string | null; note: string | null
+  category: string | null
 }
 
 export interface AppSettings {

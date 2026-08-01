@@ -11,8 +11,8 @@ import type { CreateTaskInput } from '../../shared/types'
 export default function App(): JSX.Element {
   const [tab, setTab] = useState('panel')
 
-  async function startTask(input: CreateTaskInput): Promise<void> {
-    await api.createTask(input)
+  async function startTask(input: CreateTaskInput): Promise<{ id: number | null; skipped: boolean; reason?: string }> {
+    return api.createTask(input)
   }
 
   return (

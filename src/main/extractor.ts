@@ -38,3 +38,11 @@ export function dedupeVideos(items: VideoItem[], seen: Set<string>): VideoItem[]
   }
   return out
 }
+
+/** 从视频标题/文案里提取第一个 #话题 作为品类（#6），无则 null */
+export function extractCategory(title: string): string | null {
+  const m = title.match(/#([^\s#，。,.!！?？、]+)/)
+  if (!m) return null
+  const c = m[1].trim()
+  return c.length > 0 && c.length <= 20 ? c : (c.length > 20 ? c.slice(0, 20) : null)
+}
