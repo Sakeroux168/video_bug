@@ -41,9 +41,14 @@ describe('Downloader', () => {
     insertVideos(db, [item()], taskId, 'douyin')
     const [v] = listVideos(db, taskId)
 
+    // 合法 MP4 文件头（含 ftyp box），否则下载器会判定为坏文件
+    const mp4 = Buffer.alloc(2048)
+    mp4.writeUInt32BE(0x18, 0)
+    mp4.write('ftypisom', 4)
+
     const fetchImpl = (async (url: unknown) => {
       expect(String(url)).toContain('cdn.test')
-      return new Response(new Uint8Array([1, 2, 3, 4]), { status: 200, headers: { 'content-type': 'video/mp4' } })
+      return new Response(mp4, { status: 200, headers: { 'content-type': 'video/mp4' } })
     }) as typeof fetch
 
     const dl = new Downloader(db, { downloadDir: dir, downloadConcurrency: 3, scrollIntervalMs: 2000, addressTtlMin: 30 }, fetchImpl)
@@ -57,8 +62,22 @@ describe('Downloader', () => {
     expect(row.status).toBe('done')
     expect(row.local_path).toBeTruthy()
     expect(existsSync(row.local_path!)).toBe(true)
-    expect(readFileSync(row.local_path!)).toEqual(Buffer.from([1, 2, 3, 4]))
+    expect(readFileSync(row.local_path!)).toEqual(mp4)
     expect(events).toContain('video:status:done')
+  })
+
+  it('下载内容是坏文件（无 ftyp）→ 标记 failed + parse_error，删除坏文件', async () => {
+    const taskId = createTask(db, input)
+    insertVideos(db, [item()], taskId, 'douyin')
+    const [v] = listVideos(db, taskId)
+    const fetchImpl = (async () => new Response(new Uint8Array([1, 2, 3, 4]), { status: 200 })) as typeof fetch
+    const dl = new Downloader(db, { downloadDir: dir, downloadConcurrency: 3, scrollIntervalMs: 2000, addressTtlMin: 30 }, fetchImpl)
+    dl.enqueue(v.id)
+    dl.start()
+    await new Promise(r => setTimeout(r, 50))
+    const row = listVideos(db, taskId)[0]
+    expect(row.status).toBe('failed')
+    expect(row.error).toBe('parse_error')
   })
 
   it('HTTP 500 首次触发网络重试：pending + retry_count=1，5s 后重新入队', async () => {

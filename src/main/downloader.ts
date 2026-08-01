@@ -90,6 +90,11 @@ export class Downloader {
       await pipeline(Readable.fromWeb(res.body as import('stream/web').ReadableStream), createWriteStream(dest))
 
       const size = await import('fs').then(m => m.statSync(dest).size)
+      // 校验下载内容是否真是 MP4：避免把 CDN 错误页/空文件当视频（黑屏源头之一）
+      if (size < 1024 || !(await isMp4(dest))) {
+        await import('fs').then(m => m.rmSync(dest, { force: true }))
+        throw new Error('bad_mp4')
+      }
       const downloadedAt = new Date().toISOString()
       this.db.prepare("UPDATE videos SET status='done', local_path=?, file_size=?, downloaded_at=?, error=NULL WHERE id=?")
         .run(dest, size, downloadedAt, id)
@@ -109,4 +114,19 @@ export class Downloader {
       delete this.fetching[id]
     }
   }
+}
+
+/** 校验文件头含 MP4 的 ftyp box（前 16 字节） */
+async function isMp4(file: string): Promise<boolean> {
+  const fs = await import('fs')
+  try {
+    const fh = fs.openSync(file, 'r')
+    try {
+      const buf = Buffer.alloc(16)
+      fs.readSync(fh, buf, 0, 16, 0)
+      return buf.includes(Buffer.from('ftyp'))
+    } finally {
+      fs.closeSync(fh)
+    }
+  } catch { return false }
 }

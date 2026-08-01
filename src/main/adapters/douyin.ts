@@ -46,9 +46,10 @@ function parseAweme(a: unknown): VideoItem | null {
 }
 
 export function normalizePlayUrl(raw: string): string {
+  // 仅做可靠的 playwm→play 替换（官方无水印直链手法）。
+  // 不做 _watermark 字符串替换：实测该替换会把部分 CDN 文件名改坏，导致下载出黑屏视频。
   let url = raw
   if (url.includes('playwm')) url = url.replace('playwm', 'play')
-  if (url.includes('_watermark')) url = url.replace('_watermark', '')
   return url
 }
 

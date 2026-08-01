@@ -48,8 +48,8 @@ describe('douyinAdapter.normalizePlayUrl', () => {
   it('playwm 替换为 play', () => {
     expect(douyinAdapter.normalizePlayUrl('https://a/playwm/1')).toBe('https://a/play/1')
   })
-  it('移除 _watermark 片段', () => {
-    expect(douyinAdapter.normalizePlayUrl('https://a/x_watermark_100')).toBe('https://a/x_100')
+  it('不做 _watermark 字符串替换（避免改坏 CDN 文件名导致黑屏）', () => {
+    expect(douyinAdapter.normalizePlayUrl('https://a/x_watermark_100')).toBe('https://a/x_watermark_100')
   })
   it('已是无水印则原样返回', () => {
     expect(douyinAdapter.normalizePlayUrl('https://a/play/1')).toBe('https://a/play/1')
