@@ -65,3 +65,16 @@ describe('douyinAdapter URL 构造', () => {
     expect(douyinAdapter.buildAuthorUrl('SEC123')).toBe('https://www.douyin.com/user/SEC123')
   })
 })
+
+describe('douyinAdapter 解析新 general/search 结构', () => {
+  it('data 直接放视频对象（无 aweme_list 键）', () => {
+    const json = { status_code: 0, cursor: 1, data: [AWEME, { ...AWEME, aweme_id: '7300000000000000002' }] }
+    const items = douyinAdapter.parseApiJson('https://www.douyin.com/aweme/v1/web/general/search/single/', json)
+    expect(items).toHaveLength(2)
+    expect(items[1].awemeId).toBe('7300000000000000002')
+  })
+  it('视频嵌套在任意层级的键下也能收集', () => {
+    const json = { status_code: 0, extra: { data: { items: [AWEME] } } }
+    expect(collectAwemeList(json)).toHaveLength(1)
+  })
+})
