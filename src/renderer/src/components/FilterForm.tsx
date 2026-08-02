@@ -14,9 +14,15 @@ export default function FilterForm({ onSubmit }: { onSubmit: (t: CreateTaskInput
   const [aiFilter, setAiFilter] = useState(false)
   const [aiRule, setAiRule] = useState('')
   const [aiOrganize, setAiOrganize] = useState(false)
+  const [autoDownload, setAutoDownload] = useState(true)
+  const [allowDuplicateAuthor, setAllowDuplicateAuthor] = useState<boolean | undefined>(undefined)
   const [err, setErr] = useState('')
 
-  useEffect(() => { void api.listPlatforms().then(setPlatforms) }, [])
+  useEffect(() => {
+    void api.listPlatforms().then(setPlatforms)
+    // 默认跟随全局设置：未在表单改过时 allowDuplicateAuthor 保持与设置一致
+    void api.getSettings().then(s => setAllowDuplicateAuthor(s.allowDuplicateAuthor))
+  }, [])
 
   const targetValid = target >= 200 && target <= 1000
 
@@ -29,7 +35,8 @@ export default function FilterForm({ onSubmit }: { onSubmit: (t: CreateTaskInput
       platform, type, query: query.trim(),
       filters: { timeRange, duration, targetCount: target, aiFilterRule: aiFilter ? aiRule.trim() : undefined },
       aiFilterEnabled: aiFilter, aiOrganizeEnabled: aiOrganize,
-      autoDownload: true // Task7 会改为「下载方式」开关；当前默认自动下载
+      autoDownload,
+      allowDuplicateAuthor: type === 'author' ? allowDuplicateAuthor : undefined
     })
     if (r.skipped) setErr(r.reason ?? '已跳过：该作者已爬取过')
     else setQuery('')
@@ -89,6 +96,24 @@ export default function FilterForm({ onSubmit }: { onSubmit: (t: CreateTaskInput
           <input type="checkbox" checked={aiOrganize} onChange={e => setAiOrganize(e.target.checked)} />
           AI 下载后整理
         </label>
+      </div>
+      <div className="mt-3 flex flex-wrap items-center gap-6 text-sm">
+        <span className="text-xs text-zinc-500">下载方式</span>
+        <label className="flex items-center gap-1">
+          <input type="radio" name="autoDownload" checked={autoDownload} onChange={() => setAutoDownload(true)} />
+          自动下载
+        </label>
+        <label className="flex items-center gap-1">
+          <input type="radio" name="autoDownload" checked={!autoDownload} onChange={() => setAutoDownload(false)} />
+          手动挑选
+        </label>
+        {type === 'author' && (
+          <label className="flex items-center gap-1">
+            <input type="checkbox" checked={allowDuplicateAuthor ?? false}
+              onChange={e => setAllowDuplicateAuthor(e.target.checked)} />
+            允许重复爬取该作者主页（已爬过也继续）
+          </label>
+        )}
       </div>
       {err && <p className="mt-2 text-xs text-red-500">{err}</p>}
     </Card>
