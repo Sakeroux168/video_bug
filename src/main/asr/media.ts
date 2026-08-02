@@ -50,8 +50,15 @@ export function findFfmpeg(): string | null {
 // 轻量并发闸门
 // ==========================
 // 最小可用的信号量：run() 里跑的任务并发不超过 max，超出排队。
+//
+// 计数约定：active 只数"正在跑的任务"，不数排队者。经典信号量写法 ——
+//   · acquire：有空位 → active++ 直接进场；没空位 → 只把 resolve 排队，不计数。
+//   · release：有排队者 → 唤醒队首，名额直接交接（active 不变，仍满员）；
+//              没排队者 → active-- 让出空位。
+// 注意不要把 active++ 写进排队的回调里 —— 那样每交接一次计数就净 +1，
+// 一批任务跑完 active 会停在满员值而实际无人运行，之后 acquire 全部挂起死锁。
 
-class Semaphore {
+export class Semaphore {
   private queue: Array<() => void> = []
   private active = 0
 
@@ -72,8 +79,8 @@ class Semaphore {
         this.active++
         resolve()
       } else {
-        // 满员就排队，release 时把名额让给排在最前的等待者
-        this.queue.push(() => { this.active++; resolve() })
+        // 满员就排队；release 时唤醒队首，名额直接交接
+        this.queue.push(resolve)
       }
     })
   }
