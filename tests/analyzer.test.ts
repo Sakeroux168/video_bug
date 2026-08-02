@@ -46,6 +46,40 @@ describe('Analyzer', () => {
     expect(r).toEqual({ category: '美食', tags: ['探店', '小吃'] })
   })
 
+  it('classifyWithMedia 请求体含 image_url content 且无 response_format', async () => {
+    let capturedBody: any
+    const fetchImpl = (async (url: unknown, init?: any) => {
+      capturedBody = JSON.parse(init.body)
+      return new Response(JSON.stringify({ choices: [{ message: { content: '{"category":"美食","tags":["探店"]}' } }] }), {
+        status: 200, headers: { 'content-type': 'application/json' }
+      })
+    }) as typeof fetch
+    const a = new Analyzer(cfg, fetchImpl)
+    const r = await a.classifyWithMedia('标题 文案', [{ dataUrl: 'data:image/jpeg;base64,AAAA' }], 'media-key')
+    expect(r).toEqual({ category: '美食', tags: ['探店'] })
+    // 多模态端点很多不支持 response_format，这里特意不传
+    expect(capturedBody.response_format).toBeUndefined()
+    expect(capturedBody.messages.length).toBe(2)
+    const content = capturedBody.messages[1].content
+    expect(Array.isArray(content)).toBe(true)
+    expect(content[0]).toEqual({ type: 'text', text: '标题 文案' })
+    expect(content[1]).toEqual({ type: 'image_url', image_url: { url: 'data:image/jpeg;base64,AAAA' } })
+  })
+
+  it('classifyWithMedia 同 cacheKey 结果缓存，不重复请求', async () => {
+    let calls = 0
+    const fetchImpl = (async () => {
+      calls++
+      return new Response(JSON.stringify({ choices: [{ message: { content: '{"category":"美食","tags":[]}' } }] }), {
+        status: 200, headers: { 'content-type': 'application/json' }
+      })
+    }) as typeof fetch
+    const a = new Analyzer(cfg, fetchImpl)
+    await a.classifyWithMedia('a', [{ dataUrl: 'x' }], 'media-cache')
+    await a.classifyWithMedia('a', [{ dataUrl: 'x' }], 'media-cache')
+    expect(calls).toBe(1)
+  })
+
   it('同 cacheKey 结果缓存，不重复请求', async () => {
     let calls = 0
     const fetchImpl = (async () => {
