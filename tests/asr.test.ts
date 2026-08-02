@@ -137,4 +137,30 @@ describe('transcribeFor', () => {
     expect(seen).toHaveLength(1)
     expect(existsSync(seen[0])).toBe(false) // 临时请求文件用完即删
   })
+
+  it('worker 非零退出 → rejection 消息带 stderr 首行诊断 + exit code', async () => {
+    // 模拟子进程失败：promisify(execFile) 在 exitCode!=0 时会 reject 一个
+    // 挂了 stderr / code 的 error（worker 的 fail() 把可读原因打在 stderr 首行）
+    const runWorker = vi.fn(async (): Promise<WorkerOutput> => {
+      const e = new Error('Command failed') as Error & { stderr?: string; code?: string }
+      e.stderr = '语音转写子进程出错：加载识别模型失败\n原始错误：\n...'
+      e.code = '1'
+      throw e
+    })
+
+    let caught: Error | null = null
+    try {
+      await transcribeFor(
+        db,
+        { aweme_id: 'AW3', local_path: join(dir, 'c.mp4') },
+        { ffmpeg: 'ffmpeg-mock', models, runWorker }
+      )
+    } catch (e) {
+      caught = e as Error
+    }
+
+    expect(caught).not.toBeNull()
+    expect(caught!.message).toContain('加载识别模型失败') // stderr 首行的可读原因
+    expect(caught!.message).toContain('code=1') // exit code 一并带上
+  })
 })

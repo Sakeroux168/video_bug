@@ -244,7 +244,19 @@ export async function transcribeFor(
       provider: 'cpu'
     }), 'utf8')
 
-    const out = await runWorker(reqFile, opts.signal)
+    let out: WorkerOutput
+    try {
+      out = await runWorker(reqFile, opts.signal)
+    } catch (e) {
+      // 子进程非零退出（exitCode != 0）或超时被杀：execFile 把 stderr / code 挂在 error 上。
+      // worker 的 fail() 会把可读原因打在 stderr 第一行（模型缺失/加载失败/请求文件缺失），
+      // 不拼进消息的话用户只看到一句"命令执行失败"，完全不知道错在哪。
+      const err = e as Error & { code?: unknown; stderr?: unknown }
+      if (err.name === 'AbortError' || err.code === 'ABORT_ERR') throw e // 主动取消原样上抛，不掩盖成"失败"
+      const firstLine = String(err.stderr ?? '').split('\n')[0].trim()
+      const code = err.code != null ? ` (code=${String(err.code)})` : ''
+      throw new Error(`语音转写失败${code}：${firstLine || err.message}`)
+    }
 
     const text = out.text || ''
     const speechSec = out.speechSec || 0
