@@ -213,6 +213,17 @@ export function listPendingVideos(db: DatabaseSync): VideoRow[] {
   return db.prepare("SELECT * FROM videos WHERE status = 'pending' ORDER BY id").all() as unknown as VideoRow[]
 }
 
+/** 按作者查视频，status 可过滤（默认全部） */
+export function listAuthorVideos(db: DatabaseSync, authorId: number, status?: VideoStatus): VideoRow[] {
+  if (status) return db.prepare('SELECT * FROM videos WHERE author_id = ? AND status = ? ORDER BY id').all(authorId, status) as unknown as VideoRow[]
+  return db.prepare('SELECT * FROM videos WHERE author_id = ? ORDER BY id').all(authorId) as unknown as VideoRow[]
+}
+
+/** 设置作者归档状态；state 传 null 表示清空 */
+export function setAuthorOrganizeState(db: DatabaseSync, id: number, state: 'pending' | 'done' | 'failed' | null): void {
+  db.prepare('UPDATE authors SET organize_state = ? WHERE id = ?').run(state, id)
+}
+
 export function setVideoStatus(db: DatabaseSync, id: number, status: VideoStatus, patch: Partial<VideoRow> = {}): void {
   const sets = ['status = ?']
   const vals: unknown[] = [status]

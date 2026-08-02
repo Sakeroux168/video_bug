@@ -1,0 +1,122 @@
+import type { DatabaseSync } from 'node:sqlite'
+import { mkdirSync } from 'fs'
+import { rename } from 'fs/promises'
+import { join, basename } from 'path'
+import type { AuthorRow, VideoRow } from '../shared/types'
+import { listAuthorVideos, setAuthorOrganizeState } from './db'
+import { ensureUniqueName } from './filename'
+
+/** 分类名清洗为合法目录名（Windows 非法字符替换，限长 32，空回落"未分类"）——与 scheduler 现有逻辑一致 */
+export function sanitizeCategory(category: string): string {
+  const cleaned = category.replace(/[\\/:*?"<>|\r\n]/g, '_').trim().slice(0, 32)
+  return cleaned || '未分类'
+}
+
+/** 作者昵称清洗为合法目录名（限长 64，空回落"作者"） */
+export function sanitizeDirName(nickname: string): string {
+  const cleaned = nickname.replace(/[\\/:*?"<>|\r\n]/g, '_').trim().slice(0, 64)
+  return cleaned || '作者'
+}
+
+/** 作者目录名：清洗昵称；若 authors 表存在**另一个**作者（不同 sec_uid）清洗后同名，则追加 `_${sec_uid.slice(-6)}` 区分 */
+export function authorDirName(author: { nickname: string; sec_uid: string }, db: DatabaseSync): string {
+  const cleaned = sanitizeDirName(author.nickname)
+  const others = db.prepare('SELECT nickname FROM authors WHERE sec_uid != ?').all(author.sec_uid) as unknown as Array<{ nickname: string }>
+  const clash = others.some(r => sanitizeDirName(r.nickname) === cleaned)
+  return clash ? `${cleaned}_${author.sec_uid.slice(-6)}` : cleaned
+}
+
+/** 品类解析函数：入参为作者行与已下载视频样本，返回品类名；null/抛错由调用方回退「未分类」 */
+export type ResolveCategoryFn = (author: AuthorRow, samples: VideoRow[]) => Promise<string | null>
+
+export interface OrganizeResult {
+  moved: number
+  category: string
+  state: 'done' | 'failed'
+}
+
+export interface OrganizerDeps {
+  db: DatabaseSync
+  downloadDir: string
+  resolveCategory: ResolveCategoryFn
+  /** 每归档完一个作者回调一次，供上层汇报进度 */
+  onProgress?: (info: { authorId: number; authorName: string; moved: number; category: string; state: 'done' | 'failed' }) => void
+}
+
+/** 按作者归档：把已下载视频从平铺目录移动成 `下载目录\{品类}\{作者昵称}\视频` */
+export class Organizer {
+  constructor(private deps: OrganizerDeps) {}
+
+  /** 下载完成事件调用：organize_state 为 null 或 'failed' 的作者置 'pending'，'done' 跳过 */
+  markAuthorPending(authorId: number): void {
+    const row = this.deps.db.prepare('SELECT organize_state FROM authors WHERE id = ?').get(authorId) as { organize_state: string | null } | undefined
+    if (!row) return
+    if (row.organize_state === null || row.organize_state === 'failed') {
+      setAuthorOrganizeState(this.deps.db, authorId, 'pending')
+    }
+  }
+
+  /** 归档单个作者的 done 视频：品类解析失败归「未分类」但不算归档失败；仅"移动文件失败"记 failed */
+  async organizeAuthor(authorId: number): Promise<OrganizeResult> {
+    const db = this.deps.db
+    const author = db.prepare('SELECT * FROM authors WHERE id = ?').get(authorId) as AuthorRow | undefined
+    if (!author) return { moved: 0, category: '未分类', state: 'failed' }
+
+    const videos = listAuthorVideos(db, authorId, 'done')
+    if (!videos.length) {
+      // 无可归档视频：不算失败，标记完成避免反复调度
+      setAuthorOrganizeState(db, authorId, 'done')
+      this.deps.onProgress?.({ authorId, authorName: author.nickname, moved: 0, category: '未分类', state: 'done' })
+      return { moved: 0, category: '未分类', state: 'done' }
+    }
+
+    // 解析品类：AI 失败（返回 null 或抛错）→ 回退「未分类」，但不视为归档失败（文件照常移动）
+    let category: string
+    try {
+      const c = await this.deps.resolveCategory(author, videos)
+      category = c ? sanitizeCategory(c) : '未分类'
+    } catch {
+      category = '未分类'
+    }
+
+    const destDir = join(this.deps.downloadDir, category, authorDirName(author, db))
+    let moved = 0
+    let failedMoves = 0
+    for (const v of videos) {
+      if (!v.local_path) continue
+      try {
+        mkdirSync(destDir, { recursive: true })
+        const finalName = ensureUniqueName(destDir, basename(v.local_path))
+        const dest = join(destDir, finalName)
+        await rename(v.local_path, dest)
+        db.prepare('UPDATE videos SET local_path = ? WHERE id = ?').run(dest, v.id)
+        moved++
+      } catch {
+        failedMoves++ // 源文件缺失/权限等 → 单条失败，整作者记 failed
+      }
+    }
+
+    const state = failedMoves > 0 ? 'failed' : 'done'
+    setAuthorOrganizeState(db, authorId, state)
+    this.deps.onProgress?.({ authorId, authorName: author.nickname, moved, category, state })
+    return { moved, category, state }
+  }
+
+  /** 处理所有 organize_state='pending' 的作者，返回处理的作者数 */
+  async organizePending(): Promise<number> {
+    const rows = this.deps.db.prepare("SELECT id FROM authors WHERE organize_state = 'pending'").all() as unknown as Array<{ id: number }>
+    for (const r of rows) await this.organizeAuthor(r.id)
+    return rows.length
+  }
+
+  /** 处理所有有 done 视频且未归档（organize_state 非 'done'）的作者，返回处理的作者数 */
+  async organizeAll(): Promise<number> {
+    const rows = this.deps.db.prepare(
+      `SELECT DISTINCT a.id FROM authors a
+       JOIN videos v ON v.author_id = a.id AND v.status = 'done'
+       WHERE a.organize_state IS NULL OR a.organize_state != 'done'`
+    ).all() as unknown as Array<{ id: number }>
+    for (const r of rows) await this.organizeAuthor(r.id)
+    return rows.length
+  }
+}
