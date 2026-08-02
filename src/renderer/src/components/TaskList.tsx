@@ -174,15 +174,17 @@ export default function TaskList({ notify }: { notify: (text: string) => void })
       const onSel = selectableIds.filter(vid => selected.has(vid))
       const allOnPageSelected = selectableIds.length > 0 && onSel.length === selectableIds.length
       const someOnPageSelected = onSel.length > 0
-      const selDownloadable = selectableIds.filter(vid => {
-        const st = vmap.get(vid)!.status
+      // 批量操作作用于整个 selected 集合（跨页保留勾选），按各自可选状态集过滤；
+      // vmap 只含本任务视频，其它任务的勾选 id 自然被排除。
+      const selDownloadable = [...selected].filter(vid => {
+        const st = vmap.get(vid)?.status
         return st === 'collected' || st === 'cancelled' || st === 'failed'
       })
-      const selCancellable = selectableIds.filter(vid => {
-        const st = vmap.get(vid)!.status
+      const selCancellable = [...selected].filter(vid => {
+        const st = vmap.get(vid)?.status
         return st === 'pending' || st === 'downloading'
       })
-      const selFailed = selectableIds.filter(vid => vmap.get(vid)!.status === 'failed')
+      const selFailed = [...selected].filter(vid => vmap.get(vid)?.status === 'failed')
       const collectedIds = vs.filter(v => v.status === 'collected').map(v => v.id)
       out[id] = { filtered, pageCount, curPage, pageVideos, selectableIds, allOnPageSelected, someOnPageSelected, selDownloadable, selCancellable, selFailed, collectedIds }
     }
@@ -295,24 +297,21 @@ export default function TaskList({ notify }: { notify: (text: string) => void })
                           setPage(prev => ({ ...prev, [t.id]: 1 }))
                         }}
                       />
-                      {d.selDownloadable.length > 0 && (
-                        <button
-                          className={btnSmall}
-                          onClick={() => { void api.downloadVideos(d.selDownloadable).then(() => { refresh(); notify(`已开始下载 ${d.selDownloadable.length} 个视频`) }) }}
-                        >下载选中({d.selDownloadable.length})</button>
-                      )}
-                      {d.selCancellable.length > 0 && (
-                        <button
-                          className={btnSmall}
-                          onClick={() => { void api.cancelVideos(d.selCancellable).then(() => { refresh(); notify(`已取消 ${d.selCancellable.length} 个下载`) }) }}
-                        >取消选中({d.selCancellable.length})</button>
-                      )}
-                      {d.selFailed.length > 0 && (
-                        <button
-                          className={btnSmall}
-                          onClick={() => { void api.retryVideos(d.selFailed).then(() => { refresh(); notify(`已重试 ${d.selFailed.length} 个视频`) }) }}
-                        >重试选中失败({d.selFailed.length})</button>
-                      )}
+                      <button
+                        className={btnSmall}
+                        disabled={d.selDownloadable.length === 0}
+                        onClick={() => { void api.downloadVideos(d.selDownloadable).then(() => { refresh(); notify(`已开始下载 ${d.selDownloadable.length} 个视频`) }) }}
+                      >下载选中({d.selDownloadable.length})</button>
+                      <button
+                        className={btnSmall}
+                        disabled={d.selCancellable.length === 0}
+                        onClick={() => { void api.cancelVideos(d.selCancellable).then(() => { refresh(); notify(`已取消 ${d.selCancellable.length} 个下载`) }) }}
+                      >取消选中({d.selCancellable.length})</button>
+                      <button
+                        className={btnSmall}
+                        disabled={d.selFailed.length === 0}
+                        onClick={() => { void api.retryVideos(d.selFailed).then(() => { refresh(); notify(`已重试 ${d.selFailed.length} 个视频`) }) }}
+                      >重试选中失败({d.selFailed.length})</button>
                     </div>
                   )}
                   {!videos[t.id] ? (
