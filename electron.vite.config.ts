@@ -3,7 +3,17 @@ import react from '@vitejs/plugin-react'
 import { resolve } from 'path'
 
 export default defineConfig({
-  main: { plugins: [externalizeDepsPlugin()] },
+  main: {
+    plugins: [externalizeDepsPlugin()],
+    build: {
+      rollupOptions: {
+        input: {
+          index: resolve('src/main/index.ts'),
+          'asr-worker': resolve('src/main/asr/asr-worker.ts')
+        }
+      }
+    }
+  },
   preload: {
     plugins: [externalizeDepsPlugin()],
     build: {
