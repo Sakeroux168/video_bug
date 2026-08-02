@@ -1,7 +1,7 @@
 import type { DatabaseSync } from 'node:sqlite'
 import { mkdirSync } from 'fs'
 import { rename } from 'fs/promises'
-import { join, basename } from 'path'
+import { join, basename, dirname, resolve } from 'path'
 import type { AuthorRow, VideoRow } from '../shared/types'
 import { listAuthorVideos, setAuthorOrganizeState } from './db'
 import { ensureUniqueName } from './filename'
@@ -47,13 +47,17 @@ export interface OrganizerDeps {
 export class Organizer {
   constructor(private deps: OrganizerDeps) {}
 
-  /** 下载完成事件调用：organize_state 为 null 或 'failed' 的作者置 'pending'，'done' 跳过 */
+  /** 是否仍平铺在下载目录根（尚未归档进 {品类}/{作者} 子目录） */
+  private isFlat(v: VideoRow): boolean {
+    return !!v.local_path && dirname(resolve(v.local_path)) === resolve(this.deps.downloadDir)
+  }
+
+  /** 下载完成事件调用：该作者存在 ≥1 条 done 且仍平铺在下载目录根的视频时才置 'pending'。
+   *  用视频状态佐证，不因 organize_state='done' 永久挡死 —— 分批下载时上一批归档后作者为 done，
+   *  新下载完成的视频仍会把它再次置 pending 供归档。 */
   markAuthorPending(authorId: number): void {
-    const row = this.deps.db.prepare('SELECT organize_state FROM authors WHERE id = ?').get(authorId) as { organize_state: string | null } | undefined
-    if (!row) return
-    if (row.organize_state === null || row.organize_state === 'failed') {
-      setAuthorOrganizeState(this.deps.db, authorId, 'pending')
-    }
+    const hasFlatDone = listAuthorVideos(this.deps.db, authorId, 'done').some(v => this.isFlat(v))
+    if (hasFlatDone) setAuthorOrganizeState(this.deps.db, authorId, 'pending')
   }
 
   /** 归档单个作者的 done 视频：品类解析失败归「未分类」但不算归档失败；仅"移动文件失败"记 failed */
@@ -62,9 +66,10 @@ export class Organizer {
     const author = db.prepare('SELECT * FROM authors WHERE id = ?').get(authorId) as AuthorRow | undefined
     if (!author) return { moved: 0, category: '未分类', state: 'failed' }
 
-    const videos = listAuthorVideos(db, authorId, 'done')
+    // 只归档仍平铺在下载目录根（未归档）的 done 视频；已在 {品类}/{作者} 子目录里的跳过，保证重复整理幂等、分批安全
+    const videos = listAuthorVideos(db, authorId, 'done').filter(v => this.isFlat(v))
     if (!videos.length) {
-      // 无可归档视频：不算失败，标记完成避免反复调度
+      // 没有待归档的平铺视频：作者已全部归档或本就无 done → 标记完成，不算失败
       setAuthorOrganizeState(db, authorId, 'done')
       this.deps.onProgress?.({ authorId, authorName: author.nickname, moved: 0, category: '未分类', state: 'done' })
       return { moved: 0, category: '未分类', state: 'done' }

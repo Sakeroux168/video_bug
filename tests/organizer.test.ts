@@ -201,20 +201,54 @@ describe('Organizer.organizePending / organizeAll / markAuthorPending', () => {
     expect(existsSync(join(dir, '美食', '甲'))).toBe(false)
   })
 
-  it('markAuthorPending：null/failed → pending，done 跳过', async () => {
-    const a1 = authorWithDoneVideos('SEC920001', '甲')
-    const a2 = authorWithDoneVideos('SEC920002', '乙')
-    const a3 = authorWithDoneVideos('SEC920003', '丙')
-    db.prepare("UPDATE authors SET organize_state='done' WHERE id=?").run(a1.authorId)
+  it('markAuthorPending：有平铺 done 视频即置 pending（done 不再挡死）；无平铺 done 不动', async () => {
+    const a1 = authorWithDoneVideos('SEC920001', '甲') // 2 条平铺 done
+    const a2 = authorWithDoneVideos('SEC920002', '乙') // 2 条平铺 done
+    const a3 = authorWithDoneVideos('SEC920003', '丙') // 2 条平铺 done，但先归档进子目录
+    db.prepare("UPDATE authors SET organize_state='done' WHERE id=?").run(a1.authorId) // 模拟上一批已归档置 done
     db.prepare("UPDATE authors SET organize_state='failed' WHERE id=?").run(a2.authorId)
+    await organizer().organizeAuthor(a3.authorId) // a3 全部归档，不再有平铺视频
+    expect(db.prepare('SELECT organize_state FROM authors WHERE id=?').get(a3.authorId)).toEqual({ organize_state: 'done' })
+
     const org = organizer()
-    org.markAuthorPending(a1.authorId)
-    org.markAuthorPending(a2.authorId)
-    org.markAuthorPending(a3.authorId)
+    org.markAuthorPending(a1.authorId) // done 但仍有平铺 done → pending
+    org.markAuthorPending(a2.authorId) // failed 且有平铺 done → pending
+    org.markAuthorPending(a3.authorId) // done 且已无平铺 done → 不动
     const st = db.prepare('SELECT id, organize_state FROM authors').all() as Array<{ id: number; organize_state: string | null }>
-    expect(st.find(x => x.id === a1.authorId)!.organize_state).toBe('done')
+    expect(st.find(x => x.id === a1.authorId)!.organize_state).toBe('pending')
     expect(st.find(x => x.id === a2.authorId)!.organize_state).toBe('pending')
-    expect(st.find(x => x.id === a3.authorId)!.organize_state).toBe('pending')
+    expect(st.find(x => x.id === a3.authorId)!.organize_state).toBe('done')
+  })
+
+  it('分批下载：先归档一批置 done，新批 done 后 markAuthorPending 再次置 pending，只归档新增（幂等）', async () => {
+    const { authorId, vids } = authorWithDoneVideos('SEC940001', '分批', 2)
+    const org = organizer('美食')
+
+    // 第一批：markPending + organizeAuthor 归档 2 条
+    org.markAuthorPending(authorId)
+    expect(db.prepare('SELECT organize_state FROM authors WHERE id=?').get(authorId)).toEqual({ organize_state: 'pending' })
+    const r1 = await org.organizeAuthor(authorId)
+    expect(r1).toEqual({ moved: 2, category: '美食', state: 'done' })
+    for (const v of vids) expect(existsSync(v.src)).toBe(false)
+
+    // 第二批：同一作者再下载 1 条平铺 done
+    const taskId = createTask(db, input)
+    insertVideos(db, [item({ awemeId: 'SEC940001_new', authorSecUid: 'SEC940001', authorNickname: '分批' })], taskId, 'douyin')
+    const [nv] = listVideos(db, taskId)
+    const src2 = join(dir, 'new.mp4')
+    writeFileSync(src2, Buffer.from([4, 5, 6]))
+    setVideoStatus(db, nv.id, 'done', { local_path: src2 })
+
+    // done 状态也能再次置 pending，organizeAuthor 只移动新增这条
+    org.markAuthorPending(authorId)
+    expect(db.prepare('SELECT organize_state FROM authors WHERE id=?').get(authorId)).toEqual({ organize_state: 'pending' })
+    const r2 = await org.organizeAuthor(authorId)
+    expect(r2).toEqual({ moved: 1, category: '美食', state: 'done' })
+
+    // 已归档的不重名不再移动，新视频进子目录
+    const destDir = join(dir, '美食', '分批')
+    expect(existsSync(src2)).toBe(false)
+    expect(readdirSync(destDir).sort()).toEqual(['SEC940001_0.mp4', 'SEC940001_1.mp4', 'new.mp4'])
   })
 
   it('onProgress 每作者回调一次归档结果', async () => {
