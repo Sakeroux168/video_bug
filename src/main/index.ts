@@ -7,15 +7,23 @@ import { Scheduler } from './scheduler'
 import { Downloader } from './downloader'
 import { Analyzer } from './analyzer'
 import { Organizer } from './organizer'
+import type { ResolveCategoryFn } from './organizer'
 import { registerIpc } from './ipc'
 import { getSettings } from './settings'
 import { douyinAdapter } from './adapters/douyin'
+import { classifyAuthor } from './ai/organizer-ai'
+import { transcribeFor } from './asr/asr'
+import type { Transcript } from './asr/asr'
+import { status as asrStatus, pathFor } from './asr/models'
+import { findFfmpeg } from './asr/media'
+import type { VideoRow } from '../shared/types'
 
 let win: BrowserWindow | null = null
 let browser: VideoBrowser | null = null
 let downloader: Downloader | null = null
 let scheduler: Scheduler | null = null
 let analyzer: Analyzer | null = null
+let organizer: Organizer | null = null
 let taskRunning = false
 let browserShown = false
 let forceBrowserFull = false
@@ -119,25 +127,57 @@ app.whenReady().then(() => {
     }
   })
 
+  // Task14：ASR 依赖组装。ffmpeg 用 findFfmpeg()；模型路径从 asr 模型目录取。
+  // asrReady 每次归档时现查（models.status().ready）：模型下载完成/设置保存后即时生效，无需重启。
+  const ffmpeg = findFfmpeg()
+  function buildAsrDeps(): {
+    asrReady: boolean
+    ffmpeg: string | null
+    asr: { transcribeFor: (row: VideoRow) => Promise<Transcript> } | null
+  } {
+    if (!asrStatus().ready || !ffmpeg) return { asrReady: false, ffmpeg, asr: null }
+    return {
+      asrReady: true,
+      ffmpeg,
+      asr: {
+        transcribeFor: (row: VideoRow) => {
+          // 样本都应是已下载的视频；缺本地文件就没法抽音轨，直接报错让 classifyAuthor 跳过该样本
+          if (!row.local_path) throw new Error(`视频缺少本地文件，无法转写: ${row.aweme_id}`)
+          return transcribeFor(db, { aweme_id: row.aweme_id, local_path: row.local_path }, {
+            ffmpeg,
+            models: { model: pathFor('model'), tokens: pathFor('tokens'), vad: pathFor('vad') },
+            maxSec: getSettings().asrMaxSec ?? 90
+          })
+        }
+      }
+    }
+  }
+
+  // Task14：重建 Organizer。resolveCategory 走「视听分类」→ 失败回退作者已有 category。
+  // analyzer 与 asr 就绪状态实时读取，settings:save 后重建即可让全部变化生效（含 downloadDir）。
+  function reloadOrganizer(): void {
+    const s = getSettings()
+    const resolveCategory: ResolveCategoryFn = async (author, samples) => {
+      if (analyzer) {
+        const { asrReady, ffmpeg: f, asr } = buildAsrDeps()
+        if (asrReady) {
+          const c = await classifyAuthor(author, samples, { analyzer, asr, ffmpeg: f })
+          if (c) return c
+        }
+      }
+      return author.category ?? null
+    }
+    organizer = new Organizer({ db, downloadDir: s.downloadDir, resolveCategory })
+    scheduler?.updateOrganizer(organizer)
+  }
+
+  reloadOrganizer() // 先建实例；此刻 scheduler 尚为 null，updateOrganizer 无副作用
+
   scheduler = new Scheduler({
     db, browser, analyzer, downloader,
     emit: push,
     scrollIntervalMs: settings.scrollIntervalMs,
-    organizer: new Organizer({
-      db,
-      downloadDir: settings.downloadDir,
-      // Task5 桥接：AI 可用时按作者代表性视频分类，否则回退「未分类」（作者级分类在 Task13 完善）
-      resolveCategory: async (author, samples) => {
-        if (!analyzer) return null
-        const sample = samples[0]
-        if (!sample) return null
-        const text = `${sample.title}\n作者:${author.nickname}\n时长:${sample.duration}s`
-        try {
-          const r = await analyzer.classify(text, `author:${author.id}:organize`)
-          return r.category || null
-        } catch { return null }
-      }
-    }),
+    organizer,
     organizeDebounceMs: settings.organizeDebounceMs ?? 5000
   })
 
@@ -145,6 +185,8 @@ app.whenReady().then(() => {
     db, scheduler, downloader, analyzer, browser,
     getWindow: () => win!,
     reloadAnalyzer,
+    reloadOrganizer,
+    getOrganizer: () => organizer,
     enqueueTask,
     setBrowserVisible
   })

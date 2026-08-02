@@ -68,6 +68,26 @@ export interface AppSettings {
   allowDuplicateAuthor: boolean
   /** 下载完成→按作者归档去抖毫秒（Task5 触发整理用，设置面板在 Task14 加） */
   organizeDebounceMs: number
+  /** ASR 转写只取视频前 N 秒（Task14 设置接入；默认 90） */
+  asrMaxSec: number
+}
+
+/** ASR 单个模型文件的状态（models.status() 的结果形状，跨进程用） */
+export interface AsrModelFileStatus {
+  key: string
+  label: string
+  path: string
+  expectBytes: number
+  actualBytes: number
+  ok: boolean
+}
+
+/** ASR 模型目录整体状态（asr:status 通道返回） */
+export interface AsrStatus {
+  dir: string
+  ready: boolean
+  files: AsrModelFileStatus[]
+  totalBytes: number
 }
 
 export const ERROR = {

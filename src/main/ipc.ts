@@ -7,6 +7,8 @@ import type { Scheduler } from './scheduler'
 import type { Downloader } from './downloader'
 import { Analyzer } from './analyzer'
 import type { VideoBrowser } from './browser'
+import type { Organizer } from './organizer'
+import { status as modelsStatus, ensureModels } from './asr/models'
 
 export interface IpcDeps {
   db: DatabaseSync
@@ -17,6 +19,10 @@ export interface IpcDeps {
   getWindow: () => BrowserWindow
   /** 设置保存后重建 Analyzer（AI 配置热加载） */
   reloadAnalyzer: () => void
+  /** Task14：设置保存后重建 Organizer（downloadDir / ASR 就绪状态热更新） */
+  reloadOrganizer: () => void
+  /** 取当前整理器实例（settings:save 后可能被重建，IPC 一律走 getter 拿最新） */
+  getOrganizer: () => Organizer | null
   /** 把新建任务投入 FIFO 队列（串行执行，去重） */
   enqueueTask: (id: number) => void
   /** 渲染层切换浏览器标签时通知主进程（主进程据此结合任务状态决定显示/小窗/隐藏） */
@@ -78,7 +84,36 @@ export function registerIpc(deps: IpcDeps): void {
     saveSettings(s)
     // I3: 保存后立即重建 Analyzer，下载参数热更新，无需重启程序
     deps.reloadAnalyzer()
+    // Task14: 下载目录 / ASR 就绪状态变化 → 重建 Organizer（resolveCategory 实时读 asr/analyzer）
+    deps.reloadOrganizer()
     deps.downloader.updateSettings(s)
+  })
+
+  // Task14：手动整理单个作者 → 归档其已下载视频到 {品类}/{作者}；organizeAll 类似但批量
+  ipcMain.handle('authors:organize', async (_e, authorId: number) => {
+    const org = deps.getOrganizer()
+    if (!org) return { ok: false, error: '整理器未就绪' }
+    try {
+      const r = await org.organizeAuthor(authorId)
+      return { ok: true, moved: r.moved, category: r.category, state: r.state }
+    } catch (err) { return { ok: false, error: String(err) } }
+  })
+  ipcMain.handle('organize:all', async () => {
+    const org = deps.getOrganizer()
+    if (!org) return { ok: false, error: '整理器未就绪' }
+    try {
+      const count = await org.organizeAll()
+      return { ok: true, count }
+    } catch (err) { return { ok: false, error: String(err) } }
+  })
+
+  // Task14：ASR 模型状态查询 + 下载（进度透传可选；这里简单等结果返回，设置面板用状态行反馈）
+  ipcMain.handle('asr:status', () => modelsStatus())
+  ipcMain.handle('asr:download', async () => {
+    try {
+      const r = await ensureModels()
+      return { ok: true, ready: r.ready, downloaded: r.downloaded }
+    } catch (err) { return { ok: false, error: String(err) } }
   })
 
   ipcMain.handle('ai:test', async () => {

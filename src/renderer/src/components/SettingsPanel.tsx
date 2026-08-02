@@ -1,13 +1,30 @@
 import React, { useEffect, useState } from 'react'
 import { api } from '../api'
-import type { AppSettings } from '../../../shared/types'
+import type { AppSettings, AsrStatus } from '../../../shared/types'
 import { Card, btnPrimary, inputCls } from './ui'
+
+/** 字节数格式化成可读体积 */
+function fmtBytes(n: number): string {
+  if (n < 0) return '—'
+  if (n >= 1 << 30) return `${(n / (1 << 30)).toFixed(1)} GB`
+  if (n >= 1 << 20) return `${(n / (1 << 20)).toFixed(1)} MB`
+  if (n >= 1 << 10) return `${(n / (1 << 10)).toFixed(1)} KB`
+  return `${n} B`
+}
 
 export default function SettingsPanel() {
   const [s, setS] = useState<AppSettings | null>(null)
   const [msg, setMsg] = useState('')
+  const [asr, setAsr] = useState<AsrStatus | null>(null)
+  const [downloading, setDownloading] = useState(false)
+  const [organizing, setOrganizing] = useState(false)
 
-  useEffect(() => { void api.getSettings().then(setS) }, [])
+  async function refreshAsr(): Promise<void> { setAsr(await api.getAsrStatus()) }
+
+  useEffect(() => {
+    void api.getSettings().then(setS)
+    void refreshAsr()
+  }, [])
 
   if (!s) return <div className="text-sm text-zinc-400">加载中…</div>
 
@@ -23,6 +40,26 @@ export default function SettingsPanel() {
   async function testAi(): Promise<void> {
     const r = await api.testAi()
     setMsg(r.ok ? 'AI 连接正常' : `AI 连接失败：${r.error}`)
+  }
+
+  async function downloadModels(): Promise<void> {
+    setDownloading(true)
+    setMsg('模型下载中（约 230MB），请稍候…')
+    try {
+      const r = await api.downloadAsrModels()
+      setMsg(r.ok ? '语音模型下载完成' : `语音模型下载失败：${r.error}`)
+    } finally {
+      setDownloading(false)
+      void refreshAsr()
+    }
+  }
+
+  async function organizeAll(): Promise<void> {
+    setOrganizing(true)
+    try {
+      const r = await api.organizeAll()
+      setMsg(r.ok ? `已整理 ${r.count} 个作者` : `整理失败：${r.error}`)
+    } finally { setOrganizing(false) }
   }
 
   return (
@@ -79,6 +116,39 @@ export default function SettingsPanel() {
           <input type="checkbox" checked={s.allowDuplicateAuthor} onChange={e => set('allowDuplicateAuthor', e.target.checked)} />
           允许重复爬取已爬过主页的作者（取消勾选则自动去重跳过）
         </label>
+        {/* Task14：语音模型状态 + 下载 + 整理全部 */}
+        <div className="mt-4 space-y-2 border-t border-zinc-100 pt-3 text-xs text-zinc-500">
+          <div className="flex items-center justify-between">
+            <span className="font-medium text-zinc-700">语音模型（ASR）</span>
+            <span className={asr?.ready ? 'text-green-600' : 'text-amber-600'}>
+              {asr ? (asr.ready ? '已就绪' : '未就绪') : '查询中…'}
+            </span>
+          </div>
+          {asr && (
+            <div className="space-y-1">
+              {asr.files.map(f => (
+                <div key={f.key} className="flex items-center justify-between">
+                  <span>{f.label}</span>
+                  <span className={f.ok ? 'text-green-600' : 'text-zinc-400'}>
+                    {f.ok ? fmtBytes(f.actualBytes) : `未下载（${fmtBytes(f.expectBytes)}）`}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+          <div className="flex items-center gap-2 pt-1">
+            <button className={btnPrimary} disabled={downloading} onClick={() => void downloadModels()}>
+              {downloading ? '下载中…' : '下载模型'}
+            </button>
+            <button
+              className="rounded-md border border-zinc-300 px-3 py-1.5 hover:bg-zinc-100 disabled:opacity-40"
+              disabled={organizing}
+              onClick={() => void organizeAll()}
+            >
+              {organizing ? '整理中…' : '整理全部'}
+            </button>
+          </div>
+        </div>
       </Card>
       <div className="flex items-center gap-3">
         <button className={btnPrimary} onClick={() => void save()}>保存设置</button>

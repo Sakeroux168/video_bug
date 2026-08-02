@@ -12,7 +12,8 @@ const DEFAULTS: AppSettings = {
   scrollIntervalMs: 2000,
   addressTtlMin: 30,
   allowDuplicateAuthor: false,
-  organizeDebounceMs: 5000
+  organizeDebounceMs: 5000,
+  asrMaxSec: 90
 }
 
 export function settingsFile(): string {

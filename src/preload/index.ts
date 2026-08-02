@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { CreateTaskInput, AppSettings, TaskRow, VideoRow, AuthorRow, TaskStats } from '../shared/types'
+import type { CreateTaskInput, AppSettings, TaskRow, VideoRow, AuthorRow, TaskStats, AsrStatus } from '../shared/types'
 
 const api = {
   ping: () => ipcRenderer.sendSync('api:ping') as string,
@@ -20,6 +20,10 @@ const api = {
   listAuthors: (): Promise<AuthorRow[]> => ipcRenderer.invoke('authors:list'),
   updateAuthorCategory: (id: number, category: string): Promise<boolean> => ipcRenderer.invoke('authors:updateCategory', id, category),
   deleteAuthors: (ids: number[]): Promise<boolean> => ipcRenderer.invoke('authors:delete', ids),
+  organizeAuthor: (id: number): Promise<{ ok: boolean; moved?: number; category?: string; state?: string; error?: string }> => ipcRenderer.invoke('authors:organize', id),
+  organizeAll: (): Promise<{ ok: boolean; count?: number; error?: string }> => ipcRenderer.invoke('organize:all'),
+  getAsrStatus: (): Promise<AsrStatus> => ipcRenderer.invoke('asr:status'),
+  downloadAsrModels: (): Promise<{ ok: boolean; ready?: boolean; error?: string }> => ipcRenderer.invoke('asr:download'),
   getSettings: (): Promise<AppSettings> => ipcRenderer.invoke('settings:get'),
   saveSettings: (s: AppSettings): Promise<void> => ipcRenderer.invoke('settings:save', s),
   testAi: (): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke('ai:test'),

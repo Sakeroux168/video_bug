@@ -69,6 +69,11 @@ export class Scheduler {
     })
   }
 
+  /** Task14：设置保存后重建整理器（downloadDir / resolveCategory 热更新，如 asr 模型就绪状态变化） */
+  updateOrganizer(o: Organizer | null): void {
+    this.deps.organizer = o
+  }
+
   stop(): void {
     this.aborted = true
     this.clearOrganizeTimer()

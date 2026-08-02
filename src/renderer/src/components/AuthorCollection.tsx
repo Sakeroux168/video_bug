@@ -106,6 +106,13 @@ export default function AuthorCollection({ notify }: { notify: (text: string) =>
     setEditingId(null)
   }
 
+  async function organizeOne(a: AuthorRow): Promise<void> {
+    const r = await api.organizeAuthor(a.id)
+    if (r.ok) notify(`已整理 ${a.nickname}：${r.moved} 个视频 → ${r.category}`)
+    else notify(`整理 ${a.nickname} 失败：${r.error}`)
+    refresh()
+  }
+
   return (
     <Card title="作者收藏">
       <div className="mb-2 flex items-center gap-3 text-xs">
@@ -172,6 +179,7 @@ export default function AuthorCollection({ notify }: { notify: (text: string) =>
                   <td className="py-2">
                     <div className="flex items-center gap-1">
                       <button className={`${btnPrimary} !px-2 !py-1 !text-xs`} onClick={() => void crawlHome(a)}>爬主页</button>
+                      <button className="rounded px-2 py-1 text-xs text-emerald-600 hover:bg-emerald-50" onClick={() => void organizeOne(a)}>整理</button>
                       <button className="rounded px-2 py-1 text-xs text-red-400 hover:bg-red-50" onClick={() => void deleteOne(a.id)}>删除</button>
                     </div>
                   </td>
