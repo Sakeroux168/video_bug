@@ -19,8 +19,8 @@ let taskRunning = false
 let browserShown = false
 let forceBrowserFull = false
 
-/** 根据任务状态与用户所在标签决定内置浏览器显示方式：
- *  任务运行中 / 验证暂停 → 浏览器保持全屏（页面完整不跳小窗；验证时强制全屏方便过验证）；
+/** 根据任务状态与用户所在标签决定抖音窗口显示方式：
+ *  任务运行中 / 验证暂停 → 显示独立抖音窗口（不盖管理面板，可拖走）；
  *  无任务 → 仅在用户切到浏览器标签时显示 */
 function updateBrowserDisplay(): void {
   if (!browser) return
@@ -89,9 +89,10 @@ function push(evt: unknown): void {
     if (t.type === 'task:paused') {
       taskRunning = false
       if (t.reason === 'stalled_verify') {
-        // 触发验证：强制浏览器全屏显示验证界面，并提示用户；不自动放行下一个任务
+        // 触发验证：显示并聚焦独立抖音窗口让用户过验证，并提示；不自动放行下一个任务
         forceBrowserFull = true
         updateBrowserDisplay()
+        browser?.focus()
         win?.webContents.send('evt:task:notice', {
           type: 'stalled_verify', text: '任务可能触发验证，请在浏览器完成验证后点「继续」'
         })
@@ -137,9 +138,10 @@ app.whenReady().then(() => {
   })
   downloader.onEvent(e => push(e))
 
-  // 断点续传：running→paused；pending 视频重新入队
+  // 断点续传：running→paused；downloading→pending，与已有 pending 一起重新入队
   const running = db.prepare("SELECT id FROM tasks WHERE status='running'").all() as Array<{ id: number }>
   for (const t of running) db.prepare("UPDATE tasks SET status='paused', error='interrupted' WHERE id=?").run(t.id)
+  db.prepare("UPDATE videos SET status='pending' WHERE status='downloading'").run()
   const pend = db.prepare("SELECT id FROM videos WHERE status='pending'").all() as Array<{ id: number }>
   for (const v of pend) downloader.enqueue(v.id)
   downloader.start()

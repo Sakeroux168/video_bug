@@ -1,31 +1,43 @@
-import { BrowserWindow, WebContentsView } from 'electron'
+import { BrowserWindow } from 'electron'
 import { join } from 'path'
 import type { PlatformAdapter } from './adapters/types'
 import { INJECT_SCRIPT } from './injector'
 
-// 顶部留给渲染层标题栏+标签栏的高度（header ~40px + tabs ~44px + 边框），微调此处即可
-const TOP_OFFSET = 96
-
 export class VideoBrowser {
-  private view: WebContentsView | null = null
-  private visible = false
+  private win: BrowserWindow | null = null
+  // 首次显示前定位到主窗口右侧；之后尊重用户拖拽/缩放后的位置，不再重置
+  private positioned = false
+  // 主动销毁开关：dispose 时置 true，避免 close 拦截把销毁变成隐藏
+  private forceClose = false
 
   constructor(
     private host: BrowserWindow,
     private onRaw: (url: string, json: unknown) => void,
     private inject: string = INJECT_SCRIPT
   ) {
-    // 窗口缩放时保持视图贴合可用区域（仅可见时更新，避免频繁 setBounds 开销）
-    this.host.on('resize', () => { if (this.visible) this.applyBounds() })
+    // 不再依赖宿主窗口布局：独立子窗口自行定位，无需订阅 resize
   }
 
   async init(): Promise<void> {
-    const view = new WebContentsView({ webPreferences: { partition: 'persist:douyin', preload: join(__dirname, '../preload/douyin.js') } })
-    view.setVisible(false)
-    this.host.contentView.addChildView(view)
-    this.view = view
+    // 独立可拖拽子窗口：以主窗口为 parent（总是盖在主窗口上层），初始隐藏，由 setVisible/focus 唤起
+    const win = new BrowserWindow({
+      parent: this.host,
+      show: false,
+      width: 480,
+      height: 760,
+      minWidth: 320,
+      minHeight: 480,
+      title: '抖音浏览器',
+      webPreferences: {
+        partition: 'persist:douyin',
+        preload: join(__dirname, '../preload/douyin.js'),
+        contextIsolation: true,
+        nodeIntegration: false
+      }
+    })
+    this.win = win
 
-    const wc = view.webContents
+    const wc = win.webContents
     // 关键：隐藏/切后台时不被 Chromium 节流，否则切到管理面板后页面停止发请求，爬取到一页就停
     wc.setBackgroundThrottling(false)
     // 拦截自定义协议（bytedance:// 等）：不走 Windows 协议处理，避免弹微软商店
@@ -48,17 +60,24 @@ export class VideoBrowser {
     wc.on('dom-ready', () => {
       void wc.executeJavaScript(this.inject).catch(() => { /* ignore */ })
     })
+
+    // 点「×」只隐藏不销毁：登录态与页面状态保留，重新显示无需重载，也不影响主窗口关闭逻辑
+    win.on('close', (e) => {
+      if (!this.forceClose) {
+        e.preventDefault()
+        win.hide()
+      }
+    })
   }
 
   async load(adapter: PlatformAdapter, url: string): Promise<void> {
-    if (!this.view) throw new Error('browser_not_initialized')
-    const wc = this.view.webContents
-    await wc.loadURL(url)
+    if (!this.win) throw new Error('browser_not_initialized')
+    await this.win.loadURL(url)
   }
 
   /** 渐进滚动到底：滚 window + 所有可滚容器，多轮小步，并点击"加载更多"，尽力触发抖音加载更多 */
   async scrollToBottom(): Promise<void> {
-    if (!this.view) return
+    if (!this.win) return
     const script = `(async () => {
       const sleep = ms => new Promise(r => setTimeout(r, ms));
       const sc = document.scrollingElement || document.documentElement;
@@ -98,33 +117,41 @@ export class VideoBrowser {
       await sleep(1500); // 最后再等一拍，等网络/渲染落定
       return targets.length;
     })()`
-    await this.view.webContents.executeJavaScript(script).catch(() => {})
+    await this.win.webContents.executeJavaScript(script).catch(() => {})
   }
 
   setVisible(v: boolean): void {
-    if (!this.view) return
-    this.visible = v
-    if (v) this.applyBounds()
-    this.view.setVisible(v)
+    if (!this.win) return
+    if (v) {
+      // 首次显示前定位到主窗口右侧；之后不再重置，保留用户拖拽后的位置
+      if (!this.positioned) {
+        const b = this.host.getBounds()
+        this.win.setPosition(b.x + b.width + 24, b.y)
+        this.positioned = true
+      }
+      this.win.show()
+    } else {
+      this.win.hide()
+    }
   }
 
-  /** 视图置于渲染层下方，顶部留出标题+标签栏高度，避免整窗覆盖后无法切回面板 */
-  private applyBounds(): void {
-    if (!this.view) return
-    const [w, h] = this.host.getContentSize()
-    const top = Math.min(TOP_OFFSET, h)
-    this.view.setBounds({ x: 0, y: top, width: w, height: Math.max(0, h - top) })
+  /** 显示并聚焦抖音窗口（验证暂停时唤起用户注意） */
+  focus(): void {
+    if (!this.win) return
+    this.win.show()
+    this.win.focus()
   }
 
   /** 打开抖音页面的开发者工具（调试用） */
   openDevTools(): void {
-    if (this.view) this.view.webContents.openDevTools({ mode: 'detach' })
+    if (this.win) this.win.webContents.openDevTools({ mode: 'detach' })
   }
 
   dispose(): void {
-    if (this.view) {
-      this.host.contentView.removeChildView(this.view)
-      this.view = null
+    if (this.win) {
+      this.forceClose = true
+      this.win.destroy()
+      this.win = null
     }
   }
 }
