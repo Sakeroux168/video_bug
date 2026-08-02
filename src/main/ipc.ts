@@ -31,8 +31,8 @@ export function registerIpc(deps: IpcDeps): void {
 
   ipcMain.handle('task:create', (_e, input: Parameters<typeof createTask>[1]) => {
     // 作者去重：仅当该作者的"主页爬取"任务已完成才跳过（作者在搜索里出现过不算爬过主页）。
-    // 设置里勾选"允许重复爬取作者"时放行。
-    if (input.type === 'author' && !getSettings().allowDuplicateAuthor) {
+    // 允许重复：任务级 allowDuplicateAuthor 覆盖全局设置；未指定时回退到全局"允许重复爬取作者"。
+    if (input.type === 'author' && !(input.allowDuplicateAuthor ?? getSettings().allowDuplicateAuthor)) {
       const done = db.prepare("SELECT id FROM tasks WHERE type='author' AND query=? AND status='done' LIMIT 1")
         .get(input.query) as { id: number } | undefined
       if (done) return { id: null, skipped: true, reason: '该作者主页已爬取过，可在作者表格中直接管理' }
@@ -56,6 +56,15 @@ export function registerIpc(deps: IpcDeps): void {
     }
     return true
   })
+
+  // 全局下载控制：暂停（在途任务跑完，不再拉新）/ 恢复 / 查询暂停状态
+  ipcMain.handle('download:pause', () => { downloader.pause(); return true })
+  ipcMain.handle('download:resume', () => { downloader.resume(); return true })
+  ipcMain.handle('download:state', () => ({ paused: downloader.isPaused() }))
+
+  // 手动下载（collected/cancelled/failed → pending 并入队）与取消（在途 abort / 排队移出）
+  ipcMain.handle('video:download', (_e, ids: number[]) => { downloader.download(ids); return true })
+  ipcMain.handle('video:cancel', (_e, ids: number[]) => { downloader.cancel(ids); return true })
 
   ipcMain.handle('authors:list', () => listAuthors(db))
   ipcMain.handle('authors:updateCategory', (_e, id: number, category: string) => {
