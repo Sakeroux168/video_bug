@@ -121,7 +121,7 @@ export class VideoBrowser {
   }
 
   setVisible(v: boolean): void {
-    if (!this.win) return
+    if (!this.win || this.win.isDestroyed()) return
     if (v) {
       // 首次显示前定位到主窗口右侧；之后不再重置，保留用户拖拽后的位置
       if (!this.positioned) {
@@ -137,7 +137,7 @@ export class VideoBrowser {
 
   /** 显示并聚焦抖音窗口（验证暂停时唤起用户注意） */
   focus(): void {
-    if (!this.win) return
+    if (!this.win || this.win.isDestroyed()) return
     this.win.show()
     this.win.focus()
   }

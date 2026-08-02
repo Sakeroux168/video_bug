@@ -162,4 +162,7 @@ ipcMain.on('dy:raw', async (_e, msg) => {
 })
 ipcMain.handle('debug:rawLog', () => rawLog.slice(-60))
 
+// 退出前销毁浏览器子窗口：否则 close→hide 拦截让 quit 被 preventDefault 中止、window-all-closed 也因隐藏子窗口永不触发
+app.on('before-quit', () => browser?.dispose())
+
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit() })
