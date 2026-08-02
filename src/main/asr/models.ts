@@ -236,16 +236,26 @@ export async function downloadOne(
   let received = 0
   const out = createWriteStream(tmp)
 
+  // I-2：createWriteStream 之后【立即】挂 error 监听。磁盘满等写盘失败在循环结束前就会
+  // emit 'error'；之前监听挂在循环结束后的 Promise 里 → 239MB 下到一半磁盘满时
+  // 'error' 无监听 → 主进程 uncaught 崩溃。这里 error 直接 reject 下方 Promise，
+  // 走外面 catch 统一 destroy + 清 .part。
+  let resolveWriteDone!: () => void
+  let rejectWriteDone!: (e: Error) => void
+  const writeDone = new Promise<void>((resolve, reject) => {
+    resolveWriteDone = resolve
+    rejectWriteDone = reject
+  })
+  out.on('error', rejectWriteDone)
+
   try {
     for await (const chunk of res.body) {
       out.write(chunk)
       received += chunk.length
       if (opts.onProgress) opts.onProgress({ key: spec.key, received, total })
     }
-    await new Promise<void>((resolve, reject) => {
-      out.on('error', reject)
-      out.end(() => resolve())
-    })
+    out.end(() => resolveWriteDone())
+    await writeDone
   } catch (e) {
     out.destroy()
     await unlink(tmp).catch(() => {}) // 半成品不留

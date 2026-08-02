@@ -76,6 +76,11 @@ function createWindow(): void {
     width: 1280, height: 820, title: '视频爬取工具',
     webPreferences: { preload: join(__dirname, '../preload/index.js'), contextIsolation: true, nodeIntegration: false }
   })
+  // C-1：非 macOS 点×关主窗口必须确定退出。子窗口(抖音视图)的 close 被拦截成 hide，
+  // 若不先 dispose，window-all-closed 永不触发、app 不退出、进程挂后台。关窗前先销毁子窗口。
+  // createWindow 时 browser 模块变量尚为 null，用闭包引用模块级 browser —— 用户关窗时已赋值；dispose 幂等。
+  // macOS 保留现状：window-all-closed 不退出、Cmd+Q 走 before-quit。
+  win.on('close', () => { if (process.platform !== 'darwin') browser?.dispose() })
   if (process.env['ELECTRON_RENDERER_URL']) void win.loadURL(process.env['ELECTRON_RENDERER_URL'])
   else void win.loadFile(join(__dirname, '../renderer/index.html'))
 }

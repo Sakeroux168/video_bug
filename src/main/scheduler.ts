@@ -143,6 +143,10 @@ export class Scheduler {
       } else {
         db.prepare("UPDATE tasks SET status='done', finished_at=? WHERE id=?").run(new Date().toISOString(), taskId)
         this.deps.emit({ type: 'task:done', taskId, fetched: this.fetched })
+        // I-1：任务以 done 结束时做一次最终归档 flush。小任务可能在去抖窗口内就结束，
+        // 最后一批 video:done 设的 timer 会被 finally 的 clearOrganizeTimer 清掉 → 该批视频永不自动归档。
+        // organizePending 只处理 organize_state='pending' 的作者，幂等；organizer 缺失时无副作用。
+        void this.deps.organizer?.organizePending()
       }
     } catch {
       this.fail(taskId, 'network')
