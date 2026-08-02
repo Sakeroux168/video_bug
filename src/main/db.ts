@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS tasks (
   status TEXT NOT NULL DEFAULT 'pending',
   target_count INTEGER NOT NULL DEFAULT 200,
   fetched_count INTEGER NOT NULL DEFAULT 0,
+  auto_download INTEGER NOT NULL DEFAULT 1,
   error TEXT,
   created_at TEXT NOT NULL,
   finished_at TEXT
@@ -26,6 +27,8 @@ CREATE TABLE IF NOT EXISTS authors (
   last_fetched_at TEXT,
   note TEXT,
   category TEXT,
+  organize_state TEXT,
+  ai_classified_at TEXT,
   UNIQUE(platform, sec_uid)
 );
 CREATE TABLE IF NOT EXISTS videos (
@@ -52,22 +55,38 @@ CREATE TABLE IF NOT EXISTS videos (
 );
 CREATE INDEX IF NOT EXISTS idx_videos_status ON videos(status);
 CREATE INDEX IF NOT EXISTS idx_videos_task ON videos(task_id);
+CREATE TABLE IF NOT EXISTS transcripts (
+  content_hash TEXT PRIMARY KEY,
+  text TEXT NOT NULL DEFAULT '',
+  speech_sec REAL NOT NULL DEFAULT 0,
+  total_sec REAL NOT NULL DEFAULT 0,
+  engine TEXT,
+  created_at TEXT
+);
 `
 
 export function initDb(db: DatabaseSync): void {
   db.exec(SCHEMA)
-  // 迁移：老库 authors 表没有 category 列（#6 品类）
-  const cols = db.prepare('PRAGMA table_info(authors)').all() as unknown as Array<{ name: string }>
-  if (!cols.some(c => c.name === 'category')) db.exec('ALTER TABLE authors ADD COLUMN category TEXT')
+  // 迁移：老库缺列则 PRAGMA table_info 判缺后 ALTER TABLE 补列（#6 category、Task1 auto_download/organize_state/ai_classified_at）
+  addColumnIfMissing(db, 'authors', 'category', 'TEXT')
+  addColumnIfMissing(db, 'tasks', 'auto_download', 'INTEGER NOT NULL DEFAULT 1')
+  addColumnIfMissing(db, 'authors', 'organize_state', 'TEXT')
+  addColumnIfMissing(db, 'authors', 'ai_classified_at', 'TEXT')
+}
+
+/** 老库迁移：表缺列时补列（ALTER TABLE ADD COLUMN 不能带 NOT NULL 无默认值的约束，故用 DEFAULT） */
+function addColumnIfMissing(db: DatabaseSync, table: string, column: string, ddl: string): void {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all() as unknown as Array<{ name: string }>
+  if (!cols.some(c => c.name === column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${ddl}`)
 }
 
 export function createTask(db: DatabaseSync, input: CreateTaskInput): number {
   const info = db.prepare(
-    `INSERT INTO tasks (platform, type, query, filters, target_count, created_at)
-     VALUES (?, ?, ?, ?, ?, ?)`
+    `INSERT INTO tasks (platform, type, query, filters, target_count, auto_download, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?)`
   ).run(input.platform, input.type, input.query,
     JSON.stringify({ ...input.filters, aiFilterEnabled: input.aiFilterEnabled, aiOrganizeEnabled: input.aiOrganizeEnabled }),
-    input.filters.targetCount, new Date().toISOString())
+    input.filters.targetCount, Number(input.autoDownload ?? true), new Date().toISOString())
   return Number(info.lastInsertRowid)
 }
 
@@ -161,17 +180,22 @@ export function insertVideos(db: DatabaseSync, items: VideoItem[], taskId: numbe
 }
 
 export function listVideos(db: DatabaseSync, taskId: number): VideoRow[] {
-  return db.prepare('SELECT * FROM videos WHERE task_id = ? ORDER BY id').all(taskId) as unknown as VideoRow[]
+  return db.prepare(
+    `SELECT v.*, a.nickname AS author_nickname
+     FROM videos v LEFT JOIN authors a ON a.id = v.author_id
+     WHERE v.task_id = ? ORDER BY v.id`
+  ).all(taskId) as unknown as VideoRow[]
 }
 
 export interface TaskStats {
   total: number; done: number; failed: number; downloading: number; pending: number; filtered: number
+  collected: number; cancelled: number
 }
 
 /** 一个任务的视频按状态计数（供"下载 X/Y"进度展示） */
 export function taskStats(db: DatabaseSync, taskId: number): TaskStats {
   const rows = db.prepare('SELECT status, COUNT(*) c FROM videos WHERE task_id=? GROUP BY status').all(taskId) as unknown as Array<{ status: string; c: number }>
-  const s: TaskStats = { total: 0, done: 0, failed: 0, downloading: 0, pending: 0, filtered: 0 }
+  const s: TaskStats = { total: 0, done: 0, failed: 0, downloading: 0, pending: 0, filtered: 0, collected: 0, cancelled: 0 }
   for (const r of rows) {
     s.total += r.c
     if (r.status === 'done') s.done = r.c
@@ -179,6 +203,8 @@ export function taskStats(db: DatabaseSync, taskId: number): TaskStats {
     else if (r.status === 'downloading') s.downloading = r.c
     else if (r.status === 'pending') s.pending = r.c
     else if (r.status === 'filtered') s.filtered = r.c
+    else if (r.status === 'collected') s.collected = r.c
+    else if (r.status === 'cancelled') s.cancelled = r.c
   }
   return s
 }

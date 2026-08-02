@@ -1,6 +1,6 @@
 export type TaskType = 'keyword' | 'author' | 'hashtag'
 export type TaskStatus = 'pending' | 'running' | 'done' | 'paused' | 'failed'
-export type VideoStatus = 'pending' | 'downloading' | 'done' | 'failed' | 'filtered'
+export type VideoStatus = 'pending' | 'downloading' | 'done' | 'failed' | 'filtered' | 'collected' | 'cancelled'
 export type TimeRange = 'all' | '7d' | '30d' | 'custom'
 export type DurationFilter = 'all' | 'short' | 'medium' | 'long'
 
@@ -22,11 +22,14 @@ export interface CreateTaskInput {
   filters: Filters
   aiFilterEnabled: boolean
   aiOrganizeEnabled: boolean
+  autoDownload: boolean // 自动下载（false=手动模式，视频入 collected）
+  allowDuplicateAuthor?: boolean // type=author 时覆盖全局设置：允许重复爬取已爬过主页的作者
 }
 
 export interface TaskRow {
   id: number; platform: string; type: TaskType; query: string
   filters: string; status: TaskStatus; target_count: number; fetched_count: number
+  auto_download: number
   error: string | null; created_at: string; finished_at: string | null
 }
 
@@ -37,12 +40,14 @@ export interface VideoRow {
   ai_tags: string | null; status: VideoStatus; local_path: string | null
   file_size: number | null; error: string | null; retry_count: number
   fetched_at: string; downloaded_at: string | null
+  author_nickname?: string | null // listVideos 联查 authors 得到的作者昵称
 }
 
 export interface AuthorRow {
   id: number; platform: string; sec_uid: string; nickname: string
   home_url: string | null; video_count: number; last_fetched_at: string | null; note: string | null
   category: string | null
+  organize_state: string | null; ai_classified_at: string | null // Task2 归档状态与 AI 分类时间
 }
 
 export interface AppSettings {

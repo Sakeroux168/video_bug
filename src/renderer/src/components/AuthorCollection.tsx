@@ -90,7 +90,8 @@ export default function AuthorCollection({ notify }: { notify: (text: string) =>
     const r = await api.createTask({
       platform: a.platform, type: 'author', query: a.sec_uid,
       filters: { timeRange: 'all', duration: 'all', targetCount: 200 },
-      aiFilterEnabled: false, aiOrganizeEnabled: false
+      aiFilterEnabled: false, aiOrganizeEnabled: false,
+      autoDownload: true // 爬作者主页当前默认自动下载
     })
     if (r.skipped) notify(r.reason ?? '该作者主页已爬取过')
     else notify(`已开始爬取 ${a.nickname} 的主页，可在任务列表查看进度`)

@@ -28,7 +28,8 @@ export default function FilterForm({ onSubmit }: { onSubmit: (t: CreateTaskInput
     const r = await onSubmit({
       platform, type, query: query.trim(),
       filters: { timeRange, duration, targetCount: target, aiFilterRule: aiFilter ? aiRule.trim() : undefined },
-      aiFilterEnabled: aiFilter, aiOrganizeEnabled: aiOrganize
+      aiFilterEnabled: aiFilter, aiOrganizeEnabled: aiOrganize,
+      autoDownload: true // Task7 会改为「下载方式」开关；当前默认自动下载
     })
     if (r.skipped) setErr(r.reason ?? '已跳过：该作者已爬取过')
     else setQuery('')

@@ -52,7 +52,8 @@ class FakeDownloader {
 const input: CreateTaskInput = {
   platform: 'douyin', type: 'keyword', query: '测试',
   filters: { timeRange: 'all', duration: 'all', targetCount: 200 },
-  aiFilterEnabled: false, aiOrganizeEnabled: false
+  aiFilterEnabled: false, aiOrganizeEnabled: false,
+  autoDownload: true
 }
 
 const rawUrl = 'https://www.douyin.com/aweme/v1/web/search/item/?device_platform=webapp'

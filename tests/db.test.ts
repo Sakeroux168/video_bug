@@ -14,7 +14,8 @@ beforeEach(() => {
 const input: CreateTaskInput = {
   platform: 'douyin', type: 'keyword', query: '美食',
   filters: { timeRange: 'all', duration: 'all', targetCount: 200 } as Filters,
-  aiFilterEnabled: false, aiOrganizeEnabled: false
+  aiFilterEnabled: false, aiOrganizeEnabled: false,
+  autoDownload: true
 }
 
 const item = (over: Partial<VideoItem> = {}): VideoItem => ({
@@ -92,5 +93,53 @@ describe('taskStats', () => {
     expect(s.total).toBe(2)
     expect(s.done).toBe(1)
     expect(s.pending).toBe(1)
+  })
+})
+
+describe('db 扩展（Task 1）', () => {
+  it('createTask 带 autoDownload:false → auto_download 落 0', () => {
+    createTask(db, { ...input, autoDownload: false })
+    expect(listTasks(db)[0].auto_download).toBe(0)
+  })
+
+  it('老库迁移：tasks 表无 auto_download 列时 initDb 补列且已有行默认 1', () => {
+    const old = new DatabaseSync(':memory:')
+    old.exec(`CREATE TABLE tasks (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      platform TEXT NOT NULL DEFAULT 'douyin',
+      type TEXT NOT NULL,
+      query TEXT NOT NULL,
+      filters TEXT NOT NULL DEFAULT '{}',
+      status TEXT NOT NULL DEFAULT 'pending',
+      target_count INTEGER NOT NULL DEFAULT 200,
+      fetched_count INTEGER NOT NULL DEFAULT 0,
+      error TEXT,
+      created_at TEXT NOT NULL,
+      finished_at TEXT
+    )`)
+    old.prepare("INSERT INTO tasks (type, query, created_at) VALUES ('keyword', 'q', ?)").run(new Date().toISOString())
+    initDb(old)
+    const rows = old.prepare('SELECT * FROM tasks').all() as Array<{ auto_download: number }>
+    expect(rows[0].auto_download).toBe(1)
+  })
+
+  it('taskStats 统计 collected/cancelled', () => {
+    const id = createTask(db, { ...input, autoDownload: false })
+    insertVideos(db, [item({ awemeId: 'S1' }), item({ awemeId: 'S2' }), item({ awemeId: 'S3' })], id, 'douyin')
+    const vs = listVideos(db, id)
+    setVideoStatus(db, vs[0].id, 'collected')
+    setVideoStatus(db, vs[1].id, 'cancelled')
+    const s = taskStats(db, id)
+    expect(s.total).toBe(3)
+    expect(s.collected).toBe(1)
+    expect(s.cancelled).toBe(1)
+    expect(s.pending).toBe(1)
+  })
+
+  it('listVideos 联查返回 author_nickname', () => {
+    const id = createTask(db, input)
+    insertVideos(db, [item()], id, 'douyin')
+    const [v] = listVideos(db, id)
+    expect(v.author_nickname).toBe('作者1')
   })
 })
