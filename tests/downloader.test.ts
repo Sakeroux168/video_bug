@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { DatabaseSync } from 'node:sqlite'
 import { initDb, createTask, insertVideos, listVideos, setVideoStatus } from '../src/main/db'
 import { Downloader, buildUserAgent } from '../src/main/downloader'
@@ -17,7 +17,7 @@ beforeEach(() => {
   dir = mkdtempSync(join(tmpdir(), 'dl-'))
 })
 
-afterEach(() => { rmSync(dir, { recursive: true, force: true }) })
+afterEach(() => { vi.useRealTimers(); rmSync(dir, { recursive: true, force: true }) })
 
 const input: CreateTaskInput = {
   platform: 'douyin', type: 'keyword', query: 'q',
@@ -236,5 +236,33 @@ describe('Downloader', () => {
     await new Promise(r => setTimeout(r, 50))
     const row = listVideos(db, taskId)[0]
     expect(row.status).toBe('done')
+  })
+
+  it('网络重试回退窗口内 cancel → 清定时器，5s 后不再重新下载', async () => {
+    // 只伪造 setTimeout/clearTimeout，避免影响 Date/微任务
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      const taskId = createTask(db, input)
+      insertVideos(db, [item()], taskId, 'douyin')
+      const [v] = listVideos(db, taskId)
+      let fetchCount = 0
+      const fetchImpl = (async () => { fetchCount++; return new Response('err', { status: 500 }) }) as typeof fetch
+      const dl = new Downloader(db, { downloadDir: dir, downloadConcurrency: 3, scrollIntervalMs: 2000, addressTtlMin: 30 }, fetchImpl)
+      dl.enqueue(v.id)
+      dl.start()
+      // 让第一次下载(500)跑完 → 进入 5s 网络重试回退（status=pending, retry_count=1）
+      await vi.advanceTimersByTimeAsync(0)
+      let row = listVideos(db, taskId)[0]
+      expect(row.status).toBe('pending')
+      expect(row.retry_count).toBe(1)
+      // 回退窗口内取消：应清掉定时器
+      dl.cancel([v.id])
+      await vi.advanceTimersByTimeAsync(6000) // 超过 5s 回退窗口
+      row = listVideos(db, taskId)[0]
+      expect(row.status).toBe('cancelled') // 未被重新下载
+      expect(fetchCount).toBe(1) // 定时器被清，不再发起 fetch
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

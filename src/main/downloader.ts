@@ -23,6 +23,7 @@ export class Downloader {
   private active = 0
   private paused = false
   private aborters = new Map<number, AbortController>()
+  private retryTimers = new Map<number, NodeJS.Timeout>()
   private listeners: Array<(e: DlEvent) => void> = []
   private fetching: Record<number, boolean> = {}
   private validator: ((file: string) => Promise<boolean>) | null
@@ -67,8 +68,11 @@ export class Downloader {
     for (const id of ids) {
       const row = this.db.prepare('SELECT status FROM videos WHERE id = ?').get(id) as { status: VideoStatus } | undefined
       if (!row) continue
-      // 只对"可取消"态生效：pending(排队/等待)/downloading(在途)/collected(手动模式未下载)
+      // 只对"可取消"态生效：pending(排队/等待/重试回退)/downloading(在途)/collected(手动模式未下载)
       if (row.status !== 'pending' && row.status !== 'downloading' && row.status !== 'collected') continue
+      // 5s 网络重试回退窗口内取消：清定时器，防止 5s 后被重新入队下载
+      const timer = this.retryTimers.get(id)
+      if (timer) { clearTimeout(timer); this.retryTimers.delete(id) }
       const aborter = this.aborters.get(id)
       if (aborter) aborter.abort() // 在途：掐断 fetch/写盘
       const qi = this.queue.indexOf(id)
@@ -109,6 +113,8 @@ export class Downloader {
   private async runOne(id: number): Promise<void> {
     const row = this.db.prepare('SELECT * FROM videos WHERE id = ?').get(id) as VideoRow | undefined
     if (!row) return
+    // 防御：已被取消的任务不再下载（回退窗口内 cancel 后定时器万一仍触发 enqueue 时兜底）
+    if (row.status === 'cancelled') return
     // 每个在途任务一个 AbortController，cancel(ids) 用它掐断 fetch / pipeline 写盘
     const aborter = new AbortController()
     this.aborters.set(id, aborter)
@@ -161,9 +167,9 @@ export class Downloader {
         .run(target, size, downloadedAt, id)
       this.emit({ type: 'video:status', id, status: 'done', localPath: target })
     } catch (err) {
-      // 取消分支（AbortError / signal 已 abort）：删半成品、标 cancelled、跳过网络重试；
-      // 在途的 db 状态 cancel() 已写过 cancelled，这里只兜底、绝不覆盖成 failed
-      if ((err instanceof Error && err.name === 'AbortError') || aborter.signal.aborted) {
+      // 取消分支（signal 已 abort，真实 AbortError 是 DOMException、非 Error，用 signal.aborted 判）：
+      // 删半成品、标 cancelled、跳过网络重试；在途的 db 状态 cancel() 已写过 cancelled，这里只兜底、绝不覆盖成 failed
+      if (aborter.signal.aborted) {
         if (dest) try { rmSync(dest, { force: true }) } catch { /* ignore */ }
         this.db.prepare("UPDATE videos SET status='cancelled', error=NULL WHERE id=?").run(id)
         return
@@ -173,7 +179,9 @@ export class Downloader {
       // 网络类错误自动重试2次（利用 retry_count）；磁盘(ENOENT/EPERM/ENOSPC)/风控等非网络错误直接失败
       if (retry <= 2 && code === ERROR.NETWORK) {
         this.db.prepare("UPDATE videos SET status='pending', retry_count=?, error=NULL WHERE id=?").run(retry, id)
-        setTimeout(() => this.enqueue(id), 5000)
+        // 回退定时器入 map，cancel(ids) 可 clearTimeout 防止已取消项被重新下载
+        const t = setTimeout(() => { this.retryTimers.delete(id); this.enqueue(id) }, 5000)
+        this.retryTimers.set(id, t)
       } else {
         this.db.prepare("UPDATE videos SET status='failed', error=?, retry_count=? WHERE id=?").run(code, retry, id)
       }
