@@ -11,7 +11,8 @@ const DEFAULTS: AppSettings = {
   downloadConcurrency: 3,
   scrollIntervalMs: 2000,
   addressTtlMin: 30,
-  allowDuplicateAuthor: false
+  allowDuplicateAuthor: false,
+  organizeDebounceMs: 5000
 }
 
 export function settingsFile(): string {

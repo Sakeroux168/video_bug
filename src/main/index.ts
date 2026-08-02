@@ -6,6 +6,7 @@ import { VideoBrowser } from './browser'
 import { Scheduler } from './scheduler'
 import { Downloader } from './downloader'
 import { Analyzer } from './analyzer'
+import { Organizer } from './organizer'
 import { registerIpc } from './ipc'
 import { getSettings } from './settings'
 import { douyinAdapter } from './adapters/douyin'
@@ -121,7 +122,23 @@ app.whenReady().then(() => {
   scheduler = new Scheduler({
     db, browser, analyzer, downloader,
     emit: push,
-    scrollIntervalMs: settings.scrollIntervalMs
+    scrollIntervalMs: settings.scrollIntervalMs,
+    organizer: new Organizer({
+      db,
+      downloadDir: settings.downloadDir,
+      // Task5 桥接：AI 可用时按作者代表性视频分类，否则回退「未分类」（作者级分类在 Task13 完善）
+      resolveCategory: async (author, samples) => {
+        if (!analyzer) return null
+        const sample = samples[0]
+        if (!sample) return null
+        const text = `${sample.title}\n作者:${author.nickname}\n时长:${sample.duration}s`
+        try {
+          const r = await analyzer.classify(text, `author:${author.id}:organize`)
+          return r.category || null
+        } catch { return null }
+      }
+    }),
+    organizeDebounceMs: settings.organizeDebounceMs ?? 5000
   })
 
   registerIpc({

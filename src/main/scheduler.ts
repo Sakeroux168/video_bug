@@ -1,17 +1,14 @@
 import type { DatabaseSync } from 'node:sqlite'
-import { mkdirSync } from 'fs'
-import { rename } from 'fs/promises'
-import { join, dirname, basename } from 'path'
 import type { PlatformAdapter } from './adapters/types'
-import type { TaskRow, TaskStatus, Filters, VideoRow } from '../shared/types'
+import type { TaskRow, TaskStatus, Filters } from '../shared/types'
 import { ERROR } from '../shared/types'
 import { filterVideos, dedupeVideos, extractCategory } from './extractor'
 import { isRiskSignal } from './errors'
 import { upsertAuthor } from './db'
-import { ensureUniqueName } from './filename'
 import type { Analyzer } from './analyzer'
 import type { Downloader } from './downloader'
 import type { VideoBrowser } from './browser'
+import type { Organizer } from './organizer'
 import { getAdapter } from './adapters'
 
 export function buildStopDecision(fetched: number, target: number, emptyRounds: number): 'continue' | 'reached' | 'stop' {
@@ -32,6 +29,10 @@ interface SchedulerDeps {
   downloader: Downloader
   emit: (e: SchedulerEvent) => void
   scrollIntervalMs: number
+  /** Task5：按作者整理器（可选；未注入则下载完成不触发整理） */
+  organizer?: Organizer | null
+  /** Task5：下载完成→按作者归档去抖毫秒；<=0 表示立即归档 */
+  organizeDebounceMs?: number
 }
 
 export class Scheduler {
@@ -45,11 +46,12 @@ export class Scheduler {
   private silentRounds = 0
   private rawSinceLastRound = false
   private aiEnabled = false
-  private organizeEnabled = false
-  private organizeTaskId = 0
+  private autoDownload = true
   private pendingVideoIds: number[] = []
   private running = false
   private task: TaskRow | null = null
+  /** Task5：下载完成→按作者归档的去抖计时器句柄 */
+  private organizeTimer: ReturnType<typeof setTimeout> | null = null
 
   /** 供主进程任务队列判断当前是否有任务在跑（避免重复入队/串行丢任务） */
   get isRunning(): boolean { return this.running }
@@ -57,20 +59,20 @@ export class Scheduler {
   constructor(private deps: SchedulerDeps) {
     // 只订阅一次下载器事件；video 完成/失败后从 pendingVideoIds 移除，避免下载堆积放慢永久生效
     this.deps.downloader.onEvent(e => {
-      if (e.type === 'video:status') {
-        if (e.status === 'done' || e.status === 'failed') {
-          const i = this.pendingVideoIds.indexOf(e.id)
-          if (i >= 0) this.pendingVideoIds.splice(i, 1)
-        }
-        // I7 下载后整理：视频 done 且任务开启 AI 整理时分类归档 + 打标签；AI 未配置/失败静默跳过
-        if (e.status === 'done' && this.organizeEnabled && this.deps.analyzer) {
-          void this.organizeVideo(e.id)
-        }
+      if (e.type !== 'video:status') return
+      if (e.status === 'done' || e.status === 'failed') {
+        const i = this.pendingVideoIds.indexOf(e.id)
+        if (i >= 0) this.pendingVideoIds.splice(i, 1)
       }
+      // Task5 下载后整理（按作者）：视频 done → 查所属任务 aiOrganizeEnabled → 标记作者 pending + 去抖归档
+      if (e.status === 'done') this.scheduleAuthorOrganize(e.id)
     })
   }
 
-  stop(): void { this.aborted = true }
+  stop(): void {
+    this.aborted = true
+    this.clearOrganizeTimer()
+  }
   pause(): void { this.aborted = true }
   async resume(taskId: number): Promise<void> { await this.run(taskId) }
 
@@ -96,8 +98,7 @@ export class Scheduler {
       this.rawSinceLastRound = false
       this.pendingVideoIds = []
       this.aiEnabled = !!(this.deps.analyzer) && !!this.filters.aiFilterEnabled
-      this.organizeEnabled = !!this.filters.aiOrganizeEnabled
-      this.organizeTaskId = taskId
+      this.autoDownload = !!task.auto_download
 
       db.prepare("UPDATE tasks SET status='running', error=NULL WHERE id=?").run(taskId)
 
@@ -143,8 +144,10 @@ export class Scheduler {
       this.deps.emit({ type: 'task:paused', taskId, reason: 'scheduler_error' })
     } finally {
       this.running = false
+      // 清理去抖计时器：任务结束/暂停后不再延迟触发归档，避免任务切换后误归档
+      this.clearOrganizeTimer()
       // I5 清理残留任务上下文：handleRaw 的 taskId===0 守卫会拒绝任务结束后的任何流量，
-      // 避免浏览流量污染已完成任务。organizeEnabled/TaskId 保留供迟到的下载完成继续整理。
+      // 避免浏览流量污染已完成任务。
       this.taskId = 0
       this.task = null
       this.adapter = null
@@ -211,18 +214,22 @@ export class Scheduler {
         ? this.task.query.slice(0, 20)
         : extractCategory(item.title)
       const author = upsertAuthor(db, item, adapter.name, category)
+      // Task5 下载方式：自动下载 → 入 pending 并交给下载器；手动 → 仅收集（collected），不进下载队列
+      const status = this.autoDownload ? 'pending' : 'collected'
       const info = db.prepare(
         `INSERT OR IGNORE INTO videos (platform,task_id,aweme_id,title,author_id,play_addr,duration,publish_time,stats,status,ai_verdict,fetched_at)
-         VALUES (?,?,?,?,?,?,?,?,?, 'pending','pass',?)`
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`
       ).run(adapter.name, this.taskId, item.awemeId, item.title, author.id, item.playUrl,
            item.durationSec, new Date(item.publishTime * 1000).toISOString(), JSON.stringify({ likes: item.likes }),
-           new Date().toISOString())
+           status, 'pass', new Date().toISOString())
       if (info.changes > 0) {
         this.fetched++
         if (!author.created) db.prepare('UPDATE authors SET video_count = video_count + 1 WHERE id = ?').run(author.id)
-        const vid = Number(info.lastInsertRowid)
-        this.pendingVideoIds.push(vid)
-        this.deps.downloader.enqueue(vid)
+        if (this.autoDownload) {
+          const vid = Number(info.lastInsertRowid)
+          this.pendingVideoIds.push(vid)
+          this.deps.downloader.enqueue(vid)
+        }
       }
     }
     db.prepare('UPDATE tasks SET fetched_count=? WHERE id=?').run(this.fetched, this.taskId)
@@ -230,41 +237,48 @@ export class Scheduler {
     return { items: items.length, kept: kept.length }
   }
 
-  /** I7 下载后整理：AI 分类 → 打标签 → 文件移入 {downloadDir}/{category}/ 并更新 local_path */
-  private async organizeVideo(id: number): Promise<void> {
+  /** Task5 下载完成→按作者整理：查该视频所属任务是否开启整理 → 标记作者 pending 并安排去抖归档 */
+  private scheduleAuthorOrganize(videoId: number): void {
     const db = this.deps.db
-    const row = db.prepare('SELECT * FROM videos WHERE id = ?').get(id) as VideoRow | undefined
-    if (!row || row.task_id !== this.organizeTaskId || !row.local_path) return
+    const row = db.prepare('SELECT author_id, task_id FROM videos WHERE id = ?').get(videoId) as { author_id: number | null; task_id: number } | undefined
+    if (!row || row.author_id === null) return
     const task = db.prepare('SELECT filters FROM tasks WHERE id = ?').get(row.task_id) as { filters: string } | undefined
     if (!task) return
     const filters = JSON.parse(task.filters) as Filters
-    if (!filters.aiOrganizeEnabled || !this.deps.analyzer) return
-    const author = row.author_id
-      ? (db.prepare('SELECT nickname FROM authors WHERE id = ?').get(row.author_id) as { nickname: string } | undefined)?.nickname ?? ''
-      : ''
-    const text = `${row.title}\n作者:${author}\n时长:${row.duration}s`
-    try {
-      const result = await this.deps.analyzer.classify(text, `${row.platform}:${row.aweme_id}:organize`)
-      const category = sanitizeCategory(result.category)
-      const src = row.local_path
-      const destDir = join(dirname(src), category)
-      mkdirSync(destDir, { recursive: true })
-      const finalName = ensureUniqueName(destDir, basename(src))
-      const dest = join(destDir, finalName)
-      await rename(src, dest)
-      db.prepare('UPDATE videos SET ai_tags=?, local_path=? WHERE id=?').run(JSON.stringify(result), dest, id)
-    } catch { /* AI 失败/未配置/文件缺失 → 静默跳过整理，不影响下载 */ }
+    if (!filters.aiOrganizeEnabled) return
+    const organizer = this.deps.organizer
+    if (!organizer) return
+    organizer.markAuthorPending(row.author_id)
+    this.scheduleOrganizeFlush()
+  }
+
+  /** 去抖：连续多个视频 done 只触发一次归档；debounce<=0 立即调，否则 debounceMs 后调 */
+  private scheduleOrganizeFlush(): void {
+    this.clearOrganizeTimer()
+    const organizer = this.deps.organizer
+    if (!organizer) return
+    const ms = this.deps.organizeDebounceMs ?? 0
+    if (ms <= 0) {
+      void organizer.organizePending()
+      return
+    }
+    this.organizeTimer = setTimeout(() => {
+      this.organizeTimer = null
+      void organizer.organizePending()
+    }, ms)
+  }
+
+  /** run 结束 / stop 时清理去抖计时器，避免任务切换后仍在后台触发归档 */
+  private clearOrganizeTimer(): void {
+    if (this.organizeTimer !== null) {
+      clearTimeout(this.organizeTimer)
+      this.organizeTimer = null
+    }
   }
 
   private fail(taskId: number, code: string): void {
     this.deps.db.prepare("UPDATE tasks SET status='failed', error=? WHERE id=?").run(code, taskId)
   }
-}
-
-/** 分类名清洗为合法目录名（Windows 非法字符替换，限长，空则回落"未分类"） */
-function sanitizeCategory(category: string): string {
-  const cleaned = category.replace(/[\\/:*?"<>|\r\n]/g, '_').trim().slice(0, 32)
-  return cleaned || '未分类'
 }
 
 function sleep(ms: number): Promise<void> { return new Promise(r => setTimeout(r, ms)) }

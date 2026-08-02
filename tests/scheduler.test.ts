@@ -1,12 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { DatabaseSync } from 'node:sqlite'
-import { mkdtempSync, writeFileSync, rmSync, existsSync } from 'fs'
-import { join } from 'path'
-import { tmpdir } from 'os'
 import { buildStopDecision, Scheduler } from '../src/main/scheduler'
 import { initDb, createTask, listAuthors } from '../src/main/db'
 import { douyinAdapter } from '../src/main/adapters/douyin'
-import { Analyzer } from '../src/main/analyzer'
 import type { PlatformAdapter } from '../src/main/adapters/types'
 import type { CreateTaskInput } from '../src/shared/types'
 
@@ -192,47 +188,83 @@ describe('任务结束清理上下文（I5）', () => {
   }, 10000)
 })
 
-describe('下载后整理（I7）', () => {
+describe('下载方式：手动 / 自动（Task5）', () => {
+  it('手动模式（autoDownload:false）→ 视频 status=collected，不入队下载', async () => {
+    const db = newDb()
+    const taskId = createTask(db, { ...input, autoDownload: false })
+    const dl = new FakeDownloader()
+    const browser = new FakeBrowser()
+    const { s } = setup(db, dl, browser)
+    browser.blockNextLoad() // 任务挂起在 load：保持 taskId/adapter 就绪且任务仍在运行
+    const p = s.run(taskId)
+    await new Promise(r => setTimeout(r, 10))
+
+    await s.handleRaw(douyinAdapter, rawUrl, rawJson)
+    const videos = db.prepare('SELECT * FROM videos WHERE task_id=?').all(taskId) as Array<{ id: number; status: string }>
+    expect(videos).toHaveLength(1)
+    expect(videos[0].status).toBe('collected')
+    expect(dl.enqueued).toHaveLength(0)
+    expect((s as any).pendingVideoIds).toEqual([])
+
+    browser.releaseLoad()
+    await p
+  }, 10000)
+
+  it('自动模式（autoDownload:true）→ 视频 status=pending 且入队下载', async () => {
+    const db = newDb()
+    const taskId = createTask(db, input)
+    const dl = new FakeDownloader()
+    const browser = new FakeBrowser()
+    const { s } = setup(db, dl, browser)
+    browser.blockNextLoad()
+    const p = s.run(taskId)
+    await new Promise(r => setTimeout(r, 10))
+
+    await s.handleRaw(douyinAdapter, rawUrl, rawJson)
+    const videos = db.prepare('SELECT * FROM videos WHERE task_id=?').all(taskId) as Array<{ id: number; status: string }>
+    expect(videos).toHaveLength(1)
+    expect(videos[0].status).toBe('pending')
+    expect(dl.enqueued).toContain(videos[0].id)
+    expect((s as any).pendingVideoIds).toEqual([videos[0].id])
+
+    browser.releaseLoad()
+    await p
+  }, 10000)
+})
+
+describe('下载完成触发作者整理（Task5 替代 I7 逐视频整理）', () => {
   const organizeInput: CreateTaskInput = { ...input, aiOrganizeEnabled: true }
 
-  it('视频 done 时 AI 分类归档：移动文件 + 写 ai_tags + 更新 local_path', async () => {
+  it('视频 done 且任务开启整理 → organizer.markAuthorPending 被调 + organizePending 触发', async () => {
     const db = newDb()
-    const dir = mkdtempSync(join(tmpdir(), 'org-'))
-    try {
-      const taskId = createTask(db, organizeInput)
-      const dl = new FakeDownloader()
-      const browser = new FakeBrowser()
-      const fetchImpl = (async () => new Response(
-        JSON.stringify({ choices: [{ message: { content: '{"category":"美食","tags":["探店","小吃"]}' } }] }),
-        { status: 200, headers: { 'content-type': 'application/json' } }
-      )) as typeof fetch
-      const analyzer = new Analyzer({ aiBaseUrl: 'https://api.test/v1', aiApiKey: 'k', aiModel: 'm' }, fetchImpl)
-      const events: unknown[] = []
-      const s = new Scheduler({ db, browser, analyzer, downloader: dl, emit: e => events.push(e), scrollIntervalMs: 1 })
-      browser.blockNextLoad()
-      const p = s.run(taskId)
-      await new Promise(r => setTimeout(r, 10))
+    const taskId = createTask(db, organizeInput)
+    const dl = new FakeDownloader()
+    const browser = new FakeBrowser()
+    // 注入 organizer spy（结构上不满足私有成员，故按需转型）
+    const organizer = {
+      markAuthorPending: vi.fn(),
+      organizePending: vi.fn(async () => 0)
+    } as unknown as import('../src/main/organizer').Organizer
+    const events: unknown[] = []
+    const s = new Scheduler({
+      db, browser, analyzer: null, downloader: dl,
+      emit: e => events.push(e), scrollIntervalMs: 1,
+      organizer, organizeDebounceMs: 0
+    })
+    browser.blockNextLoad()
+    const p = s.run(taskId)
+    await new Promise(r => setTimeout(r, 10))
 
-      await s.handleRaw(douyinAdapter, rawUrl, rawJson)
-      const [vid] = db.prepare('SELECT * FROM videos WHERE task_id=?').all(taskId) as Array<{ id: number }>
+    await s.handleRaw(douyinAdapter, rawUrl, rawJson)
+    const authors = listAuthors(db, 'douyin')
+    expect(authors).toHaveLength(1)
 
-      // 模拟下载器写盘完成：源文件已存在，且 DB local_path 已更新（与真实 Downloader 一致）
-      const src = join(dir, '标题_作者_AW00000001.mp4')
-      writeFileSync(src, Buffer.from([1, 2, 3]))
-      db.prepare("UPDATE videos SET status='done', local_path=? WHERE id=?").run(src, vid.id)
-      dl.emit({ type: 'video:status', id: vid.id, status: 'done', localPath: src })
-      await new Promise(r => setTimeout(r, 80))
+    dl.emit({ type: 'video:status', id: db.prepare('SELECT id FROM videos WHERE task_id=?').get(taskId)!.id, status: 'done' })
 
-      const row = db.prepare('SELECT ai_tags, local_path FROM videos WHERE id=?').get(vid.id) as { ai_tags: string; local_path: string }
-      expect(JSON.parse(row.ai_tags)).toEqual({ category: '美食', tags: ['探店', '小吃'] })
-      expect(existsSync(src)).toBe(false) // 原文件已移动
-      expect(row.local_path).toContain(join(dir, '美食'))
-      expect(existsSync(row.local_path!)).toBe(true)
+    expect(organizer.markAuthorPending).toHaveBeenCalledWith(authors[0].id)
+    expect(organizer.organizePending).toHaveBeenCalled()
 
-      browser.releaseLoad()
-      await p
-    } finally {
-      rmSync(dir, { recursive: true, force: true })
-    }
+    browser.releaseLoad()
+    await p
   }, 10000)
 })

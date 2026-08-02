@@ -60,6 +60,8 @@ export interface AppSettings {
   addressTtlMin: number
   /** 勾选=允许重复爬取已爬过主页的作者；取消=去重跳过 */
   allowDuplicateAuthor: boolean
+  /** 下载完成→按作者归档去抖毫秒（Task5 触发整理用，设置面板在 Task14 加） */
+  organizeDebounceMs: number
 }
 
 export const ERROR = {
