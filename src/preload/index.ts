@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { CreateTaskInput, AppSettings, TaskRow, VideoRow, AuthorRow, TaskStats, AsrStatus } from '../shared/types'
+import type { CreateTaskInput, AppSettings, TaskRow, VideoRow, AuthorRow, TaskStats, AsrStatus, AsrProgress } from '../shared/types'
 
 const api = {
   ping: () => ipcRenderer.sendSync('api:ping') as string,
@@ -23,7 +23,12 @@ const api = {
   organizeAuthor: (id: number): Promise<{ ok: boolean; moved?: number; category?: string; state?: string; error?: string }> => ipcRenderer.invoke('authors:organize', id),
   organizeAll: (): Promise<{ ok: boolean; count?: number; error?: string }> => ipcRenderer.invoke('organize:all'),
   getAsrStatus: (): Promise<AsrStatus> => ipcRenderer.invoke('asr:status'),
-  downloadAsrModels: (): Promise<{ ok: boolean; ready?: boolean; error?: string }> => ipcRenderer.invoke('asr:download'),
+  downloadAsrModels: (): Promise<{ ok: boolean; ready?: boolean; downloaded?: string[]; error?: string }> => ipcRenderer.invoke('asr:download'),
+  onAsrProgress: (cb: (p: AsrProgress) => void): (() => void) => {
+    const l = (_e: unknown, data: unknown) => cb(data as AsrProgress)
+    ipcRenderer.on('evt:asr:progress', l)
+    return () => ipcRenderer.removeListener('evt:asr:progress', l)
+  },
   getSettings: (): Promise<AppSettings> => ipcRenderer.invoke('settings:get'),
   saveSettings: (s: AppSettings): Promise<void> => ipcRenderer.invoke('settings:save', s),
   testAi: (): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke('ai:test'),

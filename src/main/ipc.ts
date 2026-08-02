@@ -9,6 +9,7 @@ import { Analyzer } from './analyzer'
 import type { VideoBrowser } from './browser'
 import type { Organizer } from './organizer'
 import { status as modelsStatus, ensureModels } from './asr/models'
+import type { EnsureProgress } from './asr/models'
 
 export interface IpcDeps {
   db: DatabaseSync
@@ -107,11 +108,15 @@ export function registerIpc(deps: IpcDeps): void {
     } catch (err) { return { ok: false, error: String(err) } }
   })
 
-  // Task14：ASR 模型状态查询 + 下载（进度透传可选；这里简单等结果返回，设置面板用状态行反馈）
+  // Task14：ASR 模型状态查询 + 下载（进度经 evt:asr:progress 透传，设置面板画进度条）
   ipcMain.handle('asr:status', () => modelsStatus())
   ipcMain.handle('asr:download', async () => {
     try {
-      const r = await ensureModels()
+      const r = await ensureModels({
+        onProgress: (p: EnsureProgress) => {
+          deps.getWindow().webContents.send('evt:asr:progress', p)
+        }
+      })
       return { ok: true, ready: r.ready, downloaded: r.downloaded }
     } catch (err) { return { ok: false, error: String(err) } }
   })

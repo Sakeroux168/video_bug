@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { api } from '../api'
-import type { AppSettings, AsrStatus } from '../../../shared/types'
+import type { AppSettings, AsrStatus, AsrProgress } from '../../../shared/types'
 import { Card, btnPrimary, inputCls } from './ui'
 
 /** 字节数格式化成可读体积 */
@@ -17,6 +17,7 @@ export default function SettingsPanel() {
   const [msg, setMsg] = useState('')
   const [asr, setAsr] = useState<AsrStatus | null>(null)
   const [downloading, setDownloading] = useState(false)
+  const [progress, setProgress] = useState<AsrProgress | null>(null)
   const [organizing, setOrganizing] = useState(false)
 
   async function refreshAsr(): Promise<void> { setAsr(await api.getAsrStatus()) }
@@ -24,6 +25,9 @@ export default function SettingsPanel() {
   useEffect(() => {
     void api.getSettings().then(setS)
     void refreshAsr()
+    // Task14：订阅 ASR 模型下载进度，画进度条；组件卸载时取消订阅
+    const off = api.onAsrProgress(p => setProgress(p))
+    return off
   }, [])
 
   if (!s) return <div className="text-sm text-zinc-400">加载中…</div>
@@ -44,12 +48,16 @@ export default function SettingsPanel() {
 
   async function downloadModels(): Promise<void> {
     setDownloading(true)
+    setProgress(null)
     setMsg('模型下载中（约 230MB），请稍候…')
     try {
       const r = await api.downloadAsrModels()
       setMsg(r.ok ? '语音模型下载完成' : `语音模型下载失败：${r.error}`)
+    } catch (err) {
+      setMsg(`语音模型下载失败：${String(err)}`)
     } finally {
       setDownloading(false)
+      setProgress(null)
       void refreshAsr()
     }
   }
@@ -148,6 +156,21 @@ export default function SettingsPanel() {
               {organizing ? '整理中…' : '整理全部'}
             </button>
           </div>
+          {/* 下载进度条：onAsrProgress 实时推 received/total */}
+          {downloading && progress && (
+            <div className="space-y-1">
+              <div className="flex items-center justify-between text-[11px]">
+                <span className="truncate">{progress.label}{progress.host ? `（${progress.host}）` : ''}</span>
+                <span className="shrink-0">{fmtBytes(progress.received)} / {fmtBytes(progress.total)}</span>
+              </div>
+              <div className="h-2 w-full overflow-hidden rounded bg-zinc-100">
+                <div
+                  className="h-full bg-blue-600 transition-all"
+                  style={{ width: `${progress.total > 0 ? (progress.received / progress.total) * 100 : 0}%` }}
+                />
+              </div>
+            </div>
+          )}
         </div>
       </Card>
       <div className="flex items-center gap-3">

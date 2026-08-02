@@ -90,6 +90,15 @@ export interface AsrStatus {
   totalBytes: number
 }
 
+/** ASR 模型下载整体进度（asr:download 经 evt:asr:progress 推给渲染层，画进度条用） */
+export interface AsrProgress {
+  phase: 'start' | 'downloading' | 'done'
+  label: string
+  host?: string
+  received: number
+  total: number
+}
+
 export const ERROR = {
   NETWORK: 'network', ADDRESS_EXPIRED: 'address_expired', FORBIDDEN: 'forbidden',
   LOGIN_EXPIRED: 'login_expired', DISK: 'disk', PARSE_ERROR: 'parse_error',
