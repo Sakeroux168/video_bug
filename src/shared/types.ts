@@ -33,6 +33,12 @@ export interface TaskRow {
   error: string | null; created_at: string; finished_at: string | null
 }
 
+/** 一个任务下视频按状态计数（进度展示 + 手动模式提示条） */
+export interface TaskStats {
+  total: number; done: number; failed: number; downloading: number; pending: number; filtered: number
+  collected: number; cancelled: number
+}
+
 export interface VideoRow {
   id: number; platform: string; task_id: number; aweme_id: string; title: string
   author_id: number | null; play_addr: string | null; duration: number
