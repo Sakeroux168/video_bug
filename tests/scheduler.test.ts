@@ -383,4 +383,47 @@ describe('抓取硬截断到目标（A2）', () => {
     browser.releaseLoad()
     await p
   }, 10000)
+
+  it('AI 过滤批处理中途被暂停 → fetched_count 已持久化（resume 不越界）', async () => {
+    const db = newDb()
+    const taskId = createTask(db, { ...input, aiFilterEnabled: true })
+    const browser = new FakeBrowser()
+    browser.blockNextLoad()
+    // 受控 AI 过滤器：judgeFilter 挂起直到门闩打开，制造批处理中途的暂停窗口
+    let gate!: () => void
+    const gateP = new Promise<void>(r => { gate = r })
+    const analyzer = {
+      judgeFilter: vi.fn(async () => { await gateP; return { pass: true } })
+    } as unknown as import('../src/main/analyzer').Analyzer
+    const events: unknown[] = []
+    const s = new Scheduler({
+      db, browser, analyzer, downloader: new FakeDownloader(),
+      emit: e => events.push(e), scrollIntervalMs: 1
+    })
+    const pRun = s.run(taskId)
+    await new Promise(r => setTimeout(r, 10)) // 任务挂起在 load，taskId 就绪
+
+    const twoRawJson = {
+      aweme_list: Array.from({ length: 2 }, (_, i) => ({
+        aweme_id: `733${String(i + 1).padStart(16, '0')}`,
+        desc: `测试视频标题${i + 1}`,
+        create_time: 1710000000,
+        author: { sec_uid: `SEC_00${i + 1}`, nickname: `作者${i + 1}` },
+        video: { play_addr: { url_list: [`https://cdn.test/v${i + 1}.mp4`] } },
+        statistics: { digg_count: 42 },
+        duration: 8000
+      }))
+    }
+    const pRaw = s.handleRaw(douyinAdapter, rawUrl, twoRawJson)
+    await new Promise(r => setTimeout(r, 10)) // 批内第 1 条卡在 AI 过滤
+    const pPause = s.pause() // 暂停落在 AI 过滤窗口（不 await：run 还挂在 load，pause 等 runExit）
+    gate()
+    await pRaw
+    // 关键断言：abort 前 fetched_count 已持久化，resume 按新值重算 remaining 不会越界
+    expect(db.prepare('SELECT fetched_count FROM tasks WHERE id=?').get(taskId)).toEqual({ fetched_count: 1 })
+    expect((s as any).fetched).toBe(1)
+    browser.releaseLoad()
+    await Promise.all([pRun, pPause])
+    expect(db.prepare('SELECT status, error FROM tasks WHERE id=?').get(taskId)).toEqual({ status: 'paused', error: null })
+  }, 10000)
 })

@@ -244,7 +244,9 @@ export class Scheduler {
     const batch = remaining > 0 ? kept.slice(0, remaining) : []
 
     for (const item of batch) {
-      if (this.aborted) return { items: items.length, kept: kept.length }
+      // 批处理中途被暂停：break 走循环后的 fetched_count 持久化再返回，
+      // 避免 resume 按旧 fetched 重算 remaining 导致总数越界（目标 200 收 201+）
+      if (this.aborted) break
       // AI 过滤/入库可能已让 fetched 到顶（filtered 也计数），到顶即停不再插入
       if (this.fetched >= target) break
       if (this.aiEnabled && this.deps.analyzer) {
