@@ -14,21 +14,18 @@ export default function AuthorCollection({ notify }: { notify: (text: string) =>
 
   function refresh(): void { void api.listAuthors().then(setAuthors) }
 
+  // 点行 = 排他：行已选中 → 全不选；未选中 → 只选它（清空其它）
   function toggle(id: number): void {
-    setSelected(prev => {
-      const next = new Set(prev)
-      if (next.has(id)) next.delete(id); else next.add(id)
-      return next
-    })
+    setSelected(prev => (prev.has(id) ? new Set() : new Set([id])))
   }
   const allSelected = authors.length > 0 && authors.every(a => selected.has(a.id))
   function toggleAll(): void {
     setSelected(allSelected ? new Set() : new Set(authors.map(a => a.id)))
   }
 
-  // —— 拖拽框选（替换式：松手后选中集合 = 框内命中的行，框外一律取消）——
+  // —— 拖拽框选（替换+框内翻转：松手后选中集合 = 框内命中的行 ∖ 原有已选，框外一律取消）——
   const { containerRef, marquee, didDragRef, onMouseDown, onMouseMove, endDrag } = useMarqueeSelect({
-    onSelect: ids => setSelected(new Set(ids))
+    onSelect: ids => setSelected(prev => new Set([...ids].filter(id => !prev.has(id))))
   })
 
   // 点行任意位置切换选中（勾选框/链接/按钮不触发行切换；拖拽框选后的 click 不切换）

@@ -125,12 +125,9 @@ export default function TaskList({ notify }: { notify: (text: string) => void })
     setExpanded(next)
   }
 
+  // 点行 = 排他：行已选中 → 全不选；未选中 → 只选它（清空其它）
   function toggleSelectVideo(id: number): void {
-    setSelected(prev => {
-      const next = new Set(prev)
-      if (next.has(id)) next.delete(id); else next.add(id)
-      return next
-    })
+    setSelected(prev => (prev.has(id) ? new Set() : new Set([id])))
   }
 
   function toggleSelectPage(taskId: number, allSelected: boolean, selectableIds: number[]): void {
@@ -143,9 +140,11 @@ export default function TaskList({ notify }: { notify: (text: string) => void })
     })
   }
 
-  // 框选替换式：松手后选中集合 = 框内命中的行（框外一律取消）
+  // 框选 = 替换 + 框内翻转：松手后选中集合 = 框内命中的行 ∖ 原有已选
+  // （框内已选的翻转取消、未选的选中；框外一律取消）。函数式 setState 读到的 prev
+  // 即 endDrag 时刻的选中快照，无需 hook 额外传参。
   function replaceSelect(ids: number[]): void {
-    setSelected(new Set(ids))
+    setSelected(prev => new Set([...ids].filter(id => !prev.has(id))))
   }
 
   // 点击表格容器空白区域 → 清空全部选择
@@ -401,7 +400,8 @@ export default function TaskList({ notify }: { notify: (text: string) => void })
 
 /**
  * 任务展开区视频表格（独立组件以便每个任务的表格各自实例化框选 hook）。
- * 选择交互：点行任意位置切换选中（勾选框/链接/按钮除外）、点容器空白清空、拖动框选（替换式）。
+ * 选择交互：点行排他（已选行 → 全不选；未选行 → 只选它；勾选框/链接/按钮除外）、
+ * 点容器空白清空、拖动框选 = 替换+框内翻转（框外取消）。
  * 跨页选择语义由父组件 selected 集合承载（批量操作按完整 selected 过滤）。
  */
 function TaskVideoTable({
