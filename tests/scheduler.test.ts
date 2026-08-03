@@ -268,3 +268,40 @@ describe('下载完成触发作者整理（Task5 替代 I7 逐视频整理）', 
     await p
   }, 10000)
 })
+
+describe('暂停即时打断（A1）', () => {
+  it('pause() 置 aborted、打断当前 sleep，run 完全退出后 promise 才 resolve', async () => {
+    const db = newDb()
+    const taskId = createTask(db, input)
+    const { s } = setup(db, new FakeDownloader(), new FakeBrowser(), 50)
+    const pRun = s.run(taskId)
+    await new Promise(r => setTimeout(r, 10)) // run 已进入循环，正在第一个 sleep
+    const pPause = s.pause()
+    let pauseResolved = false
+    void pPause.then(() => { pauseResolved = true })
+    await new Promise(r => setTimeout(r, 50))
+    expect(pauseResolved).toBe(true) // run 退出后 pause 才返回
+    expect((s as any).running).toBe(false)
+    await pRun
+    expect(db.prepare('SELECT status, error FROM tasks WHERE id=?').get(taskId)).toEqual({ status: 'paused', error: null })
+  }, 10000)
+
+  it('暂停后不等待立刻 resume → 等当前 run 退出后恢复运行（不被 running 挡回）', async () => {
+    const db = newDb()
+    const taskId = createTask(db, input)
+    const browser = new FakeBrowser()
+    const { s } = setup(db, new FakeDownloader(), browser, 50)
+    const pRun = s.run(taskId)
+    await new Promise(r => setTimeout(r, 10))
+    const pPause = s.pause()
+    browser.blockNextLoad() // resume 的新 run 将阻塞在 load，便于观察它确实重新开始
+    const pResume = s.resume(taskId) // 不等待 pause 完成
+    // 等 run#1 完全退出（暂停生效），再给 run#2 一点时间跑到阻塞的 load
+    await Promise.all([pRun, pPause])
+    await new Promise(r => setTimeout(r, 20))
+    expect((s as any).running).toBe(true) // run#2 已开始（未被 running 挡回）
+    browser.releaseLoad()
+    await pResume
+    expect((s as any).running).toBe(false)
+  }, 10000)
+})

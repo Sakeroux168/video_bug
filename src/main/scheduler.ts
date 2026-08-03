@@ -52,6 +52,11 @@ export class Scheduler {
   private task: TaskRow | null = null
   /** Task5：下载完成→按作者归档的去抖计时器句柄 */
   private organizeTimer: ReturnType<typeof setTimeout> | null = null
+  /** A1：当前 sleep 的中断回调；stop()/pause() 调用它以即时唤醒，让 run 尽快检查 aborted */
+  private abortWait: (() => void) | null = null
+  /** A1：当前 run 的退出信号；pause() 等它确认 run 完全退出（run 的 finally 里 resolve） */
+  private runExit: Promise<void> | null = null
+  private runExitResolve: (() => void) | null = null
 
   /** 供主进程任务队列判断当前是否有任务在跑（避免重复入队/串行丢任务） */
   get isRunning(): boolean { return this.running }
@@ -76,10 +81,21 @@ export class Scheduler {
 
   stop(): void {
     this.aborted = true
+    this.abortWait?.() // 即时唤醒当前 sleep，不等它自然结束
     this.clearOrganizeTimer()
   }
-  pause(): void { this.aborted = true }
-  async resume(taskId: number): Promise<void> { await this.run(taskId) }
+  /** A1：暂停——置 aborted + 即时唤醒当前 sleep + 等 run() 完全退出后才返回（跑完收尾，避免状态/上下文竞态） */
+  async pause(): Promise<void> {
+    this.aborted = true
+    this.abortWait?.()
+    const exit = this.runExit
+    if (exit) await exit
+  }
+  /** A1：继续任务。若上一轮 run 正因暂停退出，先等它完全退出再重跑，避免被 running 挡回 */
+  async resume(taskId: number): Promise<void> {
+    if (this.aborted && this.running && this.runExit) await this.runExit
+    await this.run(taskId)
+  }
 
   async run(taskId: number): Promise<void> {
     if (this.running) return
@@ -91,6 +107,8 @@ export class Scheduler {
     if (!adapter) { this.fail(taskId, ERROR.PARSE_ERROR); return }
 
     this.running = true
+    // A1：登记 run 退出信号（在首个 await 前同步建立），pause() 通过它等 run 完全退出
+    this.runExit = new Promise<void>(resolve => { this.runExitResolve = resolve })
     try {
       this.taskId = taskId
       this.task = task
@@ -119,10 +137,12 @@ export class Scheduler {
       const target = this.filters.targetCount ?? 200
       let stopReason: 'reached' | 'stalled' | null = null
       while (!this.aborted) {
-        await sleep(this.deps.scrollIntervalMs + Math.random() * 1500)
+        await this.sleep(this.deps.scrollIntervalMs + Math.random() * 1500)
+        // A1：暂停时不跑滚动（滚动是长任务且不可中断，提前检查避免多滚一轮）
+        if (this.aborted) break
         await this.deps.browser.scrollToBottom()
         // 放慢节奏：滚动后多等一拍让当页结果加载完再进下一轮（生产约1.5s，测试环境按间隔缩放保持快速）
-        await sleep(Math.min(1500, this.deps.scrollIntervalMs * 2))
+        await this.sleep(Math.min(1500, this.deps.scrollIntervalMs * 2))
         // 按轮次计静默：本轮收到 raw 则重置，否则累加；与空解析轮合并判断停止
         if (this.rawSinceLastRound) this.silentRounds = 0
         else this.silentRounds++
@@ -130,7 +150,7 @@ export class Scheduler {
         const decision = buildStopDecision(this.fetched, target, this.emptyRounds + this.silentRounds)
         if (decision === 'reached') { stopReason = 'reached'; break }
         if (decision === 'stop') { stopReason = 'stalled'; break }
-        if (this.pendingVideoIds.length > 30) { /* 下载堆积，放慢抓取 */ await sleep(2000) }
+        if (this.pendingVideoIds.length > 30) { /* 下载堆积，放慢抓取 */ await this.sleep(2000) }
       }
 
       if (this.aborted) {
@@ -162,7 +182,24 @@ export class Scheduler {
       this.adapter = null
       this.filters = null
       this.pendingVideoIds = []
+      // A1：通知等 run 退出的 pause()，随后清空信号（下一次 run 会重新登记）
+      const resolveExit = this.runExitResolve
+      this.runExit = null
+      this.runExitResolve = null
+      resolveExit?.()
     }
+  }
+
+  /** A1：可中断 sleep：stop()/pause() 通过 abortWait 即时唤醒，让 run 尽快走到 aborted 检查 */
+  private sleep(ms: number): Promise<void> {
+    return new Promise(resolve => {
+      const t = setTimeout(() => { this.abortWait = null; resolve() }, ms)
+      this.abortWait = () => {
+        clearTimeout(t)
+        this.abortWait = null
+        resolve()
+      }
+    })
   }
 
   /** 只处理当前任务类型对应的接口响应，避免把推荐页/自己主页等无关 feed 当结果爬进来（用户反馈爬到了不该爬的内容）。
@@ -289,5 +326,3 @@ export class Scheduler {
     this.deps.db.prepare("UPDATE tasks SET status='failed', error=? WHERE id=?").run(code, taskId)
   }
 }
-
-function sleep(ms: number): Promise<void> { return new Promise(r => setTimeout(r, ms)) }
