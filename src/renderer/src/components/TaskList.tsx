@@ -227,183 +227,227 @@ export default function TaskList({ notify }: { notify: (text: string) => void })
           >暂停下载</button>
         )}
       </div>
-      <div className="space-y-2">
-        {tasks.map(t => {
-          const pct = t.target_count ? Math.min(100, Math.round((t.fetched_count / t.target_count) * 100)) : 0
-          const s = stats[t.id]
-          const dp = s && s.total ? Math.min(100, Math.round((s.done / s.total) * 100)) : 0
-          const d = derived[t.id]
-          return (
-            <div key={t.id} className="rounded-md border border-zinc-200 p-3">
-              <div className="flex items-center gap-3 text-sm">
-                <span className="w-24 truncate text-zinc-500">{t.platform}/{t.type}</span>
-                <span className="min-w-0 flex-1 truncate font-medium">"{t.query}"</span>
-                <span className="text-zinc-500">{t.fetched_count}/{t.target_count}</span>
-                <div className="h-2 w-40 overflow-hidden rounded bg-zinc-200">
-                  <div className="h-full bg-blue-500" style={{ width: `${pct}%` }} />
-                </div>
-                <span className={`w-16 text-center text-xs ${t.status === 'failed' ? 'text-red-500' : t.status === 'running' ? 'text-blue-600' : 'text-zinc-500'}`}>
-                  {TASK_STATUS_LABEL[t.status]}
-                </span>
-                <button className="text-xs text-zinc-400" onClick={() => void toggleExpand(t.id)}>{expanded.has(t.id) ? '收起' : '展开'}</button>
-                {t.status === 'running' && (
-                  <button className="text-xs text-zinc-400" onClick={() => { void api.pauseTask(t.id).then(refresh) }}>暂停</button>
-                )}
-                {t.status === 'paused' && (
-                  <button className="text-xs text-zinc-400" onClick={() => { void api.resumeTask(t.id).then(refresh) }}>继续</button>
-                )}
-                <button className="text-xs text-red-400" onClick={() => { void api.deleteTask(t.id).then(refresh) }}>删除</button>
-              </div>
-              {s && s.total > 0 && (
-                <div className="mt-1 flex items-center gap-2 text-[11px] text-zinc-500">
-                  <span>
-                    下载 {s.done}/{s.total}
-                    {s.downloading > 0 ? `（下载中 ${s.downloading}）` : ''}
-                    {s.failed > 0 ? `（失败 ${s.failed}）` : ''}
-                    {s.collected > 0 ? ` 待下载 ${s.collected}` : ''}
-                    {s.cancelled > 0 ? ` 已取消 ${s.cancelled}` : ''}
-                  </span>
-                  <div className="h-1.5 w-32 overflow-hidden rounded bg-zinc-200">
-                    <div className="h-full bg-emerald-500" style={{ width: `${dp}%` }} />
-                  </div>
-                </div>
-              )}
-              {t.status === 'paused' && t.error === 'stalled_verify' && (
-                <div className="mt-2 rounded bg-amber-50 px-3 py-1.5 text-xs text-amber-700">
-                  任务可能触发验证，请到「内置浏览器」完成验证（滑块/扫码）后点「继续」
-                </div>
-              )}
-              {expanded.has(t.id) && (
-                <div className="mt-2 border-t border-zinc-100 pt-2 text-xs">
-                  {d && s && s.collected > 0 && (
-                    <div className="mb-2 flex items-center justify-between rounded bg-amber-50 px-3 py-1.5 text-amber-700">
-                      <span>已抓取 {s.collected} 条，尚未下载</span>
-                      {d.collectedIds.length > 0 && (
-                        <button
-                          className="font-medium underline"
-                          onClick={() => { void api.downloadVideos(d.collectedIds).then(() => { refresh(); notify(`已开始下载 ${d.collectedIds.length} 个视频`) }) }}
-                        >全部下载</button>
-                      )}
-                    </div>
-                  )}
-                  {d && (
-                    <div className="mb-2 flex flex-wrap items-center gap-2">
-                      <input
-                        className={`${inputCls} !py-1 !text-xs`}
-                        placeholder="搜索标题/作者"
-                        value={searchText[t.id] ?? ''}
-                        onChange={e => {
-                          setSearchText(prev => ({ ...prev, [t.id]: e.target.value }))
-                          setPage(prev => ({ ...prev, [t.id]: 1 }))
-                        }}
-                      />
-                      <button
-                        className={btnSmall}
-                        disabled={d.selDownloadable.length === 0}
-                        onClick={() => { void api.downloadVideos(d.selDownloadable).then(() => { refresh(); notify(`已开始下载 ${d.selDownloadable.length} 个视频`) }) }}
-                      >下载选中({d.selDownloadable.length})</button>
-                      <button
-                        className={btnSmall}
-                        disabled={d.selCancellable.length === 0}
-                        onClick={() => { void api.cancelVideos(d.selCancellable).then(() => { refresh(); notify(`已取消 ${d.selCancellable.length} 个下载`) }) }}
-                      >取消选中({d.selCancellable.length})</button>
-                      <button
-                        className={btnSmall}
-                        disabled={d.selFailed.length === 0}
-                        onClick={() => { void api.retryVideos(d.selFailed).then(() => { refresh(); notify(`已重试 ${d.selFailed.length} 个视频`) }) }}
-                      >重试选中失败({d.selFailed.length})</button>
-                    </div>
-                  )}
-                  {!videos[t.id] ? (
-                    <div className="py-3 text-center text-zinc-400">加载中…</div>
-                  ) : videos[t.id].length === 0 ? (
-                    <div className="py-3 text-center text-zinc-400">（暂无视频）</div>
-                  ) : d ? (
-                    <>
-                      <div className="overflow-x-auto">
-                        <table className="w-full border-collapse">
-                          <thead>
-                            <tr className="border-b border-zinc-200 text-left text-zinc-500">
-                              <th className="w-8 py-1 pr-1 font-normal">
-                                <input
-                                  type="checkbox"
-                                  checked={d.allOnPageSelected}
-                                  ref={el => { if (el) el.indeterminate = d.someOnPageSelected && !d.allOnPageSelected }}
-                                  onChange={() => toggleSelectPage(t.id, d.allOnPageSelected, d.selectableIds)}
-                                />
-                              </th>
-                              {sortHeader(t.id, 'title', '标题')}
-                              {sortHeader(t.id, 'author', '作者')}
-                              {sortHeader(t.id, 'duration', '时长')}
-                              {sortHeader(t.id, 'publish_time', '发布')}
-                              {sortHeader(t.id, 'likes', '点赞')}
-                              <th className="w-14 py-1 px-1 font-normal">状态</th>
-                              <th className="py-1 pl-2 pr-1 font-normal">操作</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {d.pageVideos.map(v => {
-                              const isFiltered = v.status === 'filtered'
-                              return (
-                                <tr key={v.id} className={`border-b border-zinc-100 ${isFiltered ? 'text-zinc-400' : ''}`}>
-                                  <td className="py-1 pr-1">
-                                    <input type="checkbox" disabled={isFiltered} checked={selected.has(v.id)} onChange={() => toggleSelectVideo(v.id)} />
-                                  </td>
-                                  <td className="max-w-0 py-1 pr-2"><span className="block truncate">{v.title || '（无标题）'}</span></td>
-                                  <td className="whitespace-nowrap py-1 pr-2">{v.author_nickname ?? '—'}</td>
-                                  <td className="whitespace-nowrap py-1 pr-2">{formatDuration(v.duration)}</td>
-                                  <td className="whitespace-nowrap py-1 pr-2">{formatDate(v.publish_time)}</td>
-                                  <td className="whitespace-nowrap py-1 pr-2">{formatLikes(getLikes(v))}</td>
-                                  <td className={`whitespace-nowrap py-1 pr-2 ${STATUS_CLASS[v.status] ?? 'text-zinc-500'}`}>{STATUS_LABEL[v.status] ?? v.status}</td>
-                                  <td className="whitespace-nowrap py-1 pl-2">
-                                    {!isFiltered && (
-                                      <div className="flex items-center gap-1.5">
-                                        {(v.status === 'collected' || v.status === 'cancelled' || v.status === 'failed') && (
-                                          <RowBtn label="下载" onClick={() => { void api.downloadVideos([v.id]).then(() => { refresh(); notify('已开始下载') }) }} />
-                                        )}
-                                        {v.status === 'failed' && (
-                                          <RowBtn label="重试" onClick={() => { void api.retryVideos([v.id]).then(() => { refresh(); notify('已重试') }) }} />
-                                        )}
-                                        {(v.status === 'pending' || v.status === 'downloading') && (
-                                          <RowBtn label="取消" onClick={() => { void api.cancelVideos([v.id]).then(() => { refresh(); notify('已取消') }) }} />
-                                        )}
-                                        {v.status === 'done' && v.local_path && (
-                                          <RowBtn label="定位" onClick={() => void api.locateVideo(v.local_path!)} />
-                                        )}
-                                        <a className="text-blue-500 hover:underline" href={`https://www.douyin.com/video/${v.aweme_id}`} target="_blank" rel="noreferrer">原视频</a>
-                                      </div>
-                                    )}
-                                  </td>
-                                </tr>
-                              )
-                            })}
-                          </tbody>
-                        </table>
-                      </div>
-                      <div className="mt-2 flex items-center justify-between">
-                        <span className="text-zinc-400">共 {d.filtered.length} 条</span>
-                        <div className="flex items-center gap-2">
-                          <button
-                            className={btnSmall}
-                            disabled={d.curPage <= 1}
-                            onClick={() => setPage(prev => ({ ...prev, [t.id]: d.curPage - 1 }))}
-                          >上一页</button>
-                          <span className="text-zinc-500">第 {d.curPage} / {d.pageCount} 页</span>
-                          <button
-                            className={btnSmall}
-                            disabled={d.curPage >= d.pageCount}
-                            onClick={() => setPage(prev => ({ ...prev, [t.id]: d.curPage + 1 }))}
-                          >下一页</button>
+      {tasks.length === 0 ? (
+        <div className="py-8 text-center text-sm text-zinc-400">暂无任务，先在上方「筛选条件」发起抓取</div>
+      ) : (
+        <table className="w-full border-collapse text-sm">
+          <thead>
+            <tr className="border-b border-zinc-200 text-left text-xs text-zinc-500">
+              <th className="w-8 py-2 pr-1 font-normal">
+                <input type="checkbox" disabled title="任务批量选择将在后续版本支持" />
+              </th>
+              <th className="whitespace-nowrap py-2 pr-3 font-normal">平台/类型</th>
+              <th className="py-2 pr-3 font-normal">关键词</th>
+              <th className="w-52 py-2 pr-3 font-normal">进度</th>
+              <th className="w-72 py-2 pr-3 font-normal">下载统计</th>
+              <th className="w-16 py-2 pr-3 font-normal">状态</th>
+              <th className="py-2 font-normal">操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            {tasks.map(t => {
+              const pct = t.target_count ? Math.min(100, Math.round((t.fetched_count / t.target_count) * 100)) : 0
+              const s = stats[t.id]
+              const dp = s && s.total ? Math.min(100, Math.round((s.done / s.total) * 100)) : 0
+              const d = derived[t.id]
+              const isOpen = expanded.has(t.id)
+              return (
+                <React.Fragment key={t.id}>
+                  <tr
+                    className={`cursor-pointer border-b border-zinc-100 transition-colors hover:bg-zinc-50 ${isOpen ? 'bg-blue-50/40' : ''}`}
+                    onClick={() => void toggleExpand(t.id)}
+                  >
+                    <td className="py-2 pr-1" onClick={e => e.stopPropagation()}>
+                      <input type="checkbox" disabled />
+                    </td>
+                    <td className="whitespace-nowrap py-2 pr-3 text-zinc-500">{t.platform}/{t.type}</td>
+                    <td className="max-w-0 py-2 pr-3 font-medium">
+                      <span className="block truncate">"{t.query}"</span>
+                    </td>
+                    <td className="py-2 pr-3">
+                      <div className="flex items-center gap-2">
+                        <span className="whitespace-nowrap text-xs text-zinc-500">{t.fetched_count}/{t.target_count}</span>
+                        <div className="h-2 w-28 overflow-hidden rounded bg-zinc-200">
+                          <div className="h-full bg-blue-500" style={{ width: `${pct}%` }} />
                         </div>
                       </div>
-                    </>
-                  ) : null}
-                </div>
-              )}
-            </div>
-          )
-        })}
-      </div>
+                    </td>
+                    <td className="py-2 pr-3">
+                      {s && s.total > 0 ? (
+                        <div className="flex items-center gap-2">
+                          <span className="whitespace-nowrap text-xs text-zinc-500">
+                            下载 {s.done}/{s.total}
+                            {s.downloading > 0 ? `（下载中 ${s.downloading}）` : ''}
+                            {s.failed > 0 ? `（失败 ${s.failed}）` : ''}
+                            {s.collected > 0 ? `（待下载 ${s.collected}）` : ''}
+                            {s.cancelled > 0 ? `（已取消 ${s.cancelled}）` : ''}
+                          </span>
+                          <div className="h-1.5 w-24 overflow-hidden rounded bg-zinc-200">
+                            <div className="h-full bg-emerald-500" style={{ width: `${dp}%` }} />
+                          </div>
+                        </div>
+                      ) : (
+                        <span className="text-xs text-zinc-400">—</span>
+                      )}
+                    </td>
+                    <td className={`whitespace-nowrap py-2 pr-3 text-xs ${t.status === 'failed' ? 'text-red-500' : t.status === 'running' ? 'text-blue-600' : 'text-zinc-500'}`}>
+                      {TASK_STATUS_LABEL[t.status]}
+                    </td>
+                    <td className="whitespace-nowrap py-2" onClick={e => e.stopPropagation()}>
+                      <div className="flex items-center gap-2 text-xs">
+                        {t.status === 'running' && (
+                          <button className="text-zinc-400 hover:text-zinc-600" onClick={() => { void api.pauseTask(t.id).then(refresh) }}>暂停</button>
+                        )}
+                        {t.status === 'paused' && (
+                          <button className="text-zinc-400 hover:text-zinc-600" onClick={() => { void api.resumeTask(t.id).then(refresh) }}>继续</button>
+                        )}
+                        <button className="text-red-400 hover:text-red-500" onClick={() => { void api.deleteTask(t.id).then(refresh) }}>删除</button>
+                        <button className="text-blue-500 hover:underline" onClick={() => void toggleExpand(t.id)}>{isOpen ? '收起' : '展开'}</button>
+                      </div>
+                    </td>
+                  </tr>
+                  {t.status === 'paused' && t.error === 'stalled_verify' && (
+                    <tr className="border-b border-zinc-100 bg-amber-50/60">
+                      <td colSpan={7} className="px-2 py-1.5 text-xs text-amber-700">
+                        任务可能触发验证，请到「内置浏览器」完成验证（滑块/扫码）后点「继续」
+                      </td>
+                    </tr>
+                  )}
+                  {isOpen && (
+                    <tr className="bg-zinc-50/60">
+                      <td colSpan={7} className="px-2 pb-3 pt-2 text-xs">
+                        {d && s && s.collected > 0 && (
+                          <div className="mb-2 flex items-center justify-between rounded bg-amber-50 px-3 py-1.5 text-amber-700">
+                            <span>已抓取 {s.collected} 条，尚未下载</span>
+                            {d.collectedIds.length > 0 && (
+                              <button
+                                className="font-medium underline"
+                                onClick={() => { void api.downloadVideos(d.collectedIds).then(() => { refresh(); notify(`已开始下载 ${d.collectedIds.length} 个视频`) }) }}
+                              >全部下载</button>
+                            )}
+                          </div>
+                        )}
+                        {d && (
+                          <div className="mb-2 flex flex-wrap items-center gap-2">
+                            <input
+                              className={`${inputCls} !py-1 !text-xs`}
+                              placeholder="搜索标题/作者"
+                              value={searchText[t.id] ?? ''}
+                              onChange={e => {
+                                setSearchText(prev => ({ ...prev, [t.id]: e.target.value }))
+                                setPage(prev => ({ ...prev, [t.id]: 1 }))
+                              }}
+                            />
+                            <button
+                              className={btnSmall}
+                              disabled={d.selDownloadable.length === 0}
+                              onClick={() => { void api.downloadVideos(d.selDownloadable).then(() => { refresh(); notify(`已开始下载 ${d.selDownloadable.length} 个视频`) }) }}
+                            >下载选中({d.selDownloadable.length})</button>
+                            <button
+                              className={btnSmall}
+                              disabled={d.selCancellable.length === 0}
+                              onClick={() => { void api.cancelVideos(d.selCancellable).then(() => { refresh(); notify(`已取消 ${d.selCancellable.length} 个下载`) }) }}
+                            >取消选中({d.selCancellable.length})</button>
+                            <button
+                              className={btnSmall}
+                              disabled={d.selFailed.length === 0}
+                              onClick={() => { void api.retryVideos(d.selFailed).then(() => { refresh(); notify(`已重试 ${d.selFailed.length} 个视频`) }) }}
+                            >重试选中失败({d.selFailed.length})</button>
+                          </div>
+                        )}
+                        {!videos[t.id] ? (
+                          <div className="py-3 text-center text-zinc-400">加载中…</div>
+                        ) : videos[t.id].length === 0 ? (
+                          <div className="py-3 text-center text-zinc-400">（暂无视频）</div>
+                        ) : d ? (
+                          <>
+                            <div className="overflow-x-auto">
+                              <table className="w-full border-collapse">
+                                <thead>
+                                  <tr className="border-b border-zinc-200 text-left text-zinc-500">
+                                    <th className="w-8 py-1 pr-1 font-normal">
+                                      <input
+                                        type="checkbox"
+                                        checked={d.allOnPageSelected}
+                                        ref={el => { if (el) el.indeterminate = d.someOnPageSelected && !d.allOnPageSelected }}
+                                        onChange={() => toggleSelectPage(t.id, d.allOnPageSelected, d.selectableIds)}
+                                      />
+                                    </th>
+                                    {sortHeader(t.id, 'title', '标题')}
+                                    {sortHeader(t.id, 'author', '作者')}
+                                    {sortHeader(t.id, 'duration', '时长')}
+                                    {sortHeader(t.id, 'publish_time', '发布')}
+                                    {sortHeader(t.id, 'likes', '点赞')}
+                                    <th className="w-14 py-1 px-1 font-normal">状态</th>
+                                    <th className="py-1 pl-2 pr-1 font-normal">操作</th>
+                                  </tr>
+                                </thead>
+                                <tbody>
+                                  {d.pageVideos.map(v => {
+                                    const isFiltered = v.status === 'filtered'
+                                    return (
+                                      <tr key={v.id} className={`border-b border-zinc-100 ${isFiltered ? 'text-zinc-400' : ''}`}>
+                                        <td className="py-1 pr-1">
+                                          <input type="checkbox" disabled={isFiltered} checked={selected.has(v.id)} onChange={() => toggleSelectVideo(v.id)} />
+                                        </td>
+                                        <td className="max-w-0 py-1 pr-2"><span className="block truncate">{v.title || '（无标题）'}</span></td>
+                                        <td className="whitespace-nowrap py-1 pr-2">{v.author_nickname ?? '—'}</td>
+                                        <td className="whitespace-nowrap py-1 pr-2">{formatDuration(v.duration)}</td>
+                                        <td className="whitespace-nowrap py-1 pr-2">{formatDate(v.publish_time)}</td>
+                                        <td className="whitespace-nowrap py-1 pr-2">{formatLikes(getLikes(v))}</td>
+                                        <td className={`whitespace-nowrap py-1 pr-2 ${STATUS_CLASS[v.status] ?? 'text-zinc-500'}`}>{STATUS_LABEL[v.status] ?? v.status}</td>
+                                        <td className="whitespace-nowrap py-1 pl-2">
+                                          {!isFiltered && (
+                                            <div className="flex items-center gap-1.5">
+                                              {(v.status === 'collected' || v.status === 'cancelled' || v.status === 'failed') && (
+                                                <RowBtn label="下载" onClick={() => { void api.downloadVideos([v.id]).then(() => { refresh(); notify('已开始下载') }) }} />
+                                              )}
+                                              {v.status === 'failed' && (
+                                                <RowBtn label="重试" onClick={() => { void api.retryVideos([v.id]).then(() => { refresh(); notify('已重试') }) }} />
+                                              )}
+                                              {(v.status === 'pending' || v.status === 'downloading') && (
+                                                <RowBtn label="取消" onClick={() => { void api.cancelVideos([v.id]).then(() => { refresh(); notify('已取消') }) }} />
+                                              )}
+                                              {v.status === 'done' && v.local_path && (
+                                                <RowBtn label="定位" onClick={() => void api.locateVideo(v.local_path!)} />
+                                              )}
+                                              <a className="text-blue-500 hover:underline" href={`https://www.douyin.com/video/${v.aweme_id}`} target="_blank" rel="noreferrer">原视频</a>
+                                            </div>
+                                          )}
+                                        </td>
+                                      </tr>
+                                    )
+                                  })}
+                                </tbody>
+                              </table>
+                            </div>
+                            <div className="mt-2 flex items-center justify-between">
+                              <span className="text-zinc-400">共 {d.filtered.length} 条</span>
+                              <div className="flex items-center gap-2">
+                                <button
+                                  className={btnSmall}
+                                  disabled={d.curPage <= 1}
+                                  onClick={() => setPage(prev => ({ ...prev, [t.id]: d.curPage - 1 }))}
+                                >上一页</button>
+                                <span className="text-zinc-500">第 {d.curPage} / {d.pageCount} 页</span>
+                                <button
+                                  className={btnSmall}
+                                  disabled={d.curPage >= d.pageCount}
+                                  onClick={() => setPage(prev => ({ ...prev, [t.id]: d.curPage + 1 }))}
+                                >下一页</button>
+                              </div>
+                            </div>
+                          </>
+                        ) : null}
+                      </td>
+                    </tr>
+                  )}
+                </React.Fragment>
+              )
+            })}
+          </tbody>
+        </table>
+      )}
     </Card>
   )
 }

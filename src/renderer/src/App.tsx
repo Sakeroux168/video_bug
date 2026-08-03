@@ -9,7 +9,7 @@ import { api } from './api'
 import type { CreateTaskInput } from '../../shared/types'
 
 export default function App(): JSX.Element {
-  const [tab, setTab] = useState('panel')
+  const [tab, setTab] = useState('tasks')
   const [rawLog, setRawLog] = useState<Array<{ at: string; url: string; handled: boolean; stats?: { items: number; kept: number } }>>([])
   const [showLog, setShowLog] = useState(false)
   const [toast, setToast] = useState<{ text: string } | null>(null)
@@ -66,7 +66,7 @@ export default function App(): JSX.Element {
           if (k === 'browser') void api.showBrowser()
           else void api.hideBrowser()
         }}
-        tabs={[{ key: 'panel', label: '管理面板' }, { key: 'browser', label: '内置浏览器' }, { key: 'settings', label: '设置' }]}
+        tabs={[{ key: 'tasks', label: '任务' }, { key: 'authors', label: '作者收藏' }, { key: 'browser', label: '内置浏览器' }, { key: 'settings', label: '设置' }]}
       />
       {showLog && (
         <div className="border-b border-zinc-200 bg-zinc-50 p-3">
@@ -93,13 +93,13 @@ export default function App(): JSX.Element {
         </div>
       )}
       <main className="flex-1 overflow-auto p-4">
-        {tab === 'panel' && (
+        {tab === 'tasks' && (
           <div className="space-y-4">
             <FilterForm onSubmit={startTask} />
             <TaskList notify={notify} />
-            <AuthorCollection notify={notify} />
           </div>
         )}
+        {tab === 'authors' && <AuthorCollection notify={notify} />}
         {tab === 'browser' && <BrowserPanel />}
         {tab === 'settings' && <SettingsPanel />}
       </main>
