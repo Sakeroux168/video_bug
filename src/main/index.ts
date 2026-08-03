@@ -30,17 +30,18 @@ let forceBrowserFull = false
 
 /** 根据任务状态与用户所在标签决定抖音窗口显示方式：
  *  任务运行中 / 验证暂停 → 显示独立抖音窗口（不盖管理面板，可拖走）；
- *  无任务 → 仅在用户切到浏览器标签时显示 */
-function updateBrowserDisplay(): void {
+ *  无任务 → 仅在用户切到浏览器标签时显示。
+ *  focus：程序化调用（任务/验证）不传，showInactive 显示不抢焦点；仅用户主动切标签时传 true */
+function updateBrowserDisplay(focus = false): void {
   if (!browser) return
-  if (taskRunning || forceBrowserFull) browser.setVisible(true)
-  else browser.setVisible(browserShown)
+  if (taskRunning || forceBrowserFull) browser.setVisible(true, focus)
+  else browser.setVisible(browserShown, focus)
 }
 
 function setBrowserVisible(v: boolean): void {
   browserShown = v
   if (v) forceBrowserFull = false // 用户主动切到浏览器标签，解除强制全屏
-  updateBrowserDisplay()
+  updateBrowserDisplay(v) // 用户操作 → 聚焦显示（传 true）
 }
 
 // I4 简单 FIFO 任务队列：串行执行，任务终态后自动出队跑下一个；去重防同一任务重复入队
@@ -103,10 +104,9 @@ function push(evt: unknown): void {
     if (t.type === 'task:paused') {
       taskRunning = false
       if (t.reason === 'stalled_verify') {
-        // 触发验证：显示并聚焦独立抖音窗口让用户过验证，并提示；不自动放行下一个任务
+        // 触发验证：显示独立抖音窗口让用户过验证（showInactive 不抢焦点），并提示；不自动放行下一个任务
         forceBrowserFull = true
         updateBrowserDisplay()
-        browser?.focus()
         win?.webContents.send('evt:task:notice', {
           type: 'stalled_verify', text: '任务可能触发验证，请在浏览器完成验证后点「继续」'
         })

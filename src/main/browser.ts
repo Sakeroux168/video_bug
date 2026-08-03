@@ -141,7 +141,12 @@ export class VideoBrowser {
     await this.win.webContents.executeJavaScript(script).catch(() => {})
   }
 
-  setVisible(v: boolean): void {
+  /**
+   * 显示/隐藏抖音窗口。程序化调用一律不抢焦点（showInactive），
+   * 避免盖住用户正在打字/看文件的窗口；仅用户主动切到浏览器标签时传 focus=true（show 激活窗口）。
+   * 注意：showInactive 对已显示的窗口是无操作且安全的
+   */
+  setVisible(v: boolean, focus = false): void {
     if (!this.win || this.win.isDestroyed()) return
     if (v) {
       // 首次显示前定位到主窗口右侧；之后不再重置，保留用户拖拽后的位置
@@ -150,17 +155,11 @@ export class VideoBrowser {
         this.win.setPosition(b.x + b.width + 24, b.y)
         this.positioned = true
       }
-      this.win.show()
+      if (focus) this.win.show()
+      else this.win.showInactive()
     } else {
       this.win.hide()
     }
-  }
-
-  /** 显示并聚焦抖音窗口（验证暂停时唤起用户注意） */
-  focus(): void {
-    if (!this.win || this.win.isDestroyed()) return
-    this.win.show()
-    this.win.focus()
   }
 
   /** 打开抖音页面的开发者工具（调试用） */
