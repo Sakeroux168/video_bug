@@ -31,10 +31,13 @@ const item = (over: Partial<VideoItem> = {}): VideoItem => ({
   ...over
 })
 
-/** 造一个作者及 count 条已 done（含 local_path 假文件）的视频，返回作者 id 与视频 id/源文件路径 */
-function authorWithDoneVideos(secUid: string, nickname: string, count = 2): { authorId: number; vids: Array<{ id: number; src: string }> } {
+/** 造一个作者及 count 条已 done（含 local_path 假文件）的视频，返回作者 id 与视频 id/源文件路径；durationSec 可指定统一时长 */
+function authorWithDoneVideos(secUid: string, nickname: string, count = 2, durationSec?: number): { authorId: number; vids: Array<{ id: number; src: string }> } {
   const taskId = createTask(db, input)
-  insertVideos(db, Array.from({ length: count }, (_, i) => item({ awemeId: `${secUid}_${i}`, authorSecUid: secUid, authorNickname: nickname })), taskId, 'douyin')
+  insertVideos(db, Array.from({ length: count }, (_, i) => item({
+    awemeId: `${secUid}_${i}`, authorSecUid: secUid, authorNickname: nickname,
+    ...(durationSec !== undefined ? { durationSec } : {})
+  })), taskId, 'douyin')
   const vs = listVideos(db, taskId)
   const authorId = vs[0].author_id!
   const vids = vs.map((v, i) => {
@@ -79,12 +82,12 @@ describe('authorDirName', () => {
 })
 
 describe('Organizer.organizeAuthor', () => {
-  it('2 条 done 视频归档到 {品类}/{昵称}，DB local_path 更新，organize_state=done，返回 moved:2', async () => {
+  it('2 条 done 视频归档到 {品类}/{昵称}/一分钟内，DB local_path 更新，organize_state=done，返回 moved:2', async () => {
     const { authorId, vids } = authorWithDoneVideos('SEC111111', '作者')
     const res = await organizer().organizeAuthor(authorId)
     expect(res).toEqual({ moved: 2, category: '美食', state: 'done' })
 
-    const destDir = join(dir, '美食', '作者')
+    const destDir = join(dir, '美食', '作者', '一分钟内')
     expect(existsSync(destDir)).toBe(true)
     for (const v of vids) expect(existsSync(v.src)).toBe(false) // 源文件已移走
     const rows = db.prepare('SELECT local_path FROM videos WHERE author_id=?').all(authorId) as Array<{ local_path: string }>
@@ -93,6 +96,40 @@ describe('Organizer.organizeAuthor', () => {
       expect(existsSync(r.local_path)).toBe(true)
     }
     expect(db.prepare('SELECT organize_state FROM authors WHERE id=?').get(authorId)).toEqual({ organize_state: 'done' })
+  })
+
+  it('60s 整 → 归档到 {品类}/{昵称}/一分钟内/；61s → 一分钟外/（60s 为界）', async () => {
+    const a60 = authorWithDoneVideos('SEC600001', '整界', 1, 60)
+    const a61 = authorWithDoneVideos('SEC600002', '超界', 1, 61)
+    await organizer().organizeAuthor(a60.authorId)
+    await organizer().organizeAuthor(a61.authorId)
+    expect(existsSync(join(dir, '美食', '整界', '一分钟内', 'SEC600001_0.mp4'))).toBe(true)
+    expect(existsSync(join(dir, '美食', '整界', '一分钟外'))).toBe(false)
+    expect(existsSync(join(dir, '美食', '超界', '一分钟外', 'SEC600002_0.mp4'))).toBe(true)
+    expect(existsSync(join(dir, '美食', '超界', '一分钟内'))).toBe(false)
+  })
+
+  it('同作者 60s/61s 两条混合 → 各自进对应分桶，DB local_path 更新', async () => {
+    const taskId = createTask(db, input)
+    insertVideos(db, [
+      item({ awemeId: 'SECMIX_A', authorSecUid: 'SECMIX', authorNickname: '混合', durationSec: 60 }),
+      item({ awemeId: 'SECMIX_B', authorSecUid: 'SECMIX', authorNickname: '混合', durationSec: 61 })
+    ], taskId, 'douyin')
+    const vs = listVideos(db, taskId)
+    vs.forEach((v, i) => {
+      const src = join(dir, `mix${i}.mp4`)
+      writeFileSync(src, Buffer.from([1, 2, 3]))
+      setVideoStatus(db, v.id, 'done', { local_path: src })
+    })
+    const res = await organizer().organizeAuthor(vs[0].author_id!)
+    expect(res).toEqual({ moved: 2, category: '美食', state: 'done' })
+    expect(readdirSync(join(dir, '美食', '混合', '一分钟内'))).toEqual(['mix0.mp4'])
+    expect(readdirSync(join(dir, '美食', '混合', '一分钟外'))).toEqual(['mix1.mp4'])
+    const rows = db.prepare('SELECT local_path FROM videos WHERE author_id=?').all(vs[0].author_id!) as Array<{ local_path: string }>
+    expect(rows.map(r => r.local_path.replaceAll('\\', '/'))).toEqual([
+      join(dir, '美食', '混合', '一分钟内', 'mix0.mp4').replaceAll('\\', '/'),
+      join(dir, '美食', '混合', '一分钟外', 'mix1.mp4').replaceAll('\\', '/')
+    ])
   })
 
   it('作者昵称含非法字符 → 目录名被清洗，落盘不含非法字符', async () => {
@@ -108,7 +145,7 @@ describe('Organizer.organizeAuthor', () => {
     const a1 = authorWithDoneVideos('SEC111111', '昵称')
     const org = organizer('美食')
     await org.organizeAuthor(a1.authorId)
-    expect(existsSync(join(dir, '美食', '昵称'))).toBe(true)
+    expect(existsSync(join(dir, '美食', '昵称', '一分钟内'))).toBe(true)
 
     const a2 = authorWithDoneVideos('SEC222222', '昵称')
     await org.organizeAuthor(a2.authorId)
@@ -130,7 +167,7 @@ describe('Organizer.organizeAuthor', () => {
     const { authorId, vids } = authorWithDoneVideos('SEC444444', '无分类')
     const res = await organizer(null).organizeAuthor(authorId)
     expect(res).toEqual({ moved: 2, category: '未分类', state: 'done' })
-    const destDir = join(dir, '未分类', '无分类')
+    const destDir = join(dir, '未分类', '无分类', '一分钟内')
     expect(existsSync(destDir)).toBe(true)
     for (const v of vids) expect(existsSync(v.src)).toBe(false)
   })
@@ -157,7 +194,7 @@ describe('Organizer.organizeAuthor', () => {
 
   it('目标文件已存在 → ensureUniqueName 加后缀，不覆盖', async () => {
     const { authorId, vids } = authorWithDoneVideos('SEC777777', '去重')
-    const destDir = join(dir, '美食', '去重')
+    const destDir = join(dir, '美食', '去重', '一分钟内')
     mkdirSync(destDir, { recursive: true })
     const name0 = basename(vids[0].src)
     writeFileSync(join(destDir, name0), Buffer.from([9, 9, 9])) // 预置同名文件模拟残留
@@ -175,7 +212,7 @@ describe('Organizer.organizePending / organizeAll / markAuthorPending', () => {
     db.prepare("UPDATE authors SET organize_state='pending' WHERE id=?").run(a1.authorId)
     const n = await organizer().organizePending()
     expect(n).toBe(1)
-    expect(existsSync(join(dir, '美食', '甲'))).toBe(true)
+    expect(existsSync(join(dir, '美食', '甲', '一分钟内'))).toBe(true)
     expect(existsSync(join(dir, '美食', '乙'))).toBe(false)
     expect(db.prepare('SELECT organize_state FROM authors WHERE id=?').get(a1.authorId)).toEqual({ organize_state: 'done' })
   })
@@ -188,9 +225,9 @@ describe('Organizer.organizePending / organizeAll / markAuthorPending', () => {
     db.prepare("UPDATE authors SET organize_state='failed' WHERE id=?").run(a3.authorId)
     const n = await organizer().organizeAll()
     expect(n).toBe(3)
-    expect(existsSync(join(dir, '美食', '甲'))).toBe(true)
-    expect(existsSync(join(dir, '美食', '乙'))).toBe(true)
-    expect(existsSync(join(dir, '美食', '丙'))).toBe(true)
+    expect(existsSync(join(dir, '美食', '甲', '一分钟内'))).toBe(true)
+    expect(existsSync(join(dir, '美食', '乙', '一分钟内'))).toBe(true)
+    expect(existsSync(join(dir, '美食', '丙', '一分钟内'))).toBe(true)
   })
 
   it('organizeAll 跳过已 done 归档的作者', async () => {
@@ -198,7 +235,7 @@ describe('Organizer.organizePending / organizeAll / markAuthorPending', () => {
     db.prepare("UPDATE authors SET organize_state='done' WHERE id=?").run(a1.authorId)
     const n = await organizer().organizeAll()
     expect(n).toBe(0)
-    expect(existsSync(join(dir, '美食', '甲'))).toBe(false)
+    expect(existsSync(join(dir, '美食', '甲', '一分钟内'))).toBe(false)
   })
 
   it('markAuthorPending：有平铺 done 视频即置 pending（done 不再挡死）；无平铺 done 不动', async () => {
@@ -246,7 +283,7 @@ describe('Organizer.organizePending / organizeAll / markAuthorPending', () => {
     expect(r2).toEqual({ moved: 1, category: '美食', state: 'done' })
 
     // 已归档的不重名不再移动，新视频进子目录
-    const destDir = join(dir, '美食', '分批')
+    const destDir = join(dir, '美食', '分批', '一分钟内')
     expect(existsSync(src2)).toBe(false)
     expect(readdirSync(destDir).sort()).toEqual(['SEC940001_0.mp4', 'SEC940001_1.mp4', 'new.mp4'])
   })

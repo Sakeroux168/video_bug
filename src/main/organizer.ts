@@ -12,6 +12,11 @@ export function sanitizeCategory(category: string): string {
   return cleaned || '未分类'
 }
 
+/** 时长分桶目录名：≤60s 归「一分钟内」，>60s 归「一分钟外」（videos.duration 单位秒，60s 整为界） */
+export function durBucket(duration: number): string {
+  return duration <= 60 ? '一分钟内' : '一分钟外'
+}
+
 /** 作者昵称清洗为合法目录名（限长 64，空回落"作者"） */
 export function sanitizeDirName(nickname: string): string {
   const cleaned = nickname.replace(/[\\/:*?"<>|\r\n]/g, '_').trim().slice(0, 64)
@@ -43,7 +48,7 @@ export interface OrganizerDeps {
   onProgress?: (info: { authorId: number; authorName: string; moved: number; category: string; state: 'done' | 'failed' }) => void
 }
 
-/** 按作者归档：把已下载视频从平铺目录移动成 `下载目录\{品类}\{作者昵称}\视频` */
+/** 按作者归档：把已下载视频从平铺目录移动成 `下载目录\{品类}\{作者昵称}\{一分钟内|一分钟外}\视频`（时长分桶） */
 export class Organizer {
   constructor(private deps: OrganizerDeps) {}
 
@@ -66,7 +71,7 @@ export class Organizer {
     const author = db.prepare('SELECT * FROM authors WHERE id = ?').get(authorId) as AuthorRow | undefined
     if (!author) return { moved: 0, category: '未分类', state: 'failed' }
 
-    // 只归档仍平铺在下载目录根（未归档）的 done 视频；已在 {品类}/{作者} 子目录里的跳过，保证重复整理幂等、分批安全
+    // 只归档仍平铺在下载目录根（未归档）的 done 视频；已在 {品类}/{作者}/{时长分桶} 子目录里的跳过，保证重复整理幂等、分批安全
     const videos = listAuthorVideos(db, authorId, 'done').filter(v => this.isFlat(v))
     if (!videos.length) {
       // 没有待归档的平铺视频：作者已全部归档或本就无 done → 标记完成，不算失败
@@ -84,12 +89,14 @@ export class Organizer {
       category = '未分类'
     }
 
-    const destDir = join(this.deps.downloadDir, category, authorDirName(author, db))
+    // 作者目录名（重名后缀在昵称层）+ 时长分桶（每条视频各自进桶，目标目录逐条 mkdir）
+    const authorDir = authorDirName(author, db)
     let moved = 0
     let failedMoves = 0
     for (const v of videos) {
       if (!v.local_path) continue
       try {
+        const destDir = join(this.deps.downloadDir, category, authorDir, durBucket(v.duration))
         mkdirSync(destDir, { recursive: true })
         const finalName = ensureUniqueName(destDir, basename(v.local_path))
         const dest = join(destDir, finalName)

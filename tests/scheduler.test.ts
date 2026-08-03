@@ -267,6 +267,38 @@ describe('下载完成触发作者整理（Task5 替代 I7 逐视频整理）', 
     browser.releaseLoad()
     await p
   }, 10000)
+
+  it('任务未勾选 AI 整理（aiOrganizeEnabled=false）→ 视频 done 仍标记作者 pending（总是自动归档）', async () => {
+    const db = newDb()
+    const taskId = createTask(db, input) // input 的 aiOrganizeEnabled=false
+    const dl = new FakeDownloader()
+    const browser = new FakeBrowser()
+    const organizer = {
+      markAuthorPending: vi.fn(),
+      organizePending: vi.fn(async () => 0)
+    } as unknown as import('../src/main/organizer').Organizer
+    const events: unknown[] = []
+    const s = new Scheduler({
+      db, browser, analyzer: null, downloader: dl,
+      emit: e => events.push(e), scrollIntervalMs: 1,
+      organizer, organizeDebounceMs: 0
+    })
+    browser.blockNextLoad()
+    const p = s.run(taskId)
+    await new Promise(r => setTimeout(r, 10))
+
+    await s.handleRaw(douyinAdapter, rawUrl, rawJson)
+    const authors = listAuthors(db, 'douyin')
+    expect(authors).toHaveLength(1)
+
+    dl.emit({ type: 'video:status', id: db.prepare('SELECT id FROM videos WHERE task_id=?').get(taskId)!.id, status: 'done' })
+
+    expect(organizer.markAuthorPending).toHaveBeenCalledWith(authors[0].id)
+    expect(organizer.organizePending).toHaveBeenCalled()
+
+    browser.releaseLoad()
+    await p
+  }, 10000)
 })
 
 describe('暂停即时打断（A1）', () => {

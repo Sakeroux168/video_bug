@@ -69,7 +69,7 @@ export class Scheduler {
         const i = this.pendingVideoIds.indexOf(e.id)
         if (i >= 0) this.pendingVideoIds.splice(i, 1)
       }
-      // Task5 下载后整理（按作者）：视频 done → 查所属任务 aiOrganizeEnabled → 标记作者 pending + 去抖归档
+      // 下载后整理（按作者）：视频 done → 标记作者 pending + 去抖归档（总是自动，不再依赖任务 aiOrganizeEnabled 勾选）
       if (e.status === 'done') this.scheduleAuthorOrganize(e.id)
     })
   }
@@ -292,15 +292,11 @@ export class Scheduler {
     return { items: items.length, kept: kept.length }
   }
 
-  /** Task5 下载完成→按作者整理：查该视频所属任务是否开启整理 → 标记作者 pending 并安排去抖归档 */
+  /** 下载完成→按作者整理：查该视频所属作者 → 标记作者 pending 并安排去抖归档（总是自动；organizer 缺失时无副作用） */
   private scheduleAuthorOrganize(videoId: number): void {
     const db = this.deps.db
-    const row = db.prepare('SELECT author_id, task_id FROM videos WHERE id = ?').get(videoId) as { author_id: number | null; task_id: number } | undefined
+    const row = db.prepare('SELECT author_id FROM videos WHERE id = ?').get(videoId) as { author_id: number | null } | undefined
     if (!row || row.author_id === null) return
-    const task = db.prepare('SELECT filters FROM tasks WHERE id = ?').get(row.task_id) as { filters: string } | undefined
-    if (!task) return
-    const filters = JSON.parse(task.filters) as Filters
-    if (!filters.aiOrganizeEnabled) return
     const organizer = this.deps.organizer
     if (!organizer) return
     organizer.markAuthorPending(row.author_id)
