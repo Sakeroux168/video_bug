@@ -3,6 +3,7 @@ import { api } from '../api'
 import type { TaskRow, VideoRow, TaskStats } from '../../../shared/types'
 import { Card, inputCls } from './ui'
 import { useMarqueeSelect } from './useMarqueeSelect'
+import { describeError } from '../errors'
 
 const TASK_STATUS_LABEL: Record<string, string> = { pending: '等待中', running: '进行中', done: '完成', paused: '已暂停', failed: '失败' }
 
@@ -75,6 +76,7 @@ export default function TaskList({ notify }: { notify: (text: string) => void })
   const [sortState, setSortState] = useState<Record<number, { key: SortKey; dir: 1 | -1 }>>({})
   const [searchText, setSearchText] = useState<Record<number, string>>({})
   const [page, setPage] = useState<Record<number, number>>({})
+  const [onlyFailed, setOnlyFailed] = useState<Record<number, boolean>>({})
 
   const refresh = () => {
     void api.getDownloadState().then(s => setDownloadPaused(s.paused))
@@ -168,8 +170,12 @@ export default function TaskList({ notify }: { notify: (text: string) => void })
       const srt = sortState[id]
       const q = (searchText[id] ?? '').trim().toLowerCase()
       let filtered = vs
+      // 「只看失败」先过滤状态，再做搜索/排序/分页
+      if (onlyFailed[id]) {
+        filtered = filtered.filter(v => v.status === 'failed')
+      }
       if (q) {
-        filtered = vs.filter(v =>
+        filtered = filtered.filter(v =>
           v.title.toLowerCase().includes(q) || (v.author_nickname ?? '').toLowerCase().includes(q)
         )
       }
@@ -209,7 +215,7 @@ export default function TaskList({ notify }: { notify: (text: string) => void })
       out[id] = { filtered, pageCount, curPage, pageVideos, selectableIds, allOnPageSelected, someOnPageSelected, selDownloadable, selCancellable, selFailed, collectedIds }
     }
     return out
-  }, [expanded, videos, sortState, searchText, page, selected])
+  }, [expanded, videos, sortState, searchText, page, selected, onlyFailed])
 
   return (
     <Card title="任务列表">
@@ -352,6 +358,13 @@ export default function TaskList({ notify }: { notify: (text: string) => void })
                               disabled={d.selFailed.length === 0}
                               onClick={() => { void api.retryVideos(d.selFailed).then(() => { refresh(); notify(`已重试 ${d.selFailed.length} 个视频`) }) }}
                             >重试选中失败({d.selFailed.length})</button>
+                            <button
+                              className={`${btnSmall} ${onlyFailed[t.id] ? '!border-red-300 bg-red-50 !text-red-600 hover:!bg-red-100' : ''}`}
+                              onClick={() => {
+                                setOnlyFailed(prev => ({ ...prev, [t.id]: !(prev[t.id] ?? false) }))
+                                setPage(prev => ({ ...prev, [t.id]: 1 }))
+                              }}
+                            >{onlyFailed[t.id] ? '只看失败·开' : '只看失败'}</button>
                           </div>
                         )}
                         {!videos[t.id] ? (
@@ -466,7 +479,7 @@ function TaskVideoTable({
               {sortHeader('duration', '时长')}
               {sortHeader('publish_time', '发布')}
               {sortHeader('likes', '点赞')}
-              <th className="w-14 py-1 px-1 font-normal">状态</th>
+              <th className="w-24 py-1 px-1 font-normal">状态</th>
               <th className="py-1 pl-2 pr-1 font-normal">操作</th>
             </tr>
           </thead>
@@ -488,7 +501,12 @@ function TaskVideoTable({
                   <td className="whitespace-nowrap py-1 pr-2">{formatDuration(v.duration)}</td>
                   <td className="whitespace-nowrap py-1 pr-2">{formatDate(v.publish_time)}</td>
                   <td className="whitespace-nowrap py-1 pr-2">{formatLikes(getLikes(v))}</td>
-                  <td className={`whitespace-nowrap py-1 pr-2 ${STATUS_CLASS[v.status] ?? 'text-zinc-500'}`}>{STATUS_LABEL[v.status] ?? v.status}</td>
+                  <td className={`py-1 pr-2 ${STATUS_CLASS[v.status] ?? 'text-zinc-500'}`}>
+                    <span className="whitespace-nowrap">{STATUS_LABEL[v.status] ?? v.status}</span>
+                    {v.status === 'failed' && (
+                      <span className="ml-1 text-[10px] leading-tight text-red-400/90">·{describeError(v.error)}</span>
+                    )}
+                  </td>
                   <td className="whitespace-nowrap py-1 pl-2">
                     {!isFiltered && (
                       <div className="flex items-center gap-1.5">
