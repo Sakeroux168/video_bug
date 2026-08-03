@@ -102,7 +102,28 @@ export class VideoBrowser {
           document.dispatchEvent(new WheelEvent('wheel', { deltaY: dy, bubbles: true, cancelable: true, clientX: 300, clientY: 300 }));
         } catch (e) {}
       };
-      // 放慢节奏：单步小、间隔长，每轮到底后多停一会儿让页面把当页结果加载完，避免漏抓
+      // A3：快照主滚动高度 + 各列表容器子元素总数，用于判断滚到底后当页是否还有新内容进来
+      const snapshot = () => {
+        let h = 0;
+        let items = 0;
+        try { h = sc ? sc.scrollHeight : 0; } catch (e) {}
+        for (const el of bigs) { try { items += el.children.length; } catch (e) {} }
+        return { h: h, items: items };
+      };
+      // A3：滚到底后轮询等当页加载——250ms 一次，最多等 4s；
+      // 有增长（高度/条目数变化）立即返回 true 提前进下一轮；无增长超时也返回，防卡死
+      const waitForGrowth = async (base) => {
+        const deadline = Date.now() + 4000;
+        let last = base;
+        while (Date.now() < deadline) {
+          await sleep(250);
+          const cur = snapshot();
+          if (cur.h > last.h || cur.items > last.items) return true;
+          last = cur;
+        }
+        return false;
+      };
+      // 放慢节奏：单步小、间隔长，每轮到底后等当页结果加载完再滚下一轮，避免漏抓
       for (let round = 0; round < 4; round++) {
         for (let i = 0; i < 10; i++) {
           targets.forEach(t => { try { t.scrollTop += 500; } catch (e) {} });
@@ -112,7 +133,7 @@ export class VideoBrowser {
         targets.forEach(t => { try { t.scrollTop = t.scrollHeight; } catch (e) {} });
         wheel(1500);
         clickMore();
-        await sleep(1200);
+        await waitForGrowth(snapshot());
       }
       await sleep(1500); // 最后再等一拍，等网络/渲染落定
       return targets.length;
