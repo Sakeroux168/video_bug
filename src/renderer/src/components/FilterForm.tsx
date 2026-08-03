@@ -15,6 +15,12 @@ export default function FilterForm({ onSubmit }: { onSubmit: (t: CreateTaskInput
   const [aiRule, setAiRule] = useState('')
   const [aiOrganize, setAiOrganize] = useState(false)
   const [autoDownload, setAutoDownload] = useState(true)
+  // T3：搜索到底后用抖音筛选续爬（开关 + 4 个下拉，值=筛选面板选项索引，0=不限）
+  const [dfEnabled, setDfEnabled] = useState(false)
+  const [dfPublishTime, setDfPublishTime] = useState(0)
+  const [dfDuration, setDfDuration] = useState(0)
+  const [dfSearchScope, setDfSearchScope] = useState(0)
+  const [dfContentType, setDfContentType] = useState(0)
   const [allowDuplicateAuthor, setAllowDuplicateAuthor] = useState<boolean | undefined>(undefined)
   const [err, setErr] = useState('')
 
@@ -33,7 +39,13 @@ export default function FilterForm({ onSubmit }: { onSubmit: (t: CreateTaskInput
     setErr('')
     const r = await onSubmit({
       platform, type, query: query.trim(),
-      filters: { timeRange, duration, targetCount: target, aiFilterRule: aiFilter ? aiRule.trim() : undefined },
+      filters: {
+        timeRange, duration, targetCount: target, aiFilterRule: aiFilter ? aiRule.trim() : undefined,
+        // T3：开关关闭提交 undefined（不启用）；开启提交各下拉索引
+        douyinFilter: dfEnabled
+          ? { enabled: true, publishTime: dfPublishTime, duration: dfDuration, searchScope: dfSearchScope, contentType: dfContentType }
+          : undefined
+      },
       aiFilterEnabled: aiFilter, aiOrganizeEnabled: aiOrganize,
       autoDownload,
       allowDuplicateAuthor: type === 'author' ? allowDuplicateAuthor : undefined
@@ -113,6 +125,41 @@ export default function FilterForm({ onSubmit }: { onSubmit: (t: CreateTaskInput
               onChange={e => setAllowDuplicateAuthor(e.target.checked)} />
             允许重复爬取该作者主页（已爬过也继续）
           </label>
+        )}
+      </div>
+      {/* T3：搜索到底后用抖音自带筛选续爬——停滞时自动点筛选面板，重置计数继续抓 */}
+      <div className="mt-3 border-t border-zinc-100 pt-3">
+        <label className="flex items-center gap-1 text-sm">
+          <input type="checkbox" checked={dfEnabled} onChange={e => setDfEnabled(e.target.checked)} />
+          搜索到底后用抖音筛选续爬
+        </label>
+        {dfEnabled && (
+          <div className="mt-2 flex flex-wrap items-end gap-4 text-xs text-zinc-500">
+            <label className="flex flex-col gap-1">
+              发布时间
+              <select className={inputCls} value={dfPublishTime} onChange={e => setDfPublishTime(Number(e.target.value))}>
+                <option value={0}>不限</option><option value={1}>一天内</option><option value={2}>一周内</option><option value={3}>半年内</option>
+              </select>
+            </label>
+            <label className="flex flex-col gap-1">
+              视频时长
+              <select className={inputCls} value={dfDuration} onChange={e => setDfDuration(Number(e.target.value))}>
+                <option value={0}>不限</option><option value={1}>1分钟以下</option><option value={2}>1-5分钟</option><option value={3}>5分钟以上</option>
+              </select>
+            </label>
+            <label className="flex flex-col gap-1">
+              搜索范围
+              <select className={inputCls} value={dfSearchScope} onChange={e => setDfSearchScope(Number(e.target.value))}>
+                <option value={0}>不限</option><option value={1}>关注的人</option><option value={2}>最近看过</option><option value={3}>还未看过</option>
+              </select>
+            </label>
+            <label className="flex flex-col gap-1">
+              内容形式
+              <select className={inputCls} value={dfContentType} onChange={e => setDfContentType(Number(e.target.value))}>
+                <option value={0}>不限</option><option value={1}>视频</option><option value={2}>图文</option>
+              </select>
+            </label>
+          </div>
         )}
       </div>
       {err && <p className="mt-2 text-xs text-red-500">{err}</p>}

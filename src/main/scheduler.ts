@@ -10,6 +10,7 @@ import type { Downloader } from './downloader'
 import type { VideoBrowser } from './browser'
 import type { Organizer } from './organizer'
 import { getAdapter } from './adapters'
+import { FILTER_SELECTORS } from './adapters/douyin'
 
 export function buildStopDecision(fetched: number, target: number, emptyRounds: number): 'continue' | 'reached' | 'stop' {
   if (fetched >= target) return 'reached'
@@ -21,6 +22,7 @@ export type SchedulerEvent =
   | { type: 'task:progress'; taskId: number; fetched: number; status: TaskStatus }
   | { type: 'task:done'; taskId: number; fetched: number }
   | { type: 'task:paused'; taskId: number; reason: string }
+  | { type: 'task:notice'; text: string }
 
 interface SchedulerDeps {
   db: DatabaseSync
@@ -49,6 +51,8 @@ export class Scheduler {
   private rawSinceLastRound = false
   /** T2：当前任务的每页最大等待毫秒（每次 run 从设置现读） */
   private scrollWaitMs = 8000
+  /** T3：本任务是否已应用过抖音筛选续爬（只应用一次，无论成败） */
+  private filterApplied = false
   private aiEnabled = false
   private autoDownload = true
   private pendingVideoIds: number[] = []
@@ -123,6 +127,7 @@ export class Scheduler {
       this.emptyRounds = 0
       this.silentRounds = 0
       this.rawSinceLastRound = false
+      this.filterApplied = false // 每次 run 重置：筛选续爬只应用一次，恢复任务后可再次尝试
       this.pendingVideoIds = []
       this.aiEnabled = !!(this.deps.analyzer) && !!this.filters.aiFilterEnabled
       this.autoDownload = !!task.auto_download
@@ -157,7 +162,26 @@ export class Scheduler {
         this.rawSinceLastRound = false
         const decision = buildStopDecision(this.fetched, target, this.emptyRounds + this.silentRounds)
         if (decision === 'reached') { stopReason = 'reached'; break }
-        if (decision === 'stop') { stopReason = 'stalled'; break }
+        if (decision === 'stop') {
+          // T3：搜索到底后用抖音自带筛选续爬——仅 keyword 任务、启用筛选、未应用过、且未达目标时
+          const df = this.filters?.douyinFilter
+          if (this.fetched < target && df?.enabled && this.task?.type === 'keyword' && !this.filterApplied) {
+            this.filterApplied = true // 只应用一次：无论成败都不再重试
+            let applied = false
+            try {
+              applied = await this.deps.browser.applyDouyinFilter(FILTER_SELECTORS, df)
+            } catch { applied = false }
+            if (applied) {
+              // 筛选已生效：重置停滞计数继续抓（去重靠 seen 自然跳过已爬过的，只收新内容）
+              this.emptyRounds = 0
+              this.silentRounds = 0
+              continue
+            }
+            this.deps.emit({ type: 'task:notice', text: '筛选续爬未生效（页面结构可能已变），已按原逻辑停止' })
+          }
+          stopReason = 'stalled'
+          break
+        }
         if (this.pendingVideoIds.length > 30) { /* 下载堆积，放慢抓取 */ await this.sleep(2000) }
       }
 

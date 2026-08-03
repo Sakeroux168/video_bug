@@ -31,6 +31,7 @@ class FakeBrowser {
     }
   }
   async scrollToBottom(_opts?: { waitMs?: number }): Promise<void> {}
+  async applyDouyinFilter(): Promise<boolean> { return true }
   setVisible(_v: boolean): void {}
   dispose(): void {}
 }
@@ -448,5 +449,76 @@ describe('滚动参数传递（T2）', () => {
     })
     await s.run(taskId)
     expect(spy).toHaveBeenCalledWith({ waitMs: 8000 })
+  }, 10000)
+})
+
+describe('抖音筛选续爬（T3）', () => {
+  const filterInput: CreateTaskInput = {
+    ...input,
+    filters: {
+      ...input.filters,
+      douyinFilter: { enabled: true, publishTime: 0, duration: 1, searchScope: 0, contentType: 0 }
+    }
+  }
+
+  it('搜索停滞 + 启用筛选 + keyword → applyDouyinFilter 被调且只一次；重置停滞后按原逻辑停止', async () => {
+    const db = newDb()
+    const taskId = createTask(db, filterInput)
+    const browser = new FakeBrowser()
+    const spy = vi.spyOn(browser, 'applyDouyinFilter').mockResolvedValue(true)
+    const { s } = setup(db, new FakeDownloader(), browser)
+    await s.run(taskId)
+    // 只应用一次：应用后继续跑了几轮，再停滞时不再调用
+    expect(spy).toHaveBeenCalledTimes(1)
+    expect(spy).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ duration: 1 }))
+    expect(db.prepare('SELECT status, error FROM tasks WHERE id=?').get(taskId)).toEqual({ status: 'paused', error: 'stalled_verify' })
+  }, 10000)
+
+  it('筛选应用返回 false → 发 notice「筛选续爬未生效」+ 按原逻辑停止（不重试）', async () => {
+    const db = newDb()
+    const taskId = createTask(db, filterInput)
+    const browser = new FakeBrowser()
+    const spy = vi.spyOn(browser, 'applyDouyinFilter').mockResolvedValue(false)
+    const { s, events } = setup(db, new FakeDownloader(), browser)
+    await s.run(taskId)
+    expect(spy).toHaveBeenCalledTimes(1)
+    expect(events).toContainEqual({ type: 'task:notice', text: '筛选续爬未生效（页面结构可能已变），已按原逻辑停止' })
+    expect(db.prepare('SELECT status, error FROM tasks WHERE id=?').get(taskId)).toEqual({ status: 'paused', error: 'stalled_verify' })
+  }, 10000)
+
+  it('筛选脚本抛错 → 同样 notice + 按原逻辑停止', async () => {
+    const db = newDb()
+    const taskId = createTask(db, filterInput)
+    const browser = new FakeBrowser()
+    const spy = vi.spyOn(browser, 'applyDouyinFilter').mockRejectedValue(new Error('script_error'))
+    const { s, events } = setup(db, new FakeDownloader(), browser)
+    await s.run(taskId)
+    expect(spy).toHaveBeenCalledTimes(1)
+    expect(events).toContainEqual({ type: 'task:notice', text: '筛选续爬未生效（页面结构可能已变），已按原逻辑停止' })
+    expect(db.prepare('SELECT status, error FROM tasks WHERE id=?').get(taskId)).toEqual({ status: 'paused', error: 'stalled_verify' })
+  }, 10000)
+
+  it('非 keyword 任务（作者）→ 不调 applyDouyinFilter', async () => {
+    const db = newDb()
+    const taskId = createTask(db, { ...filterInput, type: 'author', query: 'https://www.douyin.com/user/abc' })
+    const browser = new FakeBrowser()
+    const spy = vi.spyOn(browser, 'applyDouyinFilter').mockResolvedValue(true)
+    const { s } = setup(db, new FakeDownloader(), browser)
+    await s.run(taskId)
+    expect(spy).not.toHaveBeenCalled()
+    expect(db.prepare('SELECT status, error FROM tasks WHERE id=?').get(taskId)).toEqual({ status: 'paused', error: 'stalled_verify' })
+  }, 10000)
+
+  it('未启用筛选（enabled=false）→ 不调 applyDouyinFilter', async () => {
+    const db = newDb()
+    const taskId = createTask(db, {
+      ...input,
+      filters: { ...input.filters, douyinFilter: { enabled: false, publishTime: 0, duration: 0, searchScope: 0, contentType: 0 } }
+    })
+    const browser = new FakeBrowser()
+    const spy = vi.spyOn(browser, 'applyDouyinFilter').mockResolvedValue(true)
+    const { s } = setup(db, new FakeDownloader(), browser)
+    await s.run(taskId)
+    expect(spy).not.toHaveBeenCalled()
   }, 10000)
 })

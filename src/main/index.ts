@@ -87,8 +87,13 @@ function createWindow(): void {
 }
 
 function push(evt: unknown): void {
-  win?.webContents.send('evt:task:progress', evt)
   const t = evt as { type?: string; status?: string; reason?: string } | null
+  // 通知类事件（如筛选续爬失败）：单独转发到 notice 通道，渲染层 toast 展示
+  if (t?.type === 'task:notice') {
+    win?.webContents.send('evt:task:notice', t)
+    return
+  }
+  win?.webContents.send('evt:task:progress', evt)
   if (t) {
     if (t.type === 'task:progress' && t.status === 'running') {
       taskRunning = true

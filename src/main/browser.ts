@@ -1,6 +1,8 @@
 import { BrowserWindow } from 'electron'
 import { join } from 'path'
 import type { PlatformAdapter } from './adapters/types'
+import { FILTER_SELECTORS } from './adapters/douyin'
+import type { DouyinFilter } from '../shared/types'
 import { INJECT_SCRIPT } from './injector'
 
 export class VideoBrowser {
@@ -163,6 +165,44 @@ export class VideoBrowser {
     } else {
       this.win.hide()
     }
+  }
+
+  /**
+   * 注入脚本操作抖音搜索筛选面板（T3 筛选续爬）：
+   * 点筛选按钮 → 等面板出现 → 对每组 index>0 的选项依次点击（找不到记失败但继续）→ 等 2.5s 页面刷新。
+   * 返回 false：按钮/面板没找到，或任一需要点的选项缺失（页面结构可能已变），调用方按原逻辑停止
+   */
+  async applyDouyinFilter(sel: typeof FILTER_SELECTORS, f: DouyinFilter): Promise<boolean> {
+    if (!this.win) return false
+    // 组号：1发布时间/2时长/3搜索范围/4内容形式（组 0=排序不操作）；选项 data-index2 即配置索引
+    const pairs: Array<[number, number]> = []
+    if (f.publishTime > 0) pairs.push([1, f.publishTime])
+    if (f.duration > 0) pairs.push([2, f.duration])
+    if (f.searchScope > 0) pairs.push([3, f.searchScope])
+    if (f.contentType > 0) pairs.push([4, f.contentType])
+    const optionSelectors = pairs.map(([g, o]) => sel.option(g, o))
+    const script = '(async () => {' +
+      'const sleep = ms => new Promise(r => setTimeout(r, ms));' +
+      `const button = document.querySelector(${JSON.stringify(sel.button)});` +
+      'if (!button) return false;' +
+      'button.click();' +
+      // 等筛选面板出现（最多 3s）
+      'let panel = null;' +
+      `for (let i = 0; i < 30; i++) { panel = document.querySelector(${JSON.stringify(sel.panel)}); if (panel) break; await sleep(100); }` +
+      'if (!panel) return false;' +
+      'let ok = true;' +
+      `const sels = ${JSON.stringify(optionSelectors)};` +
+      'for (const s of sels) {' +
+      'const el = document.querySelector(s);' +
+      'if (el) { el.click(); } else { ok = false; }' +
+      '}' +
+      // 等筛选条件生效、fetch 触发页面刷新（约 2.5s）
+      'await sleep(2500);' +
+      'return ok;' +
+      '})()'
+    try {
+      return !!(await this.win.webContents.executeJavaScript(script))
+    } catch { return false }
   }
 
   /** 打开抖音页面的开发者工具（调试用） */

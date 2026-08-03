@@ -1,6 +1,15 @@
 import type { Filters } from '../../shared/types'
 import type { PlatformAdapter, VideoItem } from './types'
 
+/** 抖音搜索筛选面板选择器（哈希类名，有变动风险；平台迁移/类名变动只需改这里）。
+ *  组 data-index1：0排序/1发布时间/2时长/3搜索范围/4内容形式；选项 data-index2 即下拉索引（0=不限，不操作） */
+export const FILTER_SELECTORS = {
+  button: 'span.bR4uhU1W',
+  panel: 'div.IMWRHJOg',
+  option: (group: number, optionIndex: number): string =>
+    `span[data-index1="${group}"][data-index2="${optionIndex}"]`
+}
+
 /** 是否"长得像"一条抖音视频对象（新版卡片有 aweme_info 包装；老版直接带 aweme_id+video/desc/author） */
 function isAwemeLike(x: unknown): boolean {
   if (!x || typeof x !== 'object') return false

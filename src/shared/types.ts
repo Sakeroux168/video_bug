@@ -13,6 +13,17 @@ export interface Filters {
   aiFilterRule?: string
   aiFilterEnabled?: boolean // createTask 会把它序列化进 filters JSON 列（Task 6）
   aiOrganizeEnabled?: boolean // 同上，任务级开关随 filters 落库
+  /** T3：搜索到底后用抖音自带筛选续爬（索引即筛选面板选项 data-index2，0=不限；存 filters JSON） */
+  douyinFilter?: DouyinFilter
+}
+
+/** 抖音筛选续爬配置：每个维度 0=不限，其余索引对应筛选面板选项（data-index2） */
+export interface DouyinFilter {
+  enabled: boolean
+  publishTime: number // 0=不限 1=一天内 2=一周内 3=半年内
+  duration: number // 0=不限 1=1分钟以下 2=1-5分钟 3=5分钟以上
+  searchScope: number // 0=不限 1=关注的人 2=最近看过 3=还未看过
+  contentType: number // 0=不限 1=视频 2=图文
 }
 
 export interface CreateTaskInput {
