@@ -182,6 +182,11 @@ app.whenReady().then(() => {
     db, browser, analyzer, downloader,
     emit: push,
     scrollIntervalMs: settings.scrollIntervalMs,
+    // T2：滚动参数由 scheduler 每次 run 现读（设置保存即生效，无需重启）
+    getScrollParams: () => {
+      const s = getSettings()
+      return { scrollSpeed: s.scrollSpeed, scrollPageWaitMs: s.scrollPageWaitMs }
+    },
     organizer,
     organizeDebounceMs: settings.organizeDebounceMs ?? 5000
   })

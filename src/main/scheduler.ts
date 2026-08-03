@@ -1,6 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite'
 import type { PlatformAdapter } from './adapters/types'
-import type { TaskRow, TaskStatus, Filters } from '../shared/types'
+import type { AppSettings, TaskRow, TaskStatus, Filters } from '../shared/types'
 import { ERROR } from '../shared/types'
 import { filterVideos, dedupeVideos, extractCategory } from './extractor'
 import { isRiskSignal } from './errors'
@@ -29,6 +29,8 @@ interface SchedulerDeps {
   downloader: Downloader
   emit: (e: SchedulerEvent) => void
   scrollIntervalMs: number
+  /** T2：每次 run 现读滚动参数（设置保存即生效，无需重启） */
+  getScrollParams: () => Pick<AppSettings, 'scrollSpeed' | 'scrollPageWaitMs'>
   /** Task5：按作者整理器（可选；未注入则下载完成不触发整理） */
   organizer?: Organizer | null
   /** Task5：下载完成→按作者归档去抖毫秒；<=0 表示立即归档 */
@@ -45,6 +47,8 @@ export class Scheduler {
   private emptyRounds = 0
   private silentRounds = 0
   private rawSinceLastRound = false
+  /** T2：当前任务的每页最大等待毫秒（每次 run 从设置现读） */
+  private scrollWaitMs = 8000
   private aiEnabled = false
   private autoDownload = true
   private pendingVideoIds: number[] = []
@@ -135,14 +139,18 @@ export class Scheduler {
       this.rawSinceLastRound = true
 
       const target = this.filters.targetCount ?? 200
+      // T2：滚动参数每次 run 现读（设置保存即生效）；scrollSpeed 提供默认（慢8s/中5s/快3s），数字微调优先
+      const p = this.deps.getScrollParams()
+      const speedDefault = { slow: 8000, medium: 5000, fast: 3000 }[p.scrollSpeed] ?? 8000
+      this.scrollWaitMs = p.scrollPageWaitMs > 0 ? p.scrollPageWaitMs : speedDefault
       let stopReason: 'reached' | 'stalled' | null = null
       while (!this.aborted) {
         await this.sleep(this.deps.scrollIntervalMs + Math.random() * 1500)
         // A1：暂停时不跑滚动（滚动是长任务且不可中断，提前检查避免多滚一轮）
         if (this.aborted) break
-        await this.deps.browser.scrollToBottom()
-        // 放慢节奏：滚动后多等一拍让当页结果加载完再进下一轮（生产约1.5s，测试环境按间隔缩放保持快速）
-        await this.sleep(Math.min(1500, this.deps.scrollIntervalMs * 2))
+        await this.deps.browser.scrollToBottom({ waitMs: this.scrollWaitMs })
+        // 放慢节奏：滚动后多等一拍让当页结果加载完再进下一轮（默认约1.5s，随每页等待时长缩放；测试环境按间隔缩放保持快速）
+        await this.sleep(Math.min(1500, this.scrollWaitMs / 4, this.deps.scrollIntervalMs * 2))
         // 按轮次计静默：本轮收到 raw 则重置，否则累加；与空解析轮合并判断停止
         if (this.rawSinceLastRound) this.silentRounds = 0
         else this.silentRounds++

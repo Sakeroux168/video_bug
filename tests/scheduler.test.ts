@@ -30,7 +30,7 @@ class FakeBrowser {
       await new Promise<void>(r => { this.pendingLoad = r })
     }
   }
-  async scrollToBottom(): Promise<void> {}
+  async scrollToBottom(_opts?: { waitMs?: number }): Promise<void> {}
   setVisible(_v: boolean): void {}
   dispose(): void {}
 }
@@ -73,7 +73,10 @@ function newDb(): DatabaseSync {
 
 function setup(db: DatabaseSync, dl: FakeDownloader, browser: FakeBrowser, scrollIntervalMs = 1) {
   const events: unknown[] = []
-  const s = new Scheduler({ db, browser, analyzer: null, downloader: dl, emit: e => events.push(e), scrollIntervalMs })
+  const s = new Scheduler({
+    db, browser, analyzer: null, downloader: dl, emit: e => events.push(e), scrollIntervalMs,
+    getScrollParams: () => ({ scrollSpeed: 'slow' as const, scrollPageWaitMs: 8000 })
+  })
   return { s, events }
 }
 
@@ -249,7 +252,8 @@ describe('下载完成触发作者整理（Task5 替代 I7 逐视频整理）', 
     const s = new Scheduler({
       db, browser, analyzer: null, downloader: dl,
       emit: e => events.push(e), scrollIntervalMs: 1,
-      organizer, organizeDebounceMs: 0
+      organizer, organizeDebounceMs: 0,
+      getScrollParams: () => ({ scrollSpeed: 'slow' as const, scrollPageWaitMs: 8000 })
     })
     browser.blockNextLoad()
     const p = s.run(taskId)
@@ -281,7 +285,8 @@ describe('下载完成触发作者整理（Task5 替代 I7 逐视频整理）', 
     const s = new Scheduler({
       db, browser, analyzer: null, downloader: dl,
       emit: e => events.push(e), scrollIntervalMs: 1,
-      organizer, organizeDebounceMs: 0
+      organizer, organizeDebounceMs: 0,
+      getScrollParams: () => ({ scrollSpeed: 'slow' as const, scrollPageWaitMs: 8000 })
     })
     browser.blockNextLoad()
     const p = s.run(taskId)
@@ -398,7 +403,8 @@ describe('抓取硬截断到目标（A2）', () => {
     const events: unknown[] = []
     const s = new Scheduler({
       db, browser, analyzer, downloader: new FakeDownloader(),
-      emit: e => events.push(e), scrollIntervalMs: 1
+      emit: e => events.push(e), scrollIntervalMs: 1,
+      getScrollParams: () => ({ scrollSpeed: 'slow' as const, scrollPageWaitMs: 8000 })
     })
     const pRun = s.run(taskId)
     await new Promise(r => setTimeout(r, 10)) // 任务挂起在 load，taskId 就绪
@@ -425,5 +431,22 @@ describe('抓取硬截断到目标（A2）', () => {
     browser.releaseLoad()
     await Promise.all([pRun, pPause])
     expect(db.prepare('SELECT status, error FROM tasks WHERE id=?').get(taskId)).toEqual({ status: 'paused', error: null })
+  }, 10000)
+})
+
+describe('滚动参数传递（T2）', () => {
+  it('run 时把每页等待秒数参数传给 scrollToBottom', async () => {
+    const db = newDb()
+    const taskId = createTask(db, input)
+    const browser = new FakeBrowser()
+    const spy = vi.spyOn(browser, 'scrollToBottom')
+    const events: unknown[] = []
+    const s = new Scheduler({
+      db, browser, analyzer: null, downloader: new FakeDownloader(),
+      emit: e => events.push(e), scrollIntervalMs: 1,
+      getScrollParams: () => ({ scrollSpeed: 'slow' as const, scrollPageWaitMs: 8000 })
+    })
+    await s.run(taskId)
+    expect(spy).toHaveBeenCalledWith({ waitMs: 8000 })
   }, 10000)
 })

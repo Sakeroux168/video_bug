@@ -63,6 +63,10 @@ export interface AppSettings {
   aiModel: string
   downloadConcurrency: number
   scrollIntervalMs: number
+  /** T2：滚动速度三档（档位预设 scrollPageWaitMs 初始值：慢8s/中5s/快3s；数字微调直接生效） */
+  scrollSpeed: 'slow' | 'medium' | 'fast'
+  /** T2：每页最大等待毫秒（scrollToBottom 的 waitForGrowth 超时；默认 8000=8s） */
+  scrollPageWaitMs: number
   addressTtlMin: number
   /** 勾选=允许重复爬取已爬过主页的作者；取消=去重跳过 */
   allowDuplicateAuthor: boolean

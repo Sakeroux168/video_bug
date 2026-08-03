@@ -115,6 +115,25 @@ export default function SettingsPanel() {
             滚动间隔(ms)
             <input type="number" className={inputCls} value={s.scrollIntervalMs} onChange={e => set('scrollIntervalMs', Number(e.target.value))} />
           </label>
+          {/* T2：滚动速度三档预设"每页最大等待秒数"初始值（慢8s/中5s/快3s）；数字微调直接生效 */}
+          <label className="flex flex-col gap-1">
+            滚动速度
+            <select className={inputCls} value={s.scrollSpeed}
+              onChange={e => {
+                const speed = e.target.value as AppSettings['scrollSpeed']
+                const preset = { slow: 8000, medium: 5000, fast: 3000 }[speed]
+                setS(prev => prev ? { ...prev, scrollSpeed: speed, scrollPageWaitMs: preset } : prev)
+              }}>
+              <option value="slow">慢（8s）</option>
+              <option value="medium">中（5s）</option>
+              <option value="fast">快（3s）</option>
+            </select>
+          </label>
+          <label className="flex flex-col gap-1">
+            每页最大等待(秒)
+            <input type="number" min={1} className={inputCls} value={s.scrollPageWaitMs / 1000}
+              onChange={e => set('scrollPageWaitMs', Number(e.target.value) * 1000)} />
+          </label>
           <label className="flex flex-col gap-1">
             地址过期(分钟)
             <input type="number" className={inputCls} value={s.addressTtlMin} onChange={e => set('addressTtlMin', Number(e.target.value))} />

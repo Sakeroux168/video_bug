@@ -10,6 +10,8 @@ const DEFAULTS: AppSettings = {
   aiModel: 'gpt-4o-mini',
   downloadConcurrency: 3,
   scrollIntervalMs: 2000,
+  scrollSpeed: 'slow',
+  scrollPageWaitMs: 8000,
   addressTtlMin: 30,
   allowDuplicateAuthor: false,
   organizeDebounceMs: 5000,

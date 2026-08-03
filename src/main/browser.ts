@@ -75,9 +75,12 @@ export class VideoBrowser {
     await this.win.loadURL(url)
   }
 
-  /** 渐进滚动到底：滚 window + 所有可滚容器，多轮小步，并点击"加载更多"，尽力触发抖音加载更多 */
-  async scrollToBottom(): Promise<void> {
+  /** 渐进滚动到底：滚 window + 所有可滚容器，多轮小步，并点击"加载更多"，尽力触发抖音加载更多。
+   *  waitMs：滚到底后等当页新内容进来自动进下一轮的 waitForGrowth 超时（默认 8000，对应"每页最大等待秒数"设置） */
+  async scrollToBottom(opts?: { waitMs?: number }): Promise<void> {
     if (!this.win) return
+    const waitMs = opts?.waitMs ?? 8000
+    const pollMs = Math.max(100, Math.round(waitMs / 32)) // 轮询间隔随超时缩放：8s→250ms，3s→~100ms
     const script = `(async () => {
       const sleep = ms => new Promise(r => setTimeout(r, ms));
       const sc = document.scrollingElement || document.documentElement;
@@ -110,13 +113,13 @@ export class VideoBrowser {
         for (const el of bigs) { try { items += el.children.length; } catch (e) {} }
         return { h: h, items: items };
       };
-      // A3：滚到底后轮询等当页加载——250ms 一次，最多等 4s；
+      // A3：滚到底后轮询等当页加载——每 pollMs 一次，最多等 waitMs（默认 8s，设置页可调）；
       // 有增长（高度/条目数变化）立即返回 true 提前进下一轮；无增长超时也返回，防卡死
       const waitForGrowth = async (base) => {
-        const deadline = Date.now() + 4000;
+        const deadline = Date.now() + ${waitMs};
         let last = base;
         while (Date.now() < deadline) {
-          await sleep(250);
+          await sleep(${pollMs});
           const cur = snapshot();
           if (cur.h > last.h || cur.items > last.items) return true;
           last = cur;
