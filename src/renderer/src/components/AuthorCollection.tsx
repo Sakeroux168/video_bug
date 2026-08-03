@@ -1,18 +1,14 @@
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import { api } from '../api'
 import type { AuthorRow } from '../../../shared/types'
 import { Card, btnPrimary } from './ui'
-
-interface Rect { x: number; y: number; w: number; h: number }
+import { useMarqueeSelect } from './useMarqueeSelect'
 
 export default function AuthorCollection({ notify }: { notify: (text: string) => void }) {
   const [authors, setAuthors] = useState<AuthorRow[]>([])
   const [selected, setSelected] = useState<Set<number>>(new Set())
   const [editingId, setEditingId] = useState<number | null>(null)
   const [editVal, setEditVal] = useState('')
-  const [marquee, setMarquee] = useState<Rect | null>(null)
-  const boxRef = useRef<HTMLDivElement>(null)
-  const dragStart = useRef<{ x: number; y: number } | null>(null)
 
   useEffect(() => { void api.listAuthors().then(setAuthors) }, [])
 
@@ -30,45 +26,22 @@ export default function AuthorCollection({ notify }: { notify: (text: string) =>
     setSelected(allSelected ? new Set() : new Set(authors.map(a => a.id)))
   }
 
-  // —— 拖拽框选（marquee 用容器相对坐标，相交判断时转回视口坐标）——
-  const toViewport = (r: Rect): Rect => {
-    const rect = boxRef.current?.getBoundingClientRect()
-    return { x: r.x + (rect?.left ?? 0), y: r.y + (rect?.top ?? 0), w: r.w, h: r.h }
+  // —— 拖拽框选（替换式：松手后选中集合 = 框内命中的行，框外一律取消）——
+  const { containerRef, marquee, onMouseDown, onMouseMove, endDrag } = useMarqueeSelect({
+    onSelect: ids => setSelected(new Set(ids))
+  })
+
+  // 点行任意位置切换选中（勾选框/链接/按钮不触发行切换）
+  function handleRowClick(a: AuthorRow, e: React.MouseEvent): void {
+    if ((e.target as HTMLElement).closest('button, a, input')) return
+    toggle(a.id)
   }
-  function onMouseDown(e: React.MouseEvent): void {
-    const target = e.target as HTMLElement
-    if (target.closest('button, a, input')) return // 交互元素不触发框选
-    e.preventDefault()
-    const rect = boxRef.current?.getBoundingClientRect()
-    dragStart.current = { x: e.clientX - (rect?.left ?? 0), y: e.clientY - (rect?.top ?? 0) }
-    setMarquee({ x: dragStart.current.x, y: dragStart.current.y, w: 0, h: 0 })
-  }
-  function onMouseMove(e: React.MouseEvent): void {
-    if (!dragStart.current) return
-    const rect = boxRef.current?.getBoundingClientRect()
-    const cx = e.clientX - (rect?.left ?? 0)
-    const cy = e.clientY - (rect?.top ?? 0)
-    const s = dragStart.current
-    setMarquee({
-      x: Math.min(s.x, cx), y: Math.min(s.y, cy),
-      w: Math.abs(cx - s.x), h: Math.abs(cy - s.y)
-    })
-  }
-  function endDrag(): void {
-    if (!dragStart.current || !marquee || (marquee.w < 5 && marquee.h < 5)) { dragStart.current = null; setMarquee(null); return }
-    const v = toViewport(marquee)
-    const mr = { left: v.x, top: v.y, right: v.x + v.w, bottom: v.y + v.h }
-    const rows = boxRef.current?.querySelectorAll('tbody tr') ?? []
-    const newly = new Set<number>()
-    rows.forEach(tr => {
-      const r = tr.getBoundingClientRect()
-      if (r.left < mr.right && r.right > mr.left && r.top < mr.bottom && r.bottom > mr.top) {
-        newly.add(Number(tr.getAttribute('data-id')))
-      }
-    })
-    if (newly.size) setSelected(prev => new Set([...prev, ...newly]))
-    dragStart.current = null
-    setMarquee(null)
+
+  // 点容器内空白区域（非行、非交互元素）→ 清空全部选择
+  function handleContainerClick(e: React.MouseEvent): void {
+    const t = e.target as HTMLElement
+    if (t.closest('tr, button, a, input')) return
+    setSelected(new Set())
   }
 
   async function deleteSelected(): Promise<void> {
@@ -125,15 +98,16 @@ export default function AuthorCollection({ notify }: { notify: (text: string) =>
             删除选中{selected.size > 0 ? `（${selected.size}）` : ''}
           </button>
         )}
-        <span className="text-zinc-300">提示：在表格上按住左键拖动可框选多个作者</span>
+        <span className="text-zinc-300">提示：点行可选中/取消，点空白取消全部，按住左键拖动可框选</span>
       </div>
       {authors.length === 0 ? (
         <span className="text-sm text-zinc-400">暂无收藏的作者，抓取后自动收录</span>
       ) : (
         <div
-          ref={boxRef} className="relative select-none overflow-auto"
+          ref={containerRef} className="relative select-none overflow-auto"
           onMouseDown={onMouseDown} onMouseMove={onMouseMove}
           onMouseUp={endDrag} onMouseLeave={endDrag}
+          onClick={handleContainerClick}
         >
           <table className="w-full text-left text-sm">
             <thead>
@@ -148,7 +122,12 @@ export default function AuthorCollection({ notify }: { notify: (text: string) =>
             </thead>
             <tbody>
               {authors.map(a => (
-                <tr key={`${a.platform}:${a.sec_uid}`} data-id={a.id} className={`border-b border-zinc-100 ${selected.has(a.id) ? 'bg-blue-50' : ''}`}>
+                <tr
+                  key={`${a.platform}:${a.sec_uid}`}
+                  data-id={a.id}
+                  className={`cursor-pointer border-b border-zinc-100 transition-colors hover:bg-zinc-50 ${selected.has(a.id) ? 'bg-blue-50' : ''}`}
+                  onClick={e => handleRowClick(a, e)}
+                >
                   <td className="py-2 pr-1"><input type="checkbox" checked={selected.has(a.id)} onChange={() => toggle(a.id)} /></td>
                   <td className="py-2 pr-2 font-medium">{a.nickname}</td>
                   <td className="max-w-[240px] truncate py-2 pr-2">

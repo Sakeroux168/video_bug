@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { api } from '../api'
 import type { TaskRow, VideoRow, TaskStats } from '../../../shared/types'
 import { Card, inputCls } from './ui'
+import { useMarqueeSelect } from './useMarqueeSelect'
 
 const TASK_STATUS_LABEL: Record<string, string> = { pending: '等待中', running: '进行中', done: '完成', paused: '已暂停', failed: '失败' }
 
@@ -23,6 +24,20 @@ const STATUS_CLASS: Record<string, string> = {
 const PAGE_SIZE = 50
 
 type SortKey = 'title' | 'author' | 'duration' | 'publish_time' | 'likes'
+
+interface Derived {
+  filtered: VideoRow[]
+  pageCount: number
+  curPage: number
+  pageVideos: VideoRow[]
+  selectableIds: number[]
+  allOnPageSelected: boolean
+  someOnPageSelected: boolean
+  selDownloadable: number[]
+  selCancellable: number[]
+  selFailed: number[]
+  collectedIds: number[]
+}
 
 const btnSmall = 'rounded-md border border-zinc-300 px-2 py-1 text-xs text-zinc-600 hover:bg-zinc-100 disabled:opacity-40'
 
@@ -126,18 +141,23 @@ export default function TaskList({ notify }: { notify: (text: string) => void })
     })
   }
 
-  interface Derived {
-    filtered: VideoRow[]
-    pageCount: number
-    curPage: number
-    pageVideos: VideoRow[]
-    selectableIds: number[]
-    allOnPageSelected: boolean
-    someOnPageSelected: boolean
-    selDownloadable: number[]
-    selCancellable: number[]
-    selFailed: number[]
-    collectedIds: number[]
+  // 框选替换式：松手后选中集合 = 框内命中的行（框外一律取消）
+  function replaceSelect(ids: number[]): void {
+    setSelected(new Set(ids))
+  }
+
+  // 点击表格容器空白区域 → 清空全部选择
+  function clearSelection(): void {
+    setSelected(new Set())
+  }
+
+  function handleSort(taskId: number, key: SortKey): void {
+    setSortState(prev => {
+      const p = { ...prev }
+      if (p[taskId]?.key === key) p[taskId] = { key, dir: p[taskId].dir === 1 ? -1 : 1 }
+      else p[taskId] = { key, dir: (key === 'likes' || key === 'publish_time') ? -1 : 1 }
+      return p
+    })
   }
 
   // 排序/搜索/分页/勾选全部用 useMemo 派生，避免每次渲染重算
@@ -190,27 +210,6 @@ export default function TaskList({ notify }: { notify: (text: string) => void })
     }
     return out
   }, [expanded, videos, sortState, searchText, page, selected])
-
-  function sortHeader(taskId: number, key: SortKey, label: string): React.ReactNode {
-    const cur = sortState[taskId]
-    const active = cur?.key === key
-    const arrow = active ? (cur!.dir === 1 ? ' ↑' : ' ↓') : ''
-    return (
-      <th className="whitespace-nowrap py-1 px-1 font-normal">
-        <button
-          className={`${active ? 'text-zinc-800' : ''} hover:text-zinc-800`}
-          onClick={() => setSortState(prev => {
-            const p = { ...prev }
-            if (p[taskId]?.key === key) p[taskId] = { key, dir: p[taskId].dir === 1 ? -1 : 1 }
-            else p[taskId] = { key, dir: (key === 'likes' || key === 'publish_time') ? -1 : 1 }
-            return p
-          })}
-        >
-          {label}{arrow}
-        </button>
-      </th>
-    )
-  }
 
   return (
     <Card title="任务列表">
@@ -360,84 +359,20 @@ export default function TaskList({ notify }: { notify: (text: string) => void })
                         ) : videos[t.id].length === 0 ? (
                           <div className="py-3 text-center text-zinc-400">（暂无视频）</div>
                         ) : d ? (
-                          <>
-                            <div className="overflow-x-auto">
-                              <table className="w-full border-collapse">
-                                <thead>
-                                  <tr className="border-b border-zinc-200 text-left text-zinc-500">
-                                    <th className="w-8 py-1 pr-1 font-normal">
-                                      <input
-                                        type="checkbox"
-                                        checked={d.allOnPageSelected}
-                                        ref={el => { if (el) el.indeterminate = d.someOnPageSelected && !d.allOnPageSelected }}
-                                        onChange={() => toggleSelectPage(t.id, d.allOnPageSelected, d.selectableIds)}
-                                      />
-                                    </th>
-                                    {sortHeader(t.id, 'title', '标题')}
-                                    {sortHeader(t.id, 'author', '作者')}
-                                    {sortHeader(t.id, 'duration', '时长')}
-                                    {sortHeader(t.id, 'publish_time', '发布')}
-                                    {sortHeader(t.id, 'likes', '点赞')}
-                                    <th className="w-14 py-1 px-1 font-normal">状态</th>
-                                    <th className="py-1 pl-2 pr-1 font-normal">操作</th>
-                                  </tr>
-                                </thead>
-                                <tbody>
-                                  {d.pageVideos.map(v => {
-                                    const isFiltered = v.status === 'filtered'
-                                    return (
-                                      <tr key={v.id} className={`border-b border-zinc-100 ${isFiltered ? 'text-zinc-400' : ''}`}>
-                                        <td className="py-1 pr-1">
-                                          <input type="checkbox" disabled={isFiltered} checked={selected.has(v.id)} onChange={() => toggleSelectVideo(v.id)} />
-                                        </td>
-                                        <td className="max-w-0 py-1 pr-2"><span className="block truncate">{v.title || '（无标题）'}</span></td>
-                                        <td className="whitespace-nowrap py-1 pr-2">{v.author_nickname ?? '—'}</td>
-                                        <td className="whitespace-nowrap py-1 pr-2">{formatDuration(v.duration)}</td>
-                                        <td className="whitespace-nowrap py-1 pr-2">{formatDate(v.publish_time)}</td>
-                                        <td className="whitespace-nowrap py-1 pr-2">{formatLikes(getLikes(v))}</td>
-                                        <td className={`whitespace-nowrap py-1 pr-2 ${STATUS_CLASS[v.status] ?? 'text-zinc-500'}`}>{STATUS_LABEL[v.status] ?? v.status}</td>
-                                        <td className="whitespace-nowrap py-1 pl-2">
-                                          {!isFiltered && (
-                                            <div className="flex items-center gap-1.5">
-                                              {(v.status === 'collected' || v.status === 'cancelled' || v.status === 'failed') && (
-                                                <RowBtn label="下载" onClick={() => { void api.downloadVideos([v.id]).then(() => { refresh(); notify('已开始下载') }) }} />
-                                              )}
-                                              {v.status === 'failed' && (
-                                                <RowBtn label="重试" onClick={() => { void api.retryVideos([v.id]).then(() => { refresh(); notify('已重试') }) }} />
-                                              )}
-                                              {(v.status === 'pending' || v.status === 'downloading') && (
-                                                <RowBtn label="取消" onClick={() => { void api.cancelVideos([v.id]).then(() => { refresh(); notify('已取消') }) }} />
-                                              )}
-                                              {v.status === 'done' && v.local_path && (
-                                                <RowBtn label="定位" onClick={() => void api.locateVideo(v.local_path!)} />
-                                              )}
-                                              <a className="text-blue-500 hover:underline" href={`https://www.douyin.com/video/${v.aweme_id}`} target="_blank" rel="noreferrer">原视频</a>
-                                            </div>
-                                          )}
-                                        </td>
-                                      </tr>
-                                    )
-                                  })}
-                                </tbody>
-                              </table>
-                            </div>
-                            <div className="mt-2 flex items-center justify-between">
-                              <span className="text-zinc-400">共 {d.filtered.length} 条</span>
-                              <div className="flex items-center gap-2">
-                                <button
-                                  className={btnSmall}
-                                  disabled={d.curPage <= 1}
-                                  onClick={() => setPage(prev => ({ ...prev, [t.id]: d.curPage - 1 }))}
-                                >上一页</button>
-                                <span className="text-zinc-500">第 {d.curPage} / {d.pageCount} 页</span>
-                                <button
-                                  className={btnSmall}
-                                  disabled={d.curPage >= d.pageCount}
-                                  onClick={() => setPage(prev => ({ ...prev, [t.id]: d.curPage + 1 }))}
-                                >下一页</button>
-                              </div>
-                            </div>
-                          </>
+                          <TaskVideoTable
+                            taskId={t.id}
+                            d={d}
+                            sort={sortState[t.id]}
+                            selected={selected}
+                            onToggleVideo={toggleSelectVideo}
+                            onTogglePage={all => toggleSelectPage(t.id, all, d.selectableIds)}
+                            onSort={key => handleSort(t.id, key)}
+                            onPageChange={p => setPage(prev => ({ ...prev, [t.id]: p }))}
+                            onReplaceSelect={replaceSelect}
+                            onClearSelection={clearSelection}
+                            notify={notify}
+                            refresh={refresh}
+                          />
                         ) : null}
                       </td>
                     </tr>
@@ -449,6 +384,158 @@ export default function TaskList({ notify }: { notify: (text: string) => void })
         </table>
       )}
     </Card>
+  )
+}
+
+/**
+ * 任务展开区视频表格（独立组件以便每个任务的表格各自实例化框选 hook）。
+ * 选择交互：点行任意位置切换选中（勾选框/链接/按钮除外）、点容器空白清空、拖动框选（替换式）。
+ * 跨页选择语义由父组件 selected 集合承载（批量操作按完整 selected 过滤）。
+ */
+function TaskVideoTable({
+  taskId, d, sort, selected, onToggleVideo, onTogglePage, onSort, onPageChange,
+  onReplaceSelect, onClearSelection, notify, refresh
+}: {
+  taskId: number
+  d: Derived
+  sort: { key: SortKey; dir: 1 | -1 } | undefined
+  selected: Set<number>
+  onToggleVideo: (id: number) => void
+  onTogglePage: (allSelected: boolean) => void
+  onSort: (key: SortKey) => void
+  onPageChange: (page: number) => void
+  onReplaceSelect: (ids: number[]) => void
+  onClearSelection: () => void
+  notify: (text: string) => void
+  refresh: () => void
+}): React.ReactElement {
+  const { containerRef, marquee, onMouseDown, onMouseMove, endDrag } = useMarqueeSelect({ onSelect: onReplaceSelect })
+
+  // 点容器内空白区域（非行、非交互元素）→ 清空全部选择；行内点击由行自身的 onClick 处理
+  function handleContainerClick(e: React.MouseEvent): void {
+    const t = e.target as HTMLElement
+    if (t.closest('tr, button, a, input')) return
+    onClearSelection()
+  }
+
+  function handleRowClick(v: VideoRow, e: React.MouseEvent): void {
+    if ((e.target as HTMLElement).closest('button, a, input')) return // 勾选框/链接/按钮不触发行切换
+    onToggleVideo(v.id)
+  }
+
+  function sortHeader(key: SortKey, label: string): React.ReactNode {
+    const active = sort?.key === key
+    const arrow = active ? (sort!.dir === 1 ? ' ↑' : ' ↓') : ''
+    return (
+      <th className="whitespace-nowrap py-1 px-1 font-normal">
+        <button
+          className={`${active ? 'text-zinc-800' : ''} hover:text-zinc-800`}
+          onClick={() => onSort(key)}
+        >
+          {label}{arrow}
+        </button>
+      </th>
+    )
+  }
+
+  return (
+    <>
+      <div
+        ref={containerRef}
+        className="relative select-none overflow-x-auto"
+        onMouseDown={onMouseDown}
+        onMouseMove={onMouseMove}
+        onMouseUp={endDrag}
+        onMouseLeave={endDrag}
+        onClick={handleContainerClick}
+      >
+        <table className="w-full border-collapse">
+          <thead>
+            <tr className="border-b border-zinc-200 text-left text-zinc-500">
+              <th className="w-8 py-1 pr-1 font-normal">
+                <input
+                  type="checkbox"
+                  checked={d.allOnPageSelected}
+                  ref={el => { if (el) el.indeterminate = d.someOnPageSelected && !d.allOnPageSelected }}
+                  onChange={() => onTogglePage(d.allOnPageSelected)}
+                />
+              </th>
+              {sortHeader('title', '标题')}
+              {sortHeader('author', '作者')}
+              {sortHeader('duration', '时长')}
+              {sortHeader('publish_time', '发布')}
+              {sortHeader('likes', '点赞')}
+              <th className="w-14 py-1 px-1 font-normal">状态</th>
+              <th className="py-1 pl-2 pr-1 font-normal">操作</th>
+            </tr>
+          </thead>
+          <tbody>
+            {d.pageVideos.map(v => {
+              const isFiltered = v.status === 'filtered'
+              return (
+                <tr
+                  key={v.id}
+                  data-id={isFiltered ? undefined : v.id}
+                  className={`border-b border-zinc-100 transition-colors ${isFiltered ? 'text-zinc-400' : 'cursor-pointer hover:bg-zinc-50'} ${!isFiltered && selected.has(v.id) ? 'bg-blue-50' : ''}`}
+                  onClick={isFiltered ? undefined : e => handleRowClick(v, e)}
+                >
+                  <td className="py-1 pr-1">
+                    <input type="checkbox" disabled={isFiltered} checked={selected.has(v.id)} onChange={() => onToggleVideo(v.id)} />
+                  </td>
+                  <td className="max-w-0 py-1 pr-2"><span className="block truncate">{v.title || '（无标题）'}</span></td>
+                  <td className="whitespace-nowrap py-1 pr-2">{v.author_nickname ?? '—'}</td>
+                  <td className="whitespace-nowrap py-1 pr-2">{formatDuration(v.duration)}</td>
+                  <td className="whitespace-nowrap py-1 pr-2">{formatDate(v.publish_time)}</td>
+                  <td className="whitespace-nowrap py-1 pr-2">{formatLikes(getLikes(v))}</td>
+                  <td className={`whitespace-nowrap py-1 pr-2 ${STATUS_CLASS[v.status] ?? 'text-zinc-500'}`}>{STATUS_LABEL[v.status] ?? v.status}</td>
+                  <td className="whitespace-nowrap py-1 pl-2">
+                    {!isFiltered && (
+                      <div className="flex items-center gap-1.5">
+                        {(v.status === 'collected' || v.status === 'cancelled' || v.status === 'failed') && (
+                          <RowBtn label="下载" onClick={() => { void api.downloadVideos([v.id]).then(() => { refresh(); notify('已开始下载') }) }} />
+                        )}
+                        {v.status === 'failed' && (
+                          <RowBtn label="重试" onClick={() => { void api.retryVideos([v.id]).then(() => { refresh(); notify('已重试') }) }} />
+                        )}
+                        {(v.status === 'pending' || v.status === 'downloading') && (
+                          <RowBtn label="取消" onClick={() => { void api.cancelVideos([v.id]).then(() => { refresh(); notify('已取消') }) }} />
+                        )}
+                        {v.status === 'done' && v.local_path && (
+                          <RowBtn label="定位" onClick={() => void api.locateVideo(v.local_path!)} />
+                        )}
+                        <a className="text-blue-500 hover:underline" href={`https://www.douyin.com/video/${v.aweme_id}`} target="_blank" rel="noreferrer">原视频</a>
+                      </div>
+                    )}
+                  </td>
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+        {marquee && (
+          <div
+            className="pointer-events-none absolute border border-blue-400 bg-blue-200/40"
+            style={{ left: marquee.x, top: marquee.y, width: marquee.w, height: marquee.h }}
+          />
+        )}
+      </div>
+      <div className="mt-2 flex items-center justify-between">
+        <span className="text-zinc-400">共 {d.filtered.length} 条</span>
+        <div className="flex items-center gap-2">
+          <button
+            className={btnSmall}
+            disabled={d.curPage <= 1}
+            onClick={() => onPageChange(d.curPage - 1)}
+          >上一页</button>
+          <span className="text-zinc-500">第 {d.curPage} / {d.pageCount} 页</span>
+          <button
+            className={btnSmall}
+            disabled={d.curPage >= d.pageCount}
+            onClick={() => onPageChange(d.curPage + 1)}
+          >下一页</button>
+        </div>
+      </div>
+    </>
   )
 }
 
