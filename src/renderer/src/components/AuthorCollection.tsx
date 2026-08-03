@@ -27,18 +27,21 @@ export default function AuthorCollection({ notify }: { notify: (text: string) =>
   }
 
   // —— 拖拽框选（替换式：松手后选中集合 = 框内命中的行，框外一律取消）——
-  const { containerRef, marquee, onMouseDown, onMouseMove, endDrag } = useMarqueeSelect({
+  const { containerRef, marquee, didDragRef, onMouseDown, onMouseMove, endDrag } = useMarqueeSelect({
     onSelect: ids => setSelected(new Set(ids))
   })
 
-  // 点行任意位置切换选中（勾选框/链接/按钮不触发行切换）
+  // 点行任意位置切换选中（勾选框/链接/按钮不触发行切换；拖拽框选后的 click 不切换）
   function handleRowClick(a: AuthorRow, e: React.MouseEvent): void {
+    if (didDragRef.current) return
     if ((e.target as HTMLElement).closest('button, a, input')) return
     toggle(a.id)
   }
 
-  // 点容器内空白区域（非行、非交互元素）→ 清空全部选择
+  // 点容器内空白区域（非行、非交互元素）→ 清空全部选择；
+  // 跨行拖拽松手后 click 在公共祖先（tbody）派发并冒泡到这里，需用 didDragRef 跳过
   function handleContainerClick(e: React.MouseEvent): void {
+    if (didDragRef.current) return
     const t = e.target as HTMLElement
     if (t.closest('tr, button, a, input')) return
     setSelected(new Set())

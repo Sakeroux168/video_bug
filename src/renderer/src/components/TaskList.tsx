@@ -360,7 +360,6 @@ export default function TaskList({ notify }: { notify: (text: string) => void })
                           <div className="py-3 text-center text-zinc-400">（暂无视频）</div>
                         ) : d ? (
                           <TaskVideoTable
-                            taskId={t.id}
                             d={d}
                             sort={sortState[t.id]}
                             selected={selected}
@@ -393,10 +392,9 @@ export default function TaskList({ notify }: { notify: (text: string) => void })
  * 跨页选择语义由父组件 selected 集合承载（批量操作按完整 selected 过滤）。
  */
 function TaskVideoTable({
-  taskId, d, sort, selected, onToggleVideo, onTogglePage, onSort, onPageChange,
+  d, sort, selected, onToggleVideo, onTogglePage, onSort, onPageChange,
   onReplaceSelect, onClearSelection, notify, refresh
 }: {
-  taskId: number
   d: Derived
   sort: { key: SortKey; dir: 1 | -1 } | undefined
   selected: Set<number>
@@ -409,16 +407,19 @@ function TaskVideoTable({
   notify: (text: string) => void
   refresh: () => void
 }): React.ReactElement {
-  const { containerRef, marquee, onMouseDown, onMouseMove, endDrag } = useMarqueeSelect({ onSelect: onReplaceSelect })
+  const { containerRef, marquee, didDragRef, onMouseDown, onMouseMove, endDrag } = useMarqueeSelect({ onSelect: onReplaceSelect })
 
-  // 点容器内空白区域（非行、非交互元素）→ 清空全部选择；行内点击由行自身的 onClick 处理
+  // 点容器内空白区域（非行、非交互元素）→ 清空全部选择；行内点击由行自身的 onClick 处理。
+  // 跨行拖拽松手后 click 在公共祖先（tbody）派发并冒泡到这里，需用 didDragRef 跳过。
   function handleContainerClick(e: React.MouseEvent): void {
+    if (didDragRef.current) return // 本次手势是拖拽框选，不视为点击
     const t = e.target as HTMLElement
     if (t.closest('tr, button, a, input')) return
     onClearSelection()
   }
 
   function handleRowClick(v: VideoRow, e: React.MouseEvent): void {
+    if (didDragRef.current) return // 行内小拖拽（≥5px）后的 click 不切换选中
     if ((e.target as HTMLElement).closest('button, a, input')) return // 勾选框/链接/按钮不触发行切换
     onToggleVideo(v.id)
   }
