@@ -54,7 +54,8 @@ export function registerIpc(deps: IpcDeps): void {
   ipcMain.handle('task:stats', (_e, taskId: number) => taskStats(db, taskId))
   // A1：先等 scheduler.pause()（run 完全退出）再置状态，避免渲染层立刻看到 paused 而 run 还在收尾
   ipcMain.handle('task:pause', async (_e, id: number) => { await scheduler.pause(); setTaskStatus(db, id, 'paused', 'user') })
-  ipcMain.handle('task:resume', (_e, id: number) => { void scheduler.run(id) })
+  // A1：走 scheduler.resume（内含 run 退出守卫，并发 resume 不会被 running 挡回静默丢弃）
+  ipcMain.handle('task:resume', (_e, id: number) => { void scheduler.resume(id) })
   ipcMain.handle('task:delete', (_e, id: number) => { db.prepare('DELETE FROM videos WHERE task_id=?').run(id); db.prepare('DELETE FROM tasks WHERE id=?').run(id) })
 
   ipcMain.handle('video:retry', (_e, ids: number[]) => {
