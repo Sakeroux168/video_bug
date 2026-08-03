@@ -236,8 +236,17 @@ export class Scheduler {
     }
     this.emptyRounds = 0
 
-    for (const item of kept) {
+    // A2 硬截断：按当前 fetched 算还差多少，只处理这一批里的前 N 条；
+    // AI 过滤掉的也计入 fetched（filtered 也算数），故 batch 已按当前 fetched 保守截断，
+    // 插入前再判一次剩余，确保 fetched 恰好到 target 不超
+    const target = filters.targetCount ?? 200
+    const remaining = target - this.fetched
+    const batch = remaining > 0 ? kept.slice(0, remaining) : []
+
+    for (const item of batch) {
       if (this.aborted) return { items: items.length, kept: kept.length }
+      // AI 过滤/入库可能已让 fetched 到顶（filtered 也计数），到顶即停不再插入
+      if (this.fetched >= target) break
       if (this.aiEnabled && this.deps.analyzer) {
         try {
           const text = `${item.title}\n作者:${item.authorNickname}\n时长:${item.durationSec}s`

@@ -305,3 +305,50 @@ describe('暂停即时打断（A1）', () => {
     expect((s as any).running).toBe(false)
   }, 10000)
 })
+
+describe('抓取硬截断到目标（A2）', () => {
+  it('target=200、fetched=195、解析10条去重后8条 → 只插5条，fetched 恰为 200，DB 不超', async () => {
+    const db = newDb()
+    const taskId = createTask(db, input)
+    // 预置 fetched_count=195（模拟已抓 195 条）
+    db.prepare('UPDATE tasks SET fetched_count=195 WHERE id=?').run(taskId)
+    // 预置 2 条同平台重复视频（进 seen，10 条去重后剩 8 条）
+    for (const n of [9, 10]) {
+      db.prepare(
+        "INSERT OR IGNORE INTO videos (platform,task_id,aweme_id,title,play_addr,duration,publish_time,stats,status,ai_verdict,fetched_at) VALUES (?,?,?,?,?,?,?,?,?,?,?)"
+      ).run('douyin', 9999, `733${String(n).padStart(16, '0')}`, '重复', 'https://cdn.test/dup.mp4', 8000,
+           new Date(1710000000 * 1000).toISOString(), '{}', 'pending', 'pass', new Date().toISOString())
+    }
+    const dl = new FakeDownloader()
+    const browser = new FakeBrowser()
+    const { s } = setup(db, dl, browser)
+    browser.blockNextLoad() // 挂起在 load：保持 taskId/adapter 就绪且任务仍在运行
+    const p = s.run(taskId)
+    await new Promise(r => setTimeout(r, 10))
+
+    const manyRawJson = {
+      aweme_list: Array.from({ length: 10 }, (_, i) => ({
+        aweme_id: `733${String(i + 1).padStart(16, '0')}`,
+        desc: `测试视频标题${i + 1}`,
+        create_time: 1710000000,
+        author: { sec_uid: `SEC_00${i + 1}`, nickname: `作者${i + 1}` },
+        video: { play_addr: { url_list: [`https://cdn.test/v${i + 1}.mp4`] } },
+        statistics: { digg_count: 42 },
+        duration: 8000
+      }))
+    }
+    const r = await s.handleRaw(douyinAdapter, rawUrl, manyRawJson)
+    expect(r).toEqual({ items: 10, kept: 8 })
+
+    expect((s as any).fetched).toBe(200) // 恰好到 target，不超
+    expect(db.prepare('SELECT fetched_count FROM tasks WHERE id=?').get(taskId)).toEqual({ fetched_count: 200 })
+    const rows = db.prepare('SELECT aweme_id FROM videos WHERE task_id=? ORDER BY aweme_id').all(taskId) as Array<{ aweme_id: string }>
+    expect(rows.map(x => x.aweme_id)).toEqual([
+      '7330000000000000001', '7330000000000000002', '7330000000000000003',
+      '7330000000000000004', '7330000000000000005'
+    ]) // 只插前 5 条，第 6 条起被截断
+
+    browser.releaseLoad()
+    await p
+  }, 10000)
+})
