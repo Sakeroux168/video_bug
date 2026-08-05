@@ -152,6 +152,10 @@ export class Scheduler {
 
       db.prepare("UPDATE tasks SET status='running', error=NULL WHERE id=?").run(taskId)
 
+      // R11-2：任务一启动立即发首个进度事件（UI 马上显示"进行中"；否则排队任务要等第一轮
+      // 抓到数据才从"等待"变"进行中"，用户看到长时间无反应）
+      this.deps.emit({ type: 'task:progress', taskId, fetched: this.fetched, status: 'running' })
+
       const url = task.type === 'author'
         ? adapter.buildAuthorUrl(task.query)
         : task.type === 'hashtag'
@@ -180,6 +184,9 @@ export class Scheduler {
         // 暂停即时：pause 可能落在 scrollToBottom 内（abortWait 为 null，收尾 sleep 无人唤醒）——
         // 滚动被 abortScroll 中断返回后立即检查 aborted，跳过收尾 sleep 直接进 finally（~1 秒内进暂停态）
         if (this.aborted) break
+        // R11-2：爬满即停——handleRaw 已通过 abortScroll 中断在途滚动，返回后立即收尾，
+        // 不再经过收尾 sleep 白等一轮（此前整轮滚动+收尾 sleep 后才检查 reached，完成要拖 ~15-20s）
+        if (this.fetched >= target) { stopReason = 'reached'; break }
         // 放慢节奏：滚动后多等一拍让当页结果加载完再进下一轮（默认约1.5s，随每页等待时长缩放；测试环境按间隔缩放保持快速）
         await this.sleep(Math.min(1500, this.scrollWaitMs / 4, this.deps.scrollIntervalMs * 2))
         // 按轮次计静默：本轮收到 raw 则重置，否则累加；与空解析轮合并判断停止
@@ -425,6 +432,9 @@ export class Scheduler {
         }
       }
     }
+    // R11-2：爬满 → 中断在途滚动（复用暂停信号：滚动脚本下个检查点即退，~450ms 内停；
+    // 滚动未在跑时 send 无害——下次脚本开头会清标志），循环轮末立即进 reached，不再白等整轮
+    if (this.fetched >= target) this.deps.browser.abortScroll?.()
     db.prepare('UPDATE tasks SET fetched_count=? WHERE id=?').run(this.fetched, this.taskId)
     // R11：progress 事件带重搜次数（渲染层展示「已自动重搜 N 次」）
     this.deps.emit({ type: 'task:progress', taskId: this.taskId, fetched: this.fetched, status: 'running', reSearchCount: this.reSearchCount })

@@ -917,3 +917,59 @@ describe('停滞自救循环（R11）', () => {
     expect(db.prepare('SELECT status, error FROM tasks WHERE id=?').get(taskId)).toEqual({ status: 'paused', error: 'stalled' })
   }, 10000)
 })
+
+describe('爬满即停与启动即时进度（R11-2）', () => {
+  it('handleRaw 填满 target → abortScroll 被调（中断在途滚动，不再等整轮结束）', async () => {
+    const db = newDb()
+    const taskId = createTask(db, input)
+    db.prepare('UPDATE tasks SET fetched_count=199 WHERE id=?').run(taskId) // 差 1 条填满
+    const browser = new FakeBrowser()
+    const dl = new FakeDownloader()
+    const { s } = setup(db, dl, browser)
+    browser.blockNextLoad()
+    const p = s.run(taskId)
+    await new Promise(r => setTimeout(r, 10))
+
+    await s.handleRaw(douyinAdapter, rawUrl, rawJson) // 199→200 填满
+    expect(browser.abortScroll).toHaveBeenCalledTimes(1)
+
+    browser.releaseLoad()
+    await p
+    expect(db.prepare('SELECT status FROM tasks WHERE id=?').get(taskId)).toEqual({ status: 'done' })
+  }, 10000)
+
+  it('滚动中爬满 → 滚动返回后立即 done（reached 检查在收尾 sleep 前，不等 1000ms）', async () => {
+    const db = newDb()
+    const taskId = createTask(db, input)
+    db.prepare('UPDATE tasks SET fetched_count=199 WHERE id=?').run(taskId)
+    const browser = new FakeBrowser()
+    const dl = new FakeDownloader()
+    const { s } = setup(db, dl, browser, 500) // 收尾 sleep = min(1500, 8000/4, 1000) = 1000ms
+    browser.blockNextScroll()
+    const p = s.run(taskId)
+    for (let i = 0; i < 200 && !browser.scrollEntered; i++) await new Promise(r => setTimeout(r, 10))
+    expect(browser.scrollEntered).toBe(true) // run 已进入 scrollToBottom
+
+    await s.handleRaw(douyinAdapter, rawUrl, rawJson) // 199→200 填满（滚动进行中）
+    expect(browser.abortScroll).toHaveBeenCalledTimes(1)
+
+    const t0 = Date.now()
+    browser.releaseScroll()
+    await p
+    expect(Date.now() - t0).toBeLessThan(500) // 未经 1000ms 收尾 sleep，立即进 reached
+    expect(db.prepare('SELECT status FROM tasks WHERE id=?').get(taskId)).toEqual({ status: 'done' })
+  }, 10000)
+
+  it('run 启动立即发首个 progress 事件（任务一运行 UI 即显示"进行中"，不用等第一轮数据）', async () => {
+    const db = newDb()
+    const taskId = createTask(db, input)
+    const browser = new FakeBrowser()
+    browser.blockNextLoad() // 挂起在 load：首轮数据还没到，进度事件应已发出
+    const { s, events } = setup(db, new FakeDownloader(), browser)
+    const p = s.run(taskId)
+    await new Promise(r => setTimeout(r, 10))
+    expect(events[0]).toEqual({ type: 'task:progress', taskId, fetched: 0, status: 'running' })
+    browser.releaseLoad()
+    await p
+  }, 10000)
+})
