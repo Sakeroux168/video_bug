@@ -271,3 +271,63 @@ describe('resolveSelector 候选解析（依次尝试、命中即返回）', () 
     expect((r.el as Element).className).toBe('bR4uhU1W')
   })
 })
+
+describe('resolveSelector 可见性校验（防隐藏面板假命中）', () => {
+  function dom() {
+    const doc = {
+      querySelector: (sel: string): unknown => document.querySelector(sel),
+      querySelectorAll: (sel: string): unknown[] => Array.from(document.querySelectorAll(sel))
+    }
+    const textOf = (el: unknown): string => ((el as Element).textContent ?? '').trim()
+    return { doc, textOf }
+  }
+
+  // mock 布局：隐藏元素返回 0 宽高（display:none/visibility:hidden 时真实 rect 即全 0），可见元素返回非零
+  const rectOf = (hidden: Set<Element>) => (el: unknown): { width: number; height: number } => {
+    const e = el as Element
+    return hidden.has(e) ? { width: 0, height: 0 } : { width: 100, height: 40 }
+  }
+
+  it('css 候选命中隐藏元素时跳过，回退到可见的文字候选', () => {
+    document.body.innerHTML = '<span class="bR4uhU1W" style="display:none">筛选</span><span>筛选</span>'
+    const hidden = new Set<Element>([document.querySelector('.bR4uhU1W') as Element])
+    const { doc, textOf } = dom()
+    const r = resolveSelector(FILTER_SELECTORS.button, doc, textOf, null, rectOf(hidden))
+    expect(r.index).toBe(1) // 候选1 命中但不可见 → 跳过，候选2 文字命中
+    expect(r.el).not.toBeNull()
+  })
+
+  it('隐藏面板（display:none）contains 候选不命中，返回 el=null 且 index 记录被跳过的候选', () => {
+    document.body.innerHTML =
+      '<div id="panel" style="display:none"><span>排序依据</span><span>视频时长</span></div>'
+    const hidden = new Set<Element>([document.getElementById('panel') as Element])
+    const { doc, textOf } = dom()
+    const r = resolveSelector(FILTER_SELECTORS.panel, doc, textOf, null, rectOf(hidden))
+    expect(r.el).toBeNull()
+    expect(r.index).toBe(1) // contains 候选命中但不可见（供打点区分「完全未命中」与「隐藏假命中」）
+  })
+
+  it('全部候选命中但不可见 → el=null，index 为最后一个被跳过的候选', () => {
+    document.body.innerHTML = '<span class="bR4uhU1W">筛选</span>'
+    const hidden = new Set<Element>([document.querySelector('.bR4uhU1W') as Element])
+    const { doc, textOf } = dom()
+    const r = resolveSelector(FILTER_SELECTORS.button, doc, textOf, null, rectOf(hidden))
+    expect(r.el).toBeNull()
+    expect(r.index).toBe(1) // 文字候选命中同一个隐藏元素 → 也被跳过
+  })
+
+  it('可见面板正常命中（rect 宽高非零）', () => {
+    document.body.innerHTML = '<div id="panel"><span>排序依据</span><span>视频时长</span></div>'
+    const { doc, textOf } = dom()
+    const r = resolveSelector(FILTER_SELECTORS.panel, doc, textOf, null, rectOf(new Set()))
+    expect(r.index).toBe(1)
+    expect((r.el as Element).id).toBe('panel')
+  })
+
+  it('不传 rectOf 时行为不变（兼容旧调用，无可见性过滤）', () => {
+    document.body.innerHTML = '<span class="bR4uhU1W">筛选</span>'
+    const { doc, textOf } = dom()
+    const r = resolveSelector(FILTER_SELECTORS.button, doc, textOf, null)
+    expect(r.index).toBe(0)
+  })
+})

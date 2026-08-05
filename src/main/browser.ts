@@ -331,24 +331,29 @@ export class VideoBrowser {
    *  scrollFirst：先 scrollIntoView 居中再取坐标（仅按钮用——触发场景恰是"搜索到底"（页面停在底部），
    *  筛选栏非 sticky 时按钮在视口外，CDP 真实鼠标打到视口外坐标悬停不到；sticky 场景是 no-op 无害。
    *  选项不滚动：面板已悬停弹出，滚动页面会把按钮移出鼠标位置导致面板收起）。
-   *  页面脚本里的 find 即 resolveSelector 的 toString 嵌入（与单测同一份逻辑），依次尝试并返回命中候选下标。
-   *  返回：ok=true 带中心坐标/命中下标；ok=false 时 scopeFound 区分容器未命中/目标未命中（打点用）。 */
+   *  页面脚本里的 find 即 resolveSelector 的 toString 嵌入（与单测同一份逻辑），并注入 rectOf 做可见性校验：
+   *  CSS :hover 驱动的筛选面板大概率常驻 DOM 但隐藏（display:none/visibility:hidden，rect 宽高为 0），
+   *  命中但不可见视为未命中，防止轮询假命中 → 坐标全 0 → realClick 打到 (0,0) 的静默假成功。
+   *  返回：ok=true 带中心坐标/命中下标；ok=false 时 scopeFound 区分容器未命中/目标未命中，
+   *  hitIndex >= 0 = 目标候选「命中但不可见」（打点用），-1 = 完全未命中。 */
   private async locateElement(
     wc: WebContents,
     cands: readonly FilterCandidate[],
     opts: { scopeCands?: readonly FilterCandidate[]; scrollFirst?: boolean } = {}
-  ): Promise<{ ok: true; x: number; y: number; index: number } | { ok: false; scopeFound: boolean }> {
+  ): Promise<{ ok: true; x: number; y: number; index: number } | { ok: false; scopeFound: boolean; hitIndex: number }> {
     // scope 先找面板再在其内找目标；scope 未命中即返回（打点区分「面板未找到」与「选项候选未命中」）
     const scopePart = opts.scopeCands
-      ? `const sc = find(${JSON.stringify(opts.scopeCands)}, document, textOf, null); if (!sc.el) return { found: false, scopeFound: false };`
+      ? `const sc = find(${JSON.stringify(opts.scopeCands)}, document, textOf, null, rectOf); if (!sc.el) return { found: false, scopeFound: false, hitIndex: -1 };`
       : 'const sc = null;'
     const scrollPart = opts.scrollFirst ? "el.scrollIntoView({ block: 'center' });" : ''
     const script = `(() => {
       const find = ${resolveSelector.toString()};
       const textOf = el => (el.textContent || '').trim();
+      // 可见性校验：display:none/visibility:hidden 的常驻 DOM 元素 rect 宽高为 0，视为未命中
+      const rectOf = el => { const r = el.getBoundingClientRect(); return { width: r.width, height: r.height }; };
       ${scopePart}
-      const r = find(${JSON.stringify(cands)}, document, textOf, sc);
-      if (!r.el) return { found: false, scopeFound: true };
+      const r = find(${JSON.stringify(cands)}, document, textOf, sc, rectOf);
+      if (!r.el) return { found: false, scopeFound: true, hitIndex: r.index };
       const el = r.el;
       ${scrollPart}
       const c = el.getBoundingClientRect();
@@ -356,16 +361,25 @@ export class VideoBrowser {
     })()`
     const r = (await wc.executeJavaScript(script).catch(() => null)) as
       | { found: true; x: number; y: number; index: number }
-      | { found: false; scopeFound: boolean }
+      | { found: false; scopeFound: boolean; hitIndex: number }
       | null
-    if (!r) return { ok: false, scopeFound: false }
-    if (!r.found) return { ok: false, scopeFound: r.scopeFound }
+    if (!r) return { ok: false, scopeFound: false, hitIndex: -1 }
+    if (!r.found) return { ok: false, scopeFound: r.scopeFound, hitIndex: r.hitIndex }
     return { ok: true, x: r.x, y: r.y, index: r.index }
   }
 
   /** 候选依次尝试打点：候选1 css("span.bR4uhU1W")未命中 → 候选2 文字"筛选"命中；hitIndex=-1 表示全部未命中 */
   private candidateHitText(cands: readonly FilterCandidate[], hitIndex: number): string {
     return cands.map((c, i) => `候选${i + 1} ${describeCandidate(c)}${i === hitIndex ? '命中' : '未命中'}`).join(' → ')
+  }
+
+  /** 定位失败打点：hitIndex>=0 = 候选命中但不可见（rect 宽高 0，疑似 display:none 的常驻隐藏元素）；
+   *  否则候选均未命中 */
+  private failHitText(cands: readonly FilterCandidate[], hitIndex: number): string {
+    if (hitIndex >= 0) {
+      return `候选${hitIndex + 1} 命中但不可见（rect 宽高为 0，疑似 display:none/visibility:hidden 的常驻 DOM 元素）`
+    }
+    return this.candidateHitText(cands, -1)
   }
 
   /** CDP 真实鼠标流程（attach 已成功）：取按钮中心 → mouseMoved 悬停 → 轮询面板出现 → 逐选项真实点击 → 等刷新。
@@ -388,24 +402,36 @@ export class VideoBrowser {
     }
     // 悬停筛选按钮（候选依次尝试 + scrollIntoView 防"搜索到底"时按钮在视口外）→ 轮询面板出现（250ms×20 = 5s，面板只认真实 hover）
     const btn = await this.locateElement(wc, sel.button, { scrollFirst: true })
-    if (!btn.ok) { log(`筛选按钮未找到（${this.candidateHitText(sel.button, -1)}）`); return false }
+    if (!btn.ok) { log(`筛选按钮未找到（${this.failHitText(sel.button, btn.hitIndex)}）`); return false }
     log(`筛选按钮 ${this.candidateHitText(sel.button, btn.index)}；中心坐标 x=${Math.round(btn.x)} y=${Math.round(btn.y)}（已 scrollIntoView 居中）`)
     await d.sendCommand('Input.dispatchMouseEvent', { type: 'mouseMoved', x: btn.x, y: btn.y })
     log(`已发送真实鼠标悬停 mouseMoved（${Math.round(btn.x)}, ${Math.round(btn.y)}）`)
+    // 面板轮询 = 等到真正可见：候选命中但不可见（常驻 DOM 隐藏）不视为出现，继续等；
+    // 首次出现隐藏命中打一条（防每轮刷屏），供真机诊断 CSS :hover 是否触发
     let panelIndex = -1
+    let panelHidden = false
     for (let i = 0; i < 20; i++) {
       await sleep(250)
       const p = await this.locateElement(wc, sel.panel)
       if (p.ok) { panelIndex = p.index; log(`筛选面板出现（第 ${i + 1} 次轮询命中，约 ${(i + 1) * 250}ms，${this.candidateHitText(sel.panel, p.index)}）`); break }
+      if (p.hitIndex >= 0) {
+        if (!panelHidden) log(`筛选面板候选命中但不可见（rect 宽高为 0，疑似常驻 DOM 但隐藏，CSS :hover 未触发），继续等待...`)
+        panelHidden = true
+      }
     }
-    if (panelIndex < 0) { log(`筛选面板 5s 内未出现（CSS :hover 未触发或候选均未命中：${this.candidateHitText(sel.panel, -1)}）`); return false }
+    if (panelIndex < 0) {
+      log(panelHidden
+        ? '筛选面板 5s 内未出现（候选一直命中但不可见，疑似面板常驻 DOM 但隐藏，CSS :hover 未触发）'
+        : `筛选面板 5s 内未出现（CSS :hover 未触发或候选均未命中：${this.candidateHitText(sel.panel, -1)}）`)
+      return false
+    }
     // 面板布局落定一拍再点首选项（渲染/定位未稳时取到的 rect 可能过期）
     await sleep(100)
     // 逐组选项（index>0）：面板内候选查找 → 悬停 + 按下/松开即真实点击，找不到直接失败
     for (const op of options) {
       const pos = await this.locateElement(wc, op.cands, { scopeCands: sel.panel })
       if (!pos.ok) {
-        log(`选项 ${op.label} 未找到（${pos.scopeFound ? `候选均未命中：${this.candidateHitText(op.cands, -1)}` : '面板未找到，无法限定范围查找'}）`)
+        log(`选项 ${op.label} 未找到（${pos.scopeFound ? this.failHitText(op.cands, pos.hitIndex) : '面板未找到，无法限定范围查找'}）`)
         return false
       }
       log(`点击选项 ${op.label} ${this.candidateHitText(op.cands, pos.index)} @ (${Math.round(pos.x)}, ${Math.round(pos.y)})`)
@@ -432,8 +458,10 @@ export class VideoBrowser {
       const sleep = ms => new Promise(r => setTimeout(r, ms));
       const find = ${resolveSelector.toString()};
       const textOf = el => (el.textContent || '').trim();
+      // 可见性校验：display:none/visibility:hidden 的常驻 DOM 元素 rect 宽高为 0，视为未命中（防隐藏面板假命中）
+      const rectOf = el => { const r = el.getBoundingClientRect(); return { width: r.width, height: r.height }; };
       // 按钮：候选依次尝试（哈希类过期时文字"筛选"兜底）
-      const buttonR = find(${JSON.stringify(sel.button)}, document, textOf, null);
+      const buttonR = find(${JSON.stringify(sel.button)}, document, textOf, null, rectOf);
       if (!buttonR.el) return { ok: false, buttonFound: false, panelShown: false, missing: [], buttonIndex: -1, panelIndex: -1 };
       // hover 弹出：事件坐标取元素中心，模拟真实鼠标悬停（部分面板由 mouseover/enter/move 触发）
       const c = buttonR.el.getBoundingClientRect();
@@ -441,10 +469,10 @@ export class VideoBrowser {
       buttonR.el.dispatchEvent(new MouseEvent('mouseover', evt));
       buttonR.el.dispatchEvent(new MouseEvent('mouseenter', evt));
       buttonR.el.dispatchEvent(new MouseEvent('mousemove', evt));
-      // 等筛选面板出现（最多 3s），面板同样候选依次尝试
+      // 等筛选面板真正出现（最多 3s），面板同样候选依次尝试 + 可见性校验（隐藏面板不算出现）
       const waitPanel = async () => {
         for (let i = 0; i < 20; i++) {
-          const p = find(${JSON.stringify(sel.panel)}, document, textOf, null);
+          const p = find(${JSON.stringify(sel.panel)}, document, textOf, null, rectOf);
           if (p.el) return p;
           await sleep(150);
         }
@@ -459,7 +487,7 @@ export class VideoBrowser {
       const opts = ${JSON.stringify(options.map(o => o.cands))};
       // 逐选项：面板内候选查找（文字兜底限定面板内），命中 click
       for (let i = 0; i < opts.length; i++) {
-        const r = find(opts[i], document, textOf, panelR.el);
+        const r = find(opts[i], document, textOf, panelR.el, rectOf);
         if (r.el) { r.el.click(); } else { missing.push(i); ok = false; }
       }
       // 等筛选条件生效、fetch 触发页面刷新（约 2.5s）

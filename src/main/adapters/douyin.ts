@@ -57,30 +57,51 @@ export const FILTER_SELECTORS = {
   }
 }
 
+/** 元素矩形（可见性校验用）：display:none/visibility:hidden 的常驻 DOM 元素宽高为 0 */
+export interface RectLike {
+  width: number
+  height: number
+}
+
 /** 依次尝试候选，返回首个命中 { el, index }（全部未命中 el=null、index=-1）。
  *  纯函数、无 DOM 依赖：doc/textOf/scope 由调用方注入——浏览器侧经 resolveSelector.toString()
  *  嵌入页面脚本（doc=document、scope=已找到的面板元素，文字选项限定面板内查找），单测传 jsdom document。
  *  必须自包含：函数体内不得引用模块级常量（页面脚本无法解析外部作用域），标签列表内联。
  *  text 精确匹配（textOf 返回 trim 后文本，元素带子元素时取整体文本）；
  *  contains 在容器里选「命中关键词最多、文本最短」者——面板场景取包含关键词的最小公共容器，
- *  避免误命中过小的标签容器或整页容器 */
+ *  避免误命中过小的标签容器或整页容器。
+ *  rectOf（可选）：注入元素矩形读取器（页面侧传 getBoundingClientRect 的宽高）做可见性校验——
+ *  命中但宽高为 0（display:none/visibility:hidden，如 CSS :hover 驱动的常驻隐藏面板）视为未命中，
+ *  继续尝试下一候选；全部候选命中但不可见时 el=null、index=最后一个被跳过的候选下标（-1 = 完全未命中），
+ *  供打点区分「完全未命中」与「隐藏假命中」。不传 rectOf 时不做可见性过滤（兼容旧调用）。 */
 export function resolveSelector(
   candidates: readonly FilterCandidate[],
   doc: { querySelector(sel: string): unknown; querySelectorAll(sel: string): unknown[] },
   textOf: (el: unknown) => string,
-  scope: unknown
+  scope: unknown,
+  rectOf?: (el: unknown) => RectLike | null
 ): { el: unknown | null; index: number } {
   const root: { querySelector(sel: string): unknown; querySelectorAll(sel: string): unknown[] } =
     (scope as { querySelector(sel: string): unknown; querySelectorAll(sel: string): unknown[] } | null) ?? doc
+  // 最后一个「命中但不可见」的候选下标（打点区分「完全未命中」与「隐藏面板假命中」）；-1 = 无
+  let hiddenIndex = -1
+  // 可见性校验通过才返回：无 rectOf 直接放行；宽高 0 记 hiddenIndex 并跳过
+  const accept = (el: unknown, i: number): { el: unknown; index: number } | null => {
+    if (!rectOf) return { el, index: i }
+    const r = rectOf(el)
+    if (r && r.width > 0 && r.height > 0) return { el, index: i }
+    hiddenIndex = i
+    return null
+  }
   for (let i = 0; i < candidates.length; i++) {
     const c = candidates[i]
     if (c.type === 'css') {
       let el: unknown = null
       try { el = root.querySelector(c.sel) } catch { /* 非法选择器忽略，走下一候选 */ }
-      if (el) return { el, index: i }
+      if (el) { const hit = accept(el, i); if (hit) return hit }
     } else if (c.type === 'text') {
       for (const el of root.querySelectorAll('span,button,div,a')) {
-        if (textOf(el) === c.text) return { el, index: i }
+        if (textOf(el) === c.text) { const hit = accept(el, i); if (hit) return hit }
       }
     } else {
       let best: unknown = null
@@ -95,10 +116,10 @@ export function resolveSelector(
           bestLen = t.length
         }
       }
-      if (best) return { el: best, index: i }
+      if (best) { const hit = accept(best, i); if (hit) return hit }
     }
   }
-  return { el: null, index: -1 }
+  return { el: null, index: hiddenIndex }
 }
 
 /** 是否"长得像"一条抖音视频对象（新版卡片有 aweme_info 包装；老版直接带 aweme_id+video/desc/author） */
