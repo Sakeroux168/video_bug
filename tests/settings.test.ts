@@ -32,6 +32,7 @@ function fullSettings(over: Partial<AppSettings> = {}): AppSettings {
     allowDuplicateAuthor: true,
     organizeDebounceMs: 1000,
     asrMaxSec: 120,
+    stallThresholdSec: 10,
     ...over
   }
 }
@@ -49,6 +50,7 @@ describe('settings', () => {
     expect(s.allowDuplicateAuthor).toBe(false)
     expect(s.organizeDebounceMs).toBe(5000)
     expect(s.asrMaxSec).toBe(90)
+    expect(s.stallThresholdSec).toBe(5)
   })
 
   it('部分字段已保存 → 读回合并默认值（不丢失未存字段）', () => {

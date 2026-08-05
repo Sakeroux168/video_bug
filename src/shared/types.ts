@@ -98,6 +98,8 @@ export interface AppSettings {
   organizeDebounceMs: number
   /** ASR 转写只取视频前 N 秒（Task14 设置接入；默认 90） */
   asrMaxSec: number
+  /** R11：停滞判定阈值秒数（默认 5；Date.now()-lastFetchedAt > 秒数*1000 即判爬不动，进入自救循环） */
+  stallThresholdSec: number
 }
 
 /** ASR 单个模型文件的状态（models.status() 的结果形状，跨进程用） */

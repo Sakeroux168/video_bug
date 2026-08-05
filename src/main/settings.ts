@@ -15,7 +15,8 @@ const DEFAULTS: AppSettings = {
   addressTtlMin: 30,
   allowDuplicateAuthor: false,
   organizeDebounceMs: 5000,
-  asrMaxSec: 90
+  asrMaxSec: 90,
+  stallThresholdSec: 5
 }
 
 export function settingsFile(): string {
