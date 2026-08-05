@@ -51,6 +51,9 @@ function freshApi(): Api {
     locateVideo: vi.fn(async () => {}),
     openBrowserDevtools: vi.fn(async () => {}),
     getRawLog: vi.fn(async () => []),
+    getFilesTree: vi.fn(async () => ({ categories: [] })),
+    deleteFileCategory: vi.fn(async () => ({ ok: true, deleted: 0, filesRemoved: true })),
+    deleteFileAuthor: vi.fn(async () => ({ ok: true, deleted: 0, filesRemoved: true })),
     onTaskProgress: vi.fn(() => () => {}),
     onTaskNotice: vi.fn(() => () => {})
   }

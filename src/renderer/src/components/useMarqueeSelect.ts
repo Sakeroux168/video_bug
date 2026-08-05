@@ -14,7 +14,11 @@ export interface Rect { x: number; y: number; w: number; h: number }
  *   （tbody）派发 click，冒泡到容器被误判为"点空白"；拖拽手势的 click 应跳过该处理，
  *   因此 mousedown 时重置、有效拖拽后置 true，组件在 onClick 处理里读它。
  */
-export function useMarqueeSelect(options: { onSelect: (ids: number[]) => void }): {
+export function useMarqueeSelect<T extends number | string = number>(options: {
+  onSelect: (ids: T[]) => void
+  /** 行 data-id 存字符串（文件管理里的品类/作者名）时为 true；默认按数字解析 */
+  stringIds?: boolean
+}): {
   containerRef: React.RefObject<HTMLDivElement>
   marquee: Rect | null
   didDragRef: React.MutableRefObject<boolean>
@@ -23,6 +27,7 @@ export function useMarqueeSelect(options: { onSelect: (ids: number[]) => void })
   endDrag: () => void
 } {
   const { onSelect } = options
+  const stringIds = options.stringIds ?? false
   const containerRef = useRef<HTMLDivElement>(null)
   const [marquee, setMarquee] = useState<Rect | null>(null)
   const dragStart = useRef<{ x: number; y: number } | null>(null)
@@ -68,12 +73,12 @@ export function useMarqueeSelect(options: { onSelect: (ids: number[]) => void })
     const v = toViewport(marquee)
     const mr = { left: v.x, top: v.y, right: v.x + v.w, bottom: v.y + v.h }
     const rows = containerRef.current?.querySelectorAll('tbody tr') ?? []
-    const ids: number[] = []
+    const ids: T[] = []
     rows.forEach(tr => {
       const r = tr.getBoundingClientRect()
       if (r.left < mr.right && r.right > mr.left && r.top < mr.bottom && r.bottom > mr.top) {
         const raw = tr.getAttribute('data-id')
-        if (raw !== null && raw !== '') ids.push(Number(raw))
+        if (raw !== null && raw !== '') ids.push((stringIds ? raw : Number(raw)) as T)
       }
     })
     onSelect(ids)

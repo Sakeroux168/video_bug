@@ -3,6 +3,7 @@ import { Tabs } from './components/ui'
 import FilterForm from './components/FilterForm'
 import TaskList from './components/TaskList'
 import AuthorCollection from './components/AuthorCollection'
+import FileManager from './components/FileManager'
 import BrowserPanel from './components/BrowserPanel'
 import SettingsPanel from './components/SettingsPanel'
 import { api } from './api'
@@ -66,7 +67,7 @@ export default function App(): JSX.Element {
           if (k === 'browser') void api.showBrowser()
           else void api.hideBrowser()
         }}
-        tabs={[{ key: 'tasks', label: '任务' }, { key: 'authors', label: '作者收藏' }, { key: 'browser', label: '内置浏览器' }, { key: 'settings', label: '设置' }]}
+        tabs={[{ key: 'tasks', label: '任务' }, { key: 'authors', label: '作者收藏' }, { key: 'files', label: '文件管理' }, { key: 'browser', label: '内置浏览器' }, { key: 'settings', label: '设置' }]}
       />
       {showLog && (
         <div className="border-b border-zinc-200 bg-zinc-50 p-3">
@@ -99,6 +100,7 @@ export default function App(): JSX.Element {
           <TaskList notify={notify} />
         </div>
         {tab === 'authors' && <AuthorCollection notify={notify} />}
+        {tab === 'files' && <FileManager notify={notify} />}
         {tab === 'browser' && <BrowserPanel />}
         {tab === 'settings' && <SettingsPanel />}
       </main>

@@ -187,6 +187,20 @@ export function deleteVideos(db: DatabaseSync, ids: number[]): { deleted: number
   return { deleted: Number(info.changes) }
 }
 
+/** LIKE 通配符转义：\ % _ 一律字面匹配（配合 ESCAPE '\'），防止前缀里带通配符的路径误删其它行 */
+function escapeLike(s: string): string {
+  return s.replace(/[\\%_]/g, (m) => `\\${m}`)
+}
+
+/** 按本地路径前缀删除视频行（文件管理删品类/作者联动），返回删除条数与受影响作者 id */
+export function deleteVideosByPathPrefix(db: DatabaseSync, prefix: string): { deleted: number; authorIds: number[] } {
+  const like = `${escapeLike(prefix)}%`
+  const rows = db.prepare(`SELECT author_id FROM videos WHERE local_path LIKE ? ESCAPE '\\'`)
+    .all(like) as unknown as Array<{ author_id: number | null }>
+  const info = db.prepare(`DELETE FROM videos WHERE local_path LIKE ? ESCAPE '\\'`).run(like)
+  return { deleted: Number(info.changes), authorIds: rows.map(r => r.author_id).filter((x): x is number => x != null) }
+}
+
 /** 按作者 id 重算 video_count（= 剩余视频数；Task 3 删除视频后计数联动） */
 export function recomputeAuthorCounts(db: DatabaseSync, authorIds: number[]): void {
   const unique = [...new Set(authorIds)].filter((x): x is number => typeof x === 'number')

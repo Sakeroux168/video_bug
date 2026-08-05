@@ -3,6 +3,7 @@ import type { DatabaseSync } from 'node:sqlite'
 import { createTask, listTasks, listVideos, listAuthors, setTaskStatus, setVideoStatus, updateAuthorCategory, deleteAuthors, taskStats } from './db'
 import { getSettings, saveSettings } from './settings'
 import { deleteVideoRows } from './videoDelete'
+import { scanFilesTree, deleteFileCategory, deleteFileAuthor } from './fileManager'
 import { listAdapters } from './adapters'
 import type { Scheduler } from './scheduler'
 import type { Downloader } from './downloader'
@@ -144,6 +145,16 @@ export function registerIpc(deps: IpcDeps): void {
   ipcMain.handle('browser:show', () => deps.setBrowserVisible(true))
   ipcMain.handle('browser:hide', () => deps.setBrowserVisible(false))
   ipcMain.handle('browser:devtools', () => browser.openDevTools())
+
+  // Task4：文件管理——扫描下载目录（品类/作者/视频）+ 递归删除品类/作者（路径防护 + DB 前缀联动）
+  // downloadDir 每次取最新（设置可能已热更），扫描纯函数在主进程 fileManager.ts 中可单测
+  ipcMain.handle('files:tree', () => scanFilesTree(getSettings().downloadDir))
+  ipcMain.handle('files:deleteCategory', (_e, name: string) =>
+    deleteFileCategory({ db, downloadDir: getSettings().downloadDir }, name)
+  )
+  ipcMain.handle('files:deleteAuthor', (_e, category: string, author: string) =>
+    deleteFileAuthor({ db, downloadDir: getSettings().downloadDir }, category, author)
+  )
 
   // 选择下载目录（#1）
   ipcMain.handle('dialog:pickDir', async () => {
