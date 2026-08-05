@@ -78,6 +78,21 @@ const input: CreateTaskInput = {
 }
 
 const rawUrl = 'https://www.douyin.com/aweme/v1/web/search/item/?device_platform=webapp'
+// 稀疏数据：到底后接口仍零星返回新视频（每轮 1-2 条，kept>0 → emptyRounds 归零、停滞分支永远到不了）
+function sparseJson(i: number): unknown {
+  return {
+    aweme_list: [{
+      aweme_id: `733${String(1000 + i).padStart(16, '0')}`,
+      desc: `稀疏数据${i}`,
+      create_time: 1710000000,
+      author: { sec_uid: `SEC_SPARSE_${i}`, nickname: '稀疏作者' },
+      video: { play_addr: { url_list: [`https://cdn.test/sparse${i}.mp4`] } },
+      statistics: { digg_count: 1 },
+      duration: 8000
+    }]
+  }
+}
+
 const rawJson = {
   aweme_list: [{
     aweme_id: '7330000000000000001',
@@ -732,5 +747,58 @@ describe('抖音筛选续爬（T3）', () => {
     const all = logs.join('\n')
     expect(all).toContain('筛选流程进行中（可能是手动测试在跑）')
     expect(db.prepare('SELECT status, error FROM tasks WHERE id=?').get(taskId)).toEqual({ status: 'paused', error: null })
+  }, 10000)
+
+  it('零星数据（handleRaw kept>0 使 emptyRounds 归零）时到底文案命中 → 仍触发筛选（不再锁死在停滞分支）', async () => {
+    const db = newDb()
+    const taskId = createTask(db, filterInput)
+    const browser = new FakeBrowser() // bottomText 默认「暂时没有更多了」
+    const spy = vi.spyOn(browser, 'applyDouyinFilter').mockResolvedValue(true)
+    const { s } = setup(db, new FakeDownloader(), browser)
+    const p = s.run(taskId)
+    // 持续喂零星数据（每轮 kept>0 → emptyRounds 归零、silentRounds 归零），旧实现因停滞分支到不了而永不触发
+    let i = 0
+    for (; i < 60 && spy.mock.calls.length === 0; i++) {
+      await new Promise(r => setTimeout(r, 4))
+      await s.handleRaw(douyinAdapter, rawUrl, sparseJson(i))
+    }
+    expect(spy).toHaveBeenCalledTimes(1)
+    await s.pause()
+    await p
+  }, 10000)
+
+  it('零星数据（emptyRounds 归零）且 lastFetchedAt 停滞超 15s → 仍触发筛选（15s 判定不再锁死在停滞分支）', async () => {
+    const db = newDb()
+    const taskId = createTask(db, filterInput)
+    const browser = new FakeBrowser()
+    browser.bottomText = null // 只靠 15s 规则触发
+    const spy = vi.spyOn(browser, 'applyDouyinFilter').mockResolvedValue(true)
+    const { s } = setup(db, new FakeDownloader(), browser)
+    const p = s.run(taskId)
+    let i = 0
+    for (; i < 60 && spy.mock.calls.length === 0; i++) {
+      await new Promise(r => setTimeout(r, 4))
+      await s.handleRaw(douyinAdapter, rawUrl, sparseJson(i)) // kept>0 → emptyRounds 归零
+      ;(s as any).lastFetchedAt = Date.now() - 20000 // 接口仍返回解析数据，但保持「20 秒无新视频入库」计时
+    }
+    expect(spy).toHaveBeenCalledTimes(1)
+    await s.pause()
+    await p
+  }, 10000)
+
+  it('已应用过筛选（filterApplied=true）→ 触发检查点跳过，不再调用 applyDouyinFilter', async () => {
+    const db = newDb()
+    const taskId = createTask(db, filterInput)
+    const browser = new FakeBrowser()
+    const spy = vi.spyOn(browser, 'applyDouyinFilter').mockResolvedValue(true)
+    const { s } = setup(db, new FakeDownloader(), browser)
+    browser.blockNextLoad()
+    const p = s.run(taskId)
+    await new Promise(r => setTimeout(r, 10)) // 挂起在 load：run 已重置 filterApplied，尚未进入循环
+    ;(s as any).filterApplied = true // 模拟本任务已应用过一次筛选
+    browser.releaseLoad()
+    await p
+    expect(spy).not.toHaveBeenCalled()
+    expect(db.prepare('SELECT status, error FROM tasks WHERE id=?').get(taskId)).toEqual({ status: 'paused', error: 'stalled_verify' })
   }, 10000)
 })

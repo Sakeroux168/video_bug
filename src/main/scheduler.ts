@@ -156,6 +156,8 @@ export class Scheduler {
       const speedDefault = { slow: 8000, medium: 5000, fast: 3000 }[p.scrollSpeed] ?? 8000
       this.scrollWaitMs = p.scrollPageWaitMs > 0 ? p.scrollPageWaitMs : speedDefault
       let stopReason: 'reached' | 'stalled' | null = null
+      // T3/T4：轮次计数器——触发检查点的 findBottomText 每 2 轮查一次（roundCount % 2 === 0）
+      let roundCount = 0
       while (!this.aborted) {
         await this.sleep(this.deps.scrollIntervalMs + Math.random() * 1500)
         // A1：暂停时不跑滚动（滚动是长任务且不可中断，提前检查避免多滚一轮）
@@ -170,60 +172,69 @@ export class Scheduler {
         if (this.rawSinceLastRound) this.silentRounds = 0
         else this.silentRounds++
         this.rawSinceLastRound = false
+
+        // T3/T4：筛选触发检查点（每轮、停滞判定之前）——搜索到底或 15 秒无新视频入库即触发续爬。
+        // 旧实现把触发判断锁死在停滞分支（连续 5 轮空数据）内：到底后接口仍零星返回新数据（每轮 1-2 条）
+        // 使 emptyRounds 归零、停滞分支永远到不了 → 不自动触发。现在每轮独立检查，不再依赖停滞。
+        // findBottomText 每 2 轮查一次（每轮查一次 executeJavaScript 开销可接受，2 轮一次折中）；15s 判定每轮查。
+        roundCount++
+        const df = this.filters?.douyinFilter
+        const log = (msg: string): void => { this.deps.onFilterLog?.(msg) }
+        if (this.fetched < target && df?.enabled && this.task?.type === 'keyword' && !this.filterApplied) {
+          log(`筛选触发判定（第${roundCount}轮）：fetched=${this.fetched} target=${target} 空轮=${this.emptyRounds} 静默轮=${this.silentRounds}（findBottomText 每 2 轮查一次）`)
+          let bottomText: string | null = null
+          if (roundCount % 2 === 0) {
+            bottomText = await this.deps.browser.findBottomText().catch(() => null)
+            log(bottomText !== null ? `到底文案命中：「${bottomText}」` : '未找到到底文案（findBottomText 返回 null）')
+          }
+          const elapsed = Date.now() - this.lastFetchedAt
+          const noNewFor15s = elapsed > 15000
+          log(`距上次有新视频入库 ${elapsed}ms（阈值 15000ms）→ ${noNewFor15s ? '已超时' : '未超时'}，filterApplied=${this.filterApplied}`)
+          if (bottomText !== null || noNewFor15s) {
+            log('条件满足，开始执行筛选流程')
+            let applied = false
+            let errMsg: string | null = null
+            let busy = false
+            try {
+              applied = await this.deps.browser.applyDouyinFilter(FILTER_SELECTORS, df, log)
+            } catch (err) {
+              const code = (err as { code?: string } | null)?.code
+              if (code === 'FILTER_BUSY') {
+                // 并发拒绝（如手动测试在跑）：不算失败——不消耗 filterApplied、不停止，下一轮再试
+                busy = true
+                log('筛选流程进行中（可能是手动测试在跑），本次跳过：不消耗 filterApplied、不停止，下一轮重试')
+              } else {
+                errMsg = err instanceof Error ? err.message : String(err)
+              }
+            }
+            if (busy) continue
+            this.filterApplied = true // 只应用一次：无论成败都不再重试
+            log(`执行结果：${applied ? '成功' : '失败'}${errMsg ? `（异常：${errMsg}）` : ''}`)
+            if (applied) {
+              // 筛选已生效：重置停滞计数继续抓（去重靠 seen 自然跳过已爬过的，只收新内容）
+              this.emptyRounds = 0
+              this.silentRounds = 0
+              log('筛选已生效：重置停滞计数（空轮/静默轮归 0），继续抓取')
+              continue
+            }
+            log('筛选未生效：按原逻辑停止（filterApplied 已置位，不再重试）')
+            this.deps.emit({ type: 'task:notice', text: '筛选续爬未生效（页面结构可能已变），已按原逻辑停止' })
+            stopReason = 'stalled'
+            break
+          }
+        }
         const decision = buildStopDecision(this.fetched, target, this.emptyRounds + this.silentRounds)
         if (decision === 'reached') { stopReason = 'reached'; break }
         if (decision === 'stop') {
-          // T3/T4：搜索停滞后用抖音自带筛选续爬——仅 keyword 任务、启用筛选、未应用过、且未达目标时。
-          // 触发（先到先触发）：辅规则 DOM 找底部文案（如「暂时没有更多了」）；主规则 15 秒无新视频入库
-          const df = this.filters?.douyinFilter
-          const log = (msg: string): void => { this.deps.onFilterLog?.(msg) }
+          // 停滞命中：触发检查点已每轮先行判定（未启用/非 keyword/已应用/无到底文案且未超时）→ 按原逻辑停止
           log(`筛选触发判定：停滞命中（fetched=${this.fetched} target=${target} 空轮=${this.emptyRounds} 静默轮=${this.silentRounds}）`)
-          if (this.fetched < target && df?.enabled && this.task?.type === 'keyword' && !this.filterApplied) {
-            const bottomText = await this.deps.browser.findBottomText().catch(() => null)
-            log(bottomText !== null ? `到底文案命中：「${bottomText}」` : '未找到到底文案（findBottomText 返回 null）')
-            const elapsed = Date.now() - this.lastFetchedAt
-            const noNewFor15s = elapsed > 15000
-            log(`距上次有新视频入库 ${elapsed}ms（阈值 15000ms）→ ${noNewFor15s ? '已超时' : '未超时'}，filterApplied=${this.filterApplied}`)
-            if (bottomText !== null || noNewFor15s) {
-              log('条件满足，开始执行筛选流程')
-              let applied = false
-              let errMsg: string | null = null
-              let busy = false
-              try {
-                applied = await this.deps.browser.applyDouyinFilter(FILTER_SELECTORS, df, log)
-              } catch (err) {
-                const code = (err as { code?: string } | null)?.code
-                if (code === 'FILTER_BUSY') {
-                  // 并发拒绝（如手动测试在跑）：不算失败——不消耗 filterApplied、不停止，下一轮再试
-                  busy = true
-                  log('筛选流程进行中（可能是手动测试在跑），本次跳过：不消耗 filterApplied、不停止，下一轮重试')
-                } else {
-                  errMsg = err instanceof Error ? err.message : String(err)
-                }
-              }
-              if (busy) continue
-              this.filterApplied = true // 只应用一次：无论成败都不再重试
-              log(`执行结果：${applied ? '成功' : '失败'}${errMsg ? `（异常：${errMsg}）` : ''}`)
-              if (applied) {
-                // 筛选已生效：重置停滞计数继续抓（去重靠 seen 自然跳过已爬过的，只收新内容）
-                this.emptyRounds = 0
-                this.silentRounds = 0
-                log('筛选已生效：重置停滞计数（空轮/静默轮归 0），继续抓取')
-                continue
-              }
-              log('筛选未生效：按原逻辑停止（filterApplied 已置位，不再重试）')
-              this.deps.emit({ type: 'task:notice', text: '筛选续爬未生效（页面结构可能已变），已按原逻辑停止' })
-            } else {
-              log('不触发筛选：无到底文案且未到 15s 超时，按原逻辑停止')
-            }
-          } else {
-            const reasons: string[] = []
-            if (this.fetched >= target) reasons.push('已达标')
-            if (!df?.enabled) reasons.push('未启用筛选')
-            if (this.task?.type !== 'keyword') reasons.push(`任务类型非 keyword（当前=${this.task?.type ?? '未知'}）`)
-            if (this.filterApplied) reasons.push('本任务已应用过一次')
-            log(`不触发筛选：${reasons.length > 0 ? reasons.join('，') : '未知原因'}`)
-          }
+          const reasons: string[] = []
+          if (this.fetched >= target) reasons.push('已达标')
+          if (!df?.enabled) reasons.push('未启用筛选')
+          if (this.task?.type !== 'keyword') reasons.push(`任务类型非 keyword（当前=${this.task?.type ?? '未知'}）`)
+          if (this.filterApplied) reasons.push('本任务已应用过一次')
+          if (reasons.length === 0) reasons.push('无到底文案且未到 15s 超时')
+          log(`不触发筛选：${reasons.join('，')}`)
           stopReason = 'stalled'
           break
         }
