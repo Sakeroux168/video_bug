@@ -38,6 +38,8 @@ interface Derived {
   someOnPageSelected: boolean
   selDownloadable: number[]
   selCancellable: number[]
+  selPausable: number[]
+  selResumable: number[]
   selFailed: number[]
   selDeletable: number[]
   collectedIds: number[]
@@ -232,11 +234,17 @@ export default function TaskList({ notify }: { notify: (text: string) => void })
         const st = vmap.get(vid)?.status
         return st === 'pending' || st === 'downloading'
       })
+      // 批量暂停集 = pending/downloading（与取消集同状态集，语义不同），继续集 = paused，两集互斥
+      const selPausable = [...selected].filter(vid => {
+        const st = vmap.get(vid)?.status
+        return st === 'pending' || st === 'downloading'
+      })
+      const selResumable = [...selected].filter(vid => vmap.get(vid)?.status === 'paused')
       const selFailed = [...selected].filter(vid => vmap.get(vid)?.status === 'failed')
       // Task3：删除对任何状态都可用，可删项 = 本任务 selected 全集（跨任务勾选经 vmap 排除）
       const selDeletable = [...selected].filter(vid => vmap.has(vid))
       const collectedIds = vs.filter(v => v.status === 'collected').map(v => v.id)
-      out[id] = { filtered, pageCount, curPage, pageVideos, selectableIds, allOnPageSelected, someOnPageSelected, selDownloadable, selCancellable, selFailed, selDeletable, collectedIds }
+      out[id] = { filtered, pageCount, curPage, pageVideos, selectableIds, allOnPageSelected, someOnPageSelected, selDownloadable, selCancellable, selPausable, selResumable, selFailed, selDeletable, collectedIds }
     }
     return out
   }, [expanded, videos, sortState, searchText, page, selected, onlyFailed])
@@ -378,6 +386,16 @@ export default function TaskList({ notify }: { notify: (text: string) => void })
                               disabled={d.selCancellable.length === 0}
                               onClick={() => { void api.cancelVideos(d.selCancellable).then(() => { refresh(); notify(`已取消 ${d.selCancellable.length} 个下载`) }) }}
                             >取消选中({d.selCancellable.length})</button>
+                            <button
+                              className={btnSmall}
+                              disabled={d.selPausable.length === 0}
+                              onClick={() => { void api.pauseVideos(d.selPausable).then(() => { refresh(); notify(`已暂停 ${d.selPausable.length} 个下载`) }) }}
+                            >暂停选中({d.selPausable.length})</button>
+                            <button
+                              className={btnSmall}
+                              disabled={d.selResumable.length === 0}
+                              onClick={() => { void api.resumeVideos(d.selResumable).then(() => { refresh(); notify(`已恢复 ${d.selResumable.length} 个下载`) }) }}
+                            >继续选中({d.selResumable.length})</button>
                             <button
                               className={btnSmall}
                               disabled={d.selFailed.length === 0}
