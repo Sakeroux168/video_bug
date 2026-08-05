@@ -149,7 +149,9 @@ export default function TaskList({ notify }: { notify: (text: string) => void })
     setSelected(new Set())
   }
 
-  // Task3：程序内删除视频（③）——confirm 二次确认后删本地文件+DB 记录，成功后刷新列表/统计
+  // Task3：程序内删除视频（③）——confirm 二次确认后删本地文件+DB 记录。
+  // 部分失败（ok:false 但 deleted>0，如个别文件删不掉）：已删的照常刷新并提示条数，避免行残留假象；
+  // 全部失败（deleted=0）才只报错误。
   function handleDeleteVideos(ids: number[]): void {
     if (ids.length === 0) return
     const msg = ids.length > 1
@@ -158,11 +160,17 @@ export default function TaskList({ notify }: { notify: (text: string) => void })
     if (!window.confirm(msg)) return
     void api.deleteVideos(ids)
       .then(r => {
-        if (r && r.ok === false) { notify(`删除失败：${r.error ?? '未知错误'}`); return }
-        // 清掉已删除行的勾选，避免 selected 残留失效 id
-        setSelected(prev => { const next = new Set(prev); ids.forEach(i => next.delete(i)); return next })
-        refresh()
-        notify(`已删除 ${r?.deleted ?? ids.length} 个视频`)
+        if (!r) return
+        if (r.deleted > 0) {
+          // 清掉已删除行的勾选，避免 selected 残留失效 id
+          setSelected(prev => { const next = new Set(prev); ids.forEach(i => next.delete(i)); return next })
+          refresh()
+          notify(r.ok === false
+            ? `已删除 ${r.deleted} 条，部分失败：${r.error ?? '未知错误'}`
+            : `已删除 ${r.deleted} 个视频`)
+        } else if (r.ok === false) {
+          notify(`删除失败：${r.error ?? '未知错误'}`)
+        }
       })
       .catch(err => notify(`删除失败：${String(err)}`))
   }

@@ -101,4 +101,31 @@ describe('Task 3 视频删除 UI', () => {
     await waitFor(() => expect(notify).toHaveBeenCalledWith('已删除 1 个视频'))
     expect(window.api.listTasks).toHaveBeenCalled()
   })
+
+  it('部分失败（ok:false 但 deleted>0）→ 仍刷新并提示已删条数', async () => {
+    const notify = vi.fn()
+    await setup([makeVideo(1), makeVideo(2)], notify)
+    vi.mocked(window.api.deleteVideos).mockResolvedValue({ ok: false, deleted: 1, error: '删除文件失败 C:\\x.mp4' })
+    const callsBefore = vi.mocked(window.api.listTasks).mock.calls.length
+    const c = screen.getByText('标题').closest('table')!.parentElement as HTMLElement
+    const row = c.querySelector('tbody tr[data-id="1"]') as HTMLElement
+    const delBtn = Array.from(row.querySelectorAll('button')).find(b => b.textContent === '删除')
+    fireEvent.click(delBtn!)
+    await waitFor(() => expect(notify).toHaveBeenCalledWith('已删除 1 条，部分失败：删除文件失败 C:\\x.mp4'))
+    // 已删部分照常刷新（listTasks 被再次调用）
+    await waitFor(() => expect(vi.mocked(window.api.listTasks).mock.calls.length).toBeGreaterThan(callsBefore))
+  })
+
+  it('全部失败（deleted=0）→ 只提示错误，不刷新', async () => {
+    const notify = vi.fn()
+    await setup([makeVideo(1)], notify)
+    vi.mocked(window.api.deleteVideos).mockResolvedValue({ ok: false, deleted: 0, error: '磁盘错误' })
+    const callsBefore = vi.mocked(window.api.listTasks).mock.calls.length
+    const c = screen.getByText('标题').closest('table')!.parentElement as HTMLElement
+    const row = c.querySelector('tbody tr[data-id="1"]') as HTMLElement
+    const delBtn = Array.from(row.querySelectorAll('button')).find(b => b.textContent === '删除')
+    fireEvent.click(delBtn!)
+    await waitFor(() => expect(notify).toHaveBeenCalledWith('删除失败：磁盘错误'))
+    expect(vi.mocked(window.api.listTasks).mock.calls.length).toBe(callsBefore) // 无删除 → 不刷新
+  })
 })
