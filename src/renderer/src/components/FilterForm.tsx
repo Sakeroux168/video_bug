@@ -23,6 +23,10 @@ export default function FilterForm({ onSubmit }: { onSubmit: (t: CreateTaskInput
   const [dfContentType, setDfContentType] = useState(0)
   const [allowDuplicateAuthor, setAllowDuplicateAuthor] = useState<boolean | undefined>(undefined)
   const [err, setErr] = useState('')
+  /** 测试筛选执行中：按钮置灰防重复点击（筛选流程约 3-5s，主进程另有互斥锁兜底） */
+  const [testFilterBusy, setTestFilterBusy] = useState(false)
+  /** 测试筛选结果：就地提示，成功绿色/失败红色 */
+  const [testResult, setTestResult] = useState<{ ok: boolean; message: string } | null>(null)
 
   useEffect(() => {
     void api.listPlatforms().then(setPlatforms)
@@ -30,11 +34,12 @@ export default function FilterForm({ onSubmit }: { onSubmit: (t: CreateTaskInput
     void api.getSettings().then(s => setAllowDuplicateAuthor(s.allowDuplicateAuthor))
   }, [])
 
-  const targetValid = target >= 200 && target <= 1000
+  // 目标数量自由设置 1-1000（默认 200）
+  const targetValid = target >= 1 && target <= 1000
 
   async function submit(): Promise<void> {
     if (!query.trim()) { setErr('请输入关键词/作者/话题'); return }
-    if (!targetValid) { setErr('目标数量需在 200-1000 之间'); return }
+    if (!targetValid) { setErr('目标数量需在 1-1000 之间'); return }
     if (aiFilter && !aiRule.trim()) { setErr('开启先审后下需填写筛选规则'); return }
     setErr('')
     const r = await onSubmit({
@@ -52,6 +57,16 @@ export default function FilterForm({ onSubmit }: { onSubmit: (t: CreateTaskInput
     })
     if (r.skipped) setErr(r.reason ?? '已跳过：该作者已爬取过')
     else setQuery('')
+  }
+  /** 测试筛选：对当前任务执行一次筛选流程，结果在配置区就地提示（App 头部按钮已移除移入此处） */
+  async function runTestFilter(): Promise<void> {
+    if (testFilterBusy) return
+    setTestFilterBusy(true)
+    try {
+      setTestResult(await api.testFilter())
+    } finally {
+      setTestFilterBusy(false)
+    }
   }
 
   return (
@@ -90,8 +105,8 @@ export default function FilterForm({ onSubmit }: { onSubmit: (t: CreateTaskInput
         <label className="flex flex-col gap-1 text-xs text-zinc-500">
           目标数量
           <input type="number" className={inputCls} value={target}
-            onChange={e => setTarget(Number(e.target.value))} min={200} max={1000} />
-          {!targetValid && <span className="text-red-500">需在 200-1000</span>}
+            onChange={e => setTarget(Number(e.target.value))} min={1} max={1000} />
+          {!targetValid && <span className="text-red-500">需在 1-1000</span>}
         </label>
         <button className={btnPrimary} onClick={submit} disabled={!targetValid}>开始抓取</button>
       </div>
@@ -134,6 +149,7 @@ export default function FilterForm({ onSubmit }: { onSubmit: (t: CreateTaskInput
           搜索到底后用抖音筛选续爬
         </label>
         {dfEnabled && (
+          <>
           <div className="mt-2 flex flex-wrap items-end gap-4 text-xs text-zinc-500">
             <label className="flex flex-col gap-1">
               发布时间
@@ -160,6 +176,21 @@ export default function FilterForm({ onSubmit }: { onSubmit: (t: CreateTaskInput
               </select>
             </label>
           </div>
+          {/* T10③：手动测试筛选从 App 头部移入此处（行为/防重不变），结果就地提示 */}
+          <div className="mt-2 flex items-center gap-3">
+            <button
+              type="button"
+              className="rounded-md border border-zinc-300 px-2 py-0.5 text-xs text-zinc-500 hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-50"
+              disabled={testFilterBusy}
+              onClick={() => void runTestFilter()}
+            >
+              {testFilterBusy ? '筛选中...' : '测试筛选'}
+            </button>
+            {testResult && (
+              <span className={`text-xs ${testResult.ok ? 'text-emerald-600' : 'text-red-500'}`}>{testResult.message}</span>
+            )}
+          </div>
+          </>
         )}
       </div>
       {err && <p className="mt-2 text-xs text-red-500">{err}</p>}
