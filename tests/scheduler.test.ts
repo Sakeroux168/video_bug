@@ -394,7 +394,14 @@ describe('暂停即时打断（A1）', () => {
     const taskId = createTask(db, input)
     const browser = new FakeBrowser()
     browser.blockNextScroll()
-    const { s } = setup(db, new FakeDownloader(), browser, 500) // 收尾 sleep=min(1500,2000,1000)=1000ms
+    const events: unknown[] = []
+    // 收尾 sleep=min(1500,2000,1000)=1000ms；阈值 2s：等待 500ms 不判停滞（R11-3 等待阶段会检查停滞）
+    const s = new Scheduler({
+      db, browser, analyzer: null, downloader: new FakeDownloader(),
+      emit: e => events.push(e), scrollIntervalMs: 500,
+      getScrollParams: () => ({ scrollSpeed: 'slow' as const, scrollPageWaitMs: 8000 }),
+      getStallThresholdSec: () => 2
+    })
     const pRun = s.run(taskId)
     for (let i = 0; i < 200 && !browser.scrollEntered; i++) await new Promise(r => setTimeout(r, 10))
     expect(browser.scrollEntered).toBe(true) // run 已进入 scrollToBottom
@@ -524,6 +531,7 @@ describe('滚动参数传递（T2）', () => {
   it('run 时把每页等待秒数参数传给 scrollToBottom', async () => {
     const db = newDb()
     const taskId = createTask(db, input)
+    db.prepare('UPDATE tasks SET fetched_count=200 WHERE id=?').run(taskId) // 预置爬满：首轮滚动后即 reached 结束
     const browser = new FakeBrowser()
     const spy = vi.spyOn(browser, 'scrollToBottom')
     const events: unknown[] = []
@@ -531,7 +539,8 @@ describe('滚动参数传递（T2）', () => {
       db, browser, analyzer: null, downloader: new FakeDownloader(),
       emit: e => events.push(e), scrollIntervalMs: 1,
       getScrollParams: () => ({ scrollSpeed: 'slow' as const, scrollPageWaitMs: 8000 }),
-      getStallThresholdSec: () => 0.01
+      // 阈值 1s：首轮等待(1ms)不可能判停滞，确保滚动先发生（R11-3 心跳等待小步检查会提前截胡微阈值）
+      getStallThresholdSec: () => 1
     })
     await s.run(taskId)
     expect(spy).toHaveBeenCalledWith({ waitMs: 8000 })
@@ -826,13 +835,13 @@ describe('抖音筛选续爬（T3）', () => {
   }, 10000)
 })
 
-describe('停滞自救循环（R11）', () => {
-  /** 递增时钟：lastFetchedAt 之后每次 Date.now() 都多走 6 秒 → 每轮必停滞（6s > 默认 5s 阈值） */
-  function advancingClock(): void {
-    let now = 1000000
-    vi.spyOn(Date, 'now').mockImplementation(() => (now += 6000))
-  }
+/** 递增时钟：lastFetchedAt 之后每次 Date.now() 都多走 6 秒 → 每轮必停滞（6s > 默认 5s 阈值） */
+function advancingClock(): void {
+  let now = 1000000
+  vi.spyOn(Date, 'now').mockImplementation(() => (now += 6000))
+}
 
+describe('停滞自救循环（R11）', () => {
   it('T2: 筛选生效后再停滞 → 重新搜索关键词（load 被调、URL 含关键词、reSearchCount 递增、progress 事件带值）', async () => {
     const db = newDb()
     const taskId = createTask(db, filterInput)
@@ -922,6 +931,102 @@ describe('停滞自救循环（R11）', () => {
   }, 10000)
 })
 
+describe('停滞检测秒级心跳（R11-3）', () => {
+  it('心跳 1s 粒度检测停滞（滚动中）→ abortScroll 中断在途滚动（不等整轮 ~4-15s 滚动自然结束）', async () => {
+    const db = newDb()
+    const taskId = createTask(db, input)
+    const browser = new FakeBrowser()
+    const events: unknown[] = []
+    // 阈值 0.1s：首轮等待(1ms)不判停滞，run 先进入滚动；心跳 1s 后看到停滞+滚动中 → 中断
+    const s = new Scheduler({
+      db, browser, analyzer: null, downloader: new FakeDownloader(),
+      emit: e => events.push(e), scrollIntervalMs: 1,
+      getScrollParams: () => ({ scrollSpeed: 'slow' as const, scrollPageWaitMs: 8000 }),
+      getStallThresholdSec: () => 0.1
+    })
+    browser.blockNextScroll()
+    const p = s.run(taskId)
+    for (let i = 0; i < 200 && !browser.scrollEntered; i++) await new Promise(r => setTimeout(r, 10))
+    expect(browser.scrollEntered).toBe(true)
+    for (let i = 0; i < 300 && browser.abortScroll.mock.calls.length === 0; i++) await new Promise(r => setTimeout(r, 10))
+    expect(browser.abortScroll).toHaveBeenCalledTimes(1) // 心跳触发：停滞 && 滚动中 → 中断在途滚动
+    browser.releaseScroll()
+    await p
+    expect(db.prepare('SELECT status, error FROM tasks WHERE id=?').get(taskId)).toEqual({ status: 'paused', error: 'stalled' })
+  }, 10000)
+
+  it('滚动中停滞 → 滚动返回后立即自救（重搜；不进整轮等待）', async () => {
+    const db = newDb()
+    const taskId = createTask(db, filterInput)
+    const browser = new FakeBrowser()
+    const loadSpy = vi.spyOn(browser, 'load')
+    const events: unknown[] = []
+    // 阈值 0.1s：run 先进入滚动；心跳 1s 后中断
+    const s = new Scheduler({
+      db, browser, analyzer: null, downloader: new FakeDownloader(),
+      emit: e => events.push(e), scrollIntervalMs: 1,
+      getScrollParams: () => ({ scrollSpeed: 'slow' as const, scrollPageWaitMs: 8000 }),
+      getStallThresholdSec: () => 0.1
+    })
+    browser.blockNextScroll()
+    const p = s.run(taskId)
+    for (let i = 0; i < 200 && !browser.scrollEntered; i++) await new Promise(r => setTimeout(r, 10))
+    expect(browser.scrollEntered).toBe(true)
+    for (let i = 0; i < 300 && browser.abortScroll.mock.calls.length === 0; i++) await new Promise(r => setTimeout(r, 10))
+    expect(browser.abortScroll).toHaveBeenCalled() // 心跳已中断在途滚动
+    const t0 = Date.now()
+    browser.releaseScroll()
+    for (let i = 0; i < 100 && loadSpy.mock.calls.length < 2; i++) await new Promise(r => setTimeout(r, 10))
+    expect(loadSpy.mock.calls.length).toBeGreaterThanOrEqual(2) // 滚动返回后立即自救（重搜）
+    expect(Date.now() - t0).toBeLessThan(500)
+    await p
+    expect(db.prepare('SELECT status, error FROM tasks WHERE id=?').get(taskId)).toEqual({ status: 'paused', error: 'stalled' })
+  }, 10000)
+
+  it('心跳等待阶段停滞 → 直接自救（未进滚动即重搜）', async () => {
+    const db = newDb()
+    const taskId = createTask(db, filterInput)
+    const browser = new FakeBrowser()
+    browser.bottomText = null // 不走筛选分支，直接重搜
+    advancingClock()
+    const loadSpy = vi.spyOn(browser, 'load')
+    const { s, events } = setup(db, new FakeDownloader(), browser)
+    browser.blockNextLoad() // 初始加载
+    const p = s.run(taskId)
+    browser.releaseLoad()
+    browser.blockNextLoad() // block 第 1 次重搜（等待阶段触发）
+    for (let i = 0; i < 300 && loadSpy.mock.calls.length < 2; i++) await new Promise(r => setTimeout(r, 2))
+    expect(loadSpy.mock.calls.length).toBe(2)
+    expect(browser.scrollEntered).toBe(false) // 尚未滚动：停滞在等待阶段就被自救捕获
+    expect((s as any).reSearchCount).toBe(1)
+    expect(events).toContainEqual({ type: 'task:notice', text: '已自动重新搜索关键词（第 1 次）' })
+    browser.releaseLoad()
+    await p
+    expect(db.prepare('SELECT status, error FROM tasks WHERE id=?').get(taskId)).toEqual({ status: 'paused', error: 'stalled' })
+  }, 10000)
+
+  it('rescuing 期间心跳不重复触发（重搜挂起时即使滚动标志置位也不 abortScroll）', async () => {
+    const db = newDb()
+    const taskId = createTask(db, filterInput)
+    const browser = new FakeBrowser()
+    advancingClock()
+    const loadSpy = vi.spyOn(browser, 'load')
+    const { s } = setup(db, new FakeDownloader(), browser)
+    browser.blockNextLoad() // 初始加载
+    const p = s.run(taskId)
+    browser.releaseLoad()
+    browser.blockNextLoad() // block 第 1 次重搜（rescuing 期间挂起）
+    for (let i = 0; i < 300 && loadSpy.mock.calls.length < 2; i++) await new Promise(r => setTimeout(r, 2))
+    expect(loadSpy.mock.calls.length).toBe(2) // 已进入重搜（load 被 block，rescuing 置位中）
+    ;(s as any).scrolling = true // 模拟滚动标志被置位（心跳的唯一触发条件）
+    await new Promise(r => setTimeout(r, 1500)) // 跨过 ≥1 个心跳周期
+    expect(browser.abortScroll).not.toHaveBeenCalled() // rescuing 期间心跳不触发
+    browser.releaseLoad()
+    await p
+    expect(db.prepare('SELECT status, error FROM tasks WHERE id=?').get(taskId)).toEqual({ status: 'paused', error: 'stalled' })
+  }, 10000)
+})
+
 describe('爬满即停与启动即时进度（R11-2）', () => {
   it('handleRaw 填满 target → abortScroll 被调（中断在途滚动，不再等整轮结束）', async () => {
     const db = newDb()
@@ -948,7 +1053,14 @@ describe('爬满即停与启动即时进度（R11-2）', () => {
     db.prepare('UPDATE tasks SET fetched_count=199 WHERE id=?').run(taskId)
     const browser = new FakeBrowser()
     const dl = new FakeDownloader()
-    const { s } = setup(db, dl, browser, 500) // 收尾 sleep = min(1500, 8000/4, 1000) = 1000ms
+    const events: unknown[] = []
+    // 收尾 sleep = min(1500, 8000/4, 1000) = 1000ms；阈值 2s：等待 500ms 不判停滞，先进入滚动
+    const s = new Scheduler({
+      db, browser, analyzer: null, downloader: dl,
+      emit: e => events.push(e), scrollIntervalMs: 500,
+      getScrollParams: () => ({ scrollSpeed: 'slow' as const, scrollPageWaitMs: 8000 }),
+      getStallThresholdSec: () => 2
+    })
     browser.blockNextScroll()
     const p = s.run(taskId)
     for (let i = 0; i < 200 && !browser.scrollEntered; i++) await new Promise(r => setTimeout(r, 10))
