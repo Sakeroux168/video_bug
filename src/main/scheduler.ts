@@ -159,6 +159,9 @@ export class Scheduler {
         // A1：暂停时不跑滚动（滚动是长任务且不可中断，提前检查避免多滚一轮）
         if (this.aborted) break
         await this.deps.browser.scrollToBottom({ waitMs: this.scrollWaitMs })
+        // 暂停即时：pause 可能落在 scrollToBottom 内（abortWait 为 null，收尾 sleep 无人唤醒）——
+        // 滚动被 abortScroll 中断返回后立即检查 aborted，跳过收尾 sleep 直接进 finally（~1 秒内进暂停态）
+        if (this.aborted) break
         // 放慢节奏：滚动后多等一拍让当页结果加载完再进下一轮（默认约1.5s，随每页等待时长缩放；测试环境按间隔缩放保持快速）
         await this.sleep(Math.min(1500, this.scrollWaitMs / 4, this.deps.scrollIntervalMs * 2))
         // 按轮次计静默：本轮收到 raw 则重置，否则累加；与空解析轮合并判断停止

@@ -32,7 +32,21 @@ class FakeBrowser {
       await new Promise<void>(r => { this.pendingLoad = r })
     }
   }
-  async scrollToBottom(_opts?: { waitMs?: number }): Promise<void> {}
+  /** 滚动是否已进入（用于感知 run 已到达 scrollToBottom，模拟暂停落在滚动内） */
+  scrollEntered = false
+  private scrollBlocked = false
+  private pendingScroll: (() => void) | null = null
+
+  blockNextScroll(): void { this.scrollBlocked = true }
+  releaseScroll(): void { if (this.pendingScroll) { this.pendingScroll(); this.pendingScroll = null } }
+
+  async scrollToBottom(_opts?: { waitMs?: number }): Promise<void> {
+    this.scrollEntered = true
+    if (this.scrollBlocked) {
+      this.scrollBlocked = false
+      await new Promise<void>(r => { this.pendingScroll = r })
+    }
+  }
   /** 滚动中止信号 spy：pause() 应触发 abortScroll（页面级即时停止，不等 scrollToBottom 跑完） */
   abortScroll = vi.fn()
   async findBottomText(): Promise<string | null> { return this.bottomText }
@@ -338,6 +352,25 @@ describe('暂停即时打断（A1）', () => {
     await new Promise(r => setTimeout(r, 10)) // run 已进入循环，正在第一个 sleep
     await s.pause()
     expect(browser.abortScroll).toHaveBeenCalledTimes(1)
+    await pRun
+    expect(db.prepare('SELECT status, error FROM tasks WHERE id=?').get(taskId)).toEqual({ status: 'paused', error: null })
+  }, 10000)
+
+  it('暂停落在 scrollToBottom 内（abortWait 为 null）→ 返回后跳过收尾 sleep 立即进暂停态', async () => {
+    const db = newDb()
+    const taskId = createTask(db, input)
+    const browser = new FakeBrowser()
+    browser.blockNextScroll()
+    const { s } = setup(db, new FakeDownloader(), browser, 500) // 收尾 sleep=min(1500,2000,1000)=1000ms
+    const pRun = s.run(taskId)
+    for (let i = 0; i < 200 && !browser.scrollEntered; i++) await new Promise(r => setTimeout(r, 10))
+    expect(browser.scrollEntered).toBe(true) // run 已进入 scrollToBottom
+    const pPause = s.pause() // 此时 abortWait 为 null：abortScroll 已发，但收尾 sleep 无人唤醒
+    await new Promise(r => setTimeout(r, 10))
+    browser.releaseScroll() // 页面脚本收到中止信号后返回
+    await new Promise(r => setTimeout(r, 200)) // 若无守卫，run 还睡在 1000ms 收尾 sleep 里
+    expect((s as any).running).toBe(false) // 已跳过收尾 sleep 退出
+    await pPause
     await pRun
     expect(db.prepare('SELECT status, error FROM tasks WHERE id=?').get(taskId)).toEqual({ status: 'paused', error: null })
   }, 10000)
