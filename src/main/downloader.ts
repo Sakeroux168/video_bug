@@ -24,6 +24,9 @@ export class Downloader {
   private paused = false
   /** 单条暂停的视频 id 集合（会话级；全局继续会清空，重启后不恢复） */
   private pausedIds = new Set<number>()
+  /** abort 原因快照：abort 回调可能经 stream/fs macrotask 延迟落定（可跨过下一 IPC 消息），
+   *  期间 paused/pausedIds 可能已被 resume 清掉，路由以 abort 时刻的快照为准而非"当下"状态 */
+  private abortReasons = new Map<number, 'paused' | 'cancelled'>()
   private aborters = new Map<number, AbortController>()
   private retryTimers = new Map<number, NodeJS.Timeout>()
   private listeners: Array<(e: DlEvent) => void> = []
@@ -60,7 +63,10 @@ export class Downloader {
   /** 暂停：drain 不再拉取新任务，且立即中断所有在途下载（AbortError 分支标回 pending 重新入队） */
   pause(): void {
     this.paused = true
-    for (const aborter of this.aborters.values()) aborter.abort()
+    for (const [id, aborter] of this.aborters) {
+      this.abortReasons.set(id, 'paused') // 先快照原因：abort 回调可能延迟到 resume 之后才落定
+      aborter.abort()
+    }
   }
 
   /** 恢复：清暂停标记，被中断的在途已回队；单条暂停的项一并恢复（全局继续=所有单条暂停的也恢复） */
@@ -92,7 +98,7 @@ export class Downloader {
       const timer = this.retryTimers.get(id)
       if (timer) { clearTimeout(timer); this.retryTimers.delete(id) }
       const aborter = this.aborters.get(id)
-      if (aborter) aborter.abort() // 在途：掐断 fetch/写盘
+      if (aborter) { this.abortReasons.set(id, 'paused'); aborter.abort() } // 在途：先快照原因再掐断 fetch/写盘
       const qi = this.queue.indexOf(id)
       if (qi !== -1) {
         this.queue.splice(qi, 1) // 排队中：移出队列
@@ -127,7 +133,7 @@ export class Downloader {
       const timer = this.retryTimers.get(id)
       if (timer) { clearTimeout(timer); this.retryTimers.delete(id) }
       const aborter = this.aborters.get(id)
-      if (aborter) aborter.abort() // 在途：掐断 fetch/写盘
+      if (aborter) { this.abortReasons.set(id, 'cancelled'); aborter.abort() } // 在途：先快照原因再掐断 fetch/写盘
       const qi = this.queue.indexOf(id)
       if (qi !== -1) {
         this.queue.splice(qi, 1) // 排队中：移出队列
@@ -150,6 +156,13 @@ export class Downloader {
   }
 
   private emit(e: DlEvent): void { for (const l of this.listeners) l(e) }
+
+  /** AbortError 收尾：删半成品 + 标状态（error 清空）+ 发事件 */
+  private finishAbort(id: number, status: VideoStatus, dest: string | null): void {
+    if (dest) try { rmSync(dest, { force: true }) } catch { /* ignore */ }
+    this.db.prepare("UPDATE videos SET status=?, error=NULL WHERE id=?").run(status, id)
+    this.emit({ type: 'video:status', id, status })
+  }
 
   private drain(): void {
     const concurrency = this.settings.downloadConcurrency || 3
@@ -226,21 +239,35 @@ export class Downloader {
       // 删半成品、跳过网络重试；状态路由三分支——单条暂停 → paused、全局暂停 → pending 重新入队、
       // 用户取消（或中断后被 cancel 抢先）→ cancelled。在途的 db 状态 cancel() 已写过 cancelled，这里只兜底、绝不覆盖成 failed
       if (aborter.signal.aborted) {
-        if (dest) try { rmSync(dest, { force: true }) } catch { /* ignore */ }
-        // 中断可能被 cancel 抢先标 cancelled，先读当前状态，避免把已取消项覆盖成 paused/pending
+        // 原因快照优先（读后删）：abort 回调可能延迟到 paused/pausedIds 被 resume 清掉之后才落定，
+        // 以 abort 时刻写入的原因路由，避免把"已恢复"的项误标成 cancelled
+        const reason = this.abortReasons.get(id)
+        this.abortReasons.delete(id)
         const cur = this.db.prepare('SELECT status FROM videos WHERE id = ?').get(id) as { status: VideoStatus } | undefined
-        if (this.pausedIds.has(id)) {
-          // 单条暂停（比全局暂停更具体，优先路由）：标 paused，继续后手动恢复
-          this.db.prepare("UPDATE videos SET status='paused', error=NULL WHERE id=?").run(id)
-          this.emit({ type: 'video:status', id, status: 'paused' })
-        } else if (this.paused && cur?.status !== 'cancelled') {
-          // 全局暂停：标回 pending 重新入队（保持排队状态），resume 后自然续下；已取消项不再覆盖为 pending 重排
-          this.db.prepare("UPDATE videos SET status='pending', error=NULL WHERE id=?").run(id)
-          this.queue.push(id)
-          this.emit({ type: 'video:status', id, status: 'pending' })
+        if (reason === 'paused') {
+          if (this.pausedIds.has(id)) {
+            // 单条暂停（全局继续未发生过）：标 paused，继续后手动恢复
+            this.finishAbort(id, 'paused', dest)
+          } else if (cur?.status !== 'cancelled') {
+            // 全局暂停（回调时无论是否已 resume）：标回 pending 重新入队，drain 自然续下；
+            // 已取消项不再覆盖为 pending 重排
+            this.finishAbort(id, 'pending', dest)
+            this.queue.push(id)
+          } else {
+            this.finishAbort(id, 'cancelled', dest)
+          }
+        } else if (reason === 'cancelled') {
+          this.finishAbort(id, 'cancelled', dest)
         } else {
-          this.db.prepare("UPDATE videos SET status='cancelled', error=NULL WHERE id=?").run(id)
-          this.emit({ type: 'video:status', id, status: 'cancelled' })
+          // 无快照（兜底）：按当下状态判断——单条暂停 / 全局暂停 / 用户取消
+          if (this.pausedIds.has(id)) {
+            this.finishAbort(id, 'paused', dest)
+          } else if (this.paused && cur?.status !== 'cancelled') {
+            this.finishAbort(id, 'pending', dest)
+            this.queue.push(id)
+          } else {
+            this.finishAbort(id, 'cancelled', dest)
+          }
         }
         return
       }
@@ -258,6 +285,7 @@ export class Downloader {
       this.emit({ type: 'video:status', id, status: 'failed', error: code })
     } finally {
       this.aborters.delete(id)
+      this.abortReasons.delete(id) // 兜底清理：若下载在 abort 前已完成（catch 未走），不留陈旧快照
       delete this.fetching[id]
     }
   }

@@ -440,6 +440,80 @@ describe('Downloader', () => {
     expect(fetchCount).toBe(3) // v1(中断) + v1(重下) + v2
   })
 
+  it('单条 pause 后立即全局 resume：延迟 abort 回调不误标 cancelled，恢复下载', async () => {
+    const taskId = createTask(db, input)
+    insertVideos(db, [item()], taskId, 'douyin')
+    const [v] = listVideos(db, taskId)
+    const mp4 = Buffer.alloc(2048)
+    mp4.writeUInt32BE(0x18, 0)
+    mp4.write('ftypisom', 4)
+    let fetchCount = 0
+    let firstStarted!: () => void
+    const started = new Promise<void>(res => { firstStarted = res })
+    const fetchImpl = (async (url: unknown, init?: RequestInit) => {
+      fetchCount++
+      if (fetchCount === 1) {
+        firstStarted()
+        const signal = init?.signal!
+        // 模拟写盘路径经 stream/fs macrotask 传播的延迟：abort 后 50ms 才抛 AbortError
+        await new Promise((resolve, reject) => {
+          signal.addEventListener('abort', () => {
+            setTimeout(() => reject(Object.assign(new Error('The operation was aborted.'), { name: 'AbortError' })), 50)
+          })
+        })
+      }
+      return new Response(mp4, { status: 200 })
+    }) as typeof fetch
+    const dl = new Downloader(db, { downloadDir: dir, downloadConcurrency: 3, scrollIntervalMs: 2000, addressTtlMin: 30 }, fetchImpl, { validator: async () => true })
+    dl.enqueue(v.id)
+    dl.start()
+    await started // fetch 已发起并阻塞
+    dl.pauseVideo([v.id]) // 单条暂停在途：abort 已发，回调 50ms 后才落定
+    dl.resume() // 期间全局继续：清空 pausedIds，abort 回调此时尚未执行
+    await new Promise(r => setTimeout(r, 150)) // 等延迟回调落定 + 重新下载完成
+    const row = listVideos(db, taskId)[0]
+    expect(row.status).not.toBe('cancelled') // 不能因回调迟到被误标取消
+    expect(row.status).toBe('done') // 已回队恢复，drain 续下
+    expect(fetchCount).toBe(2)
+  })
+
+  it('全局 pause 后立即 resume：延迟 abort 回调不误标 cancelled，pending 回队续下', async () => {
+    const taskId = createTask(db, input)
+    insertVideos(db, [item()], taskId, 'douyin')
+    const [v] = listVideos(db, taskId)
+    const mp4 = Buffer.alloc(2048)
+    mp4.writeUInt32BE(0x18, 0)
+    mp4.write('ftypisom', 4)
+    let fetchCount = 0
+    let firstStarted!: () => void
+    const started = new Promise<void>(res => { firstStarted = res })
+    const fetchImpl = (async (url: unknown, init?: RequestInit) => {
+      fetchCount++
+      if (fetchCount === 1) {
+        firstStarted()
+        const signal = init?.signal!
+        // 同上：模拟 abort 事件经 macrotask 延迟传播
+        await new Promise((resolve, reject) => {
+          signal.addEventListener('abort', () => {
+            setTimeout(() => reject(Object.assign(new Error('The operation was aborted.'), { name: 'AbortError' })), 50)
+          })
+        })
+      }
+      return new Response(mp4, { status: 200 })
+    }) as typeof fetch
+    const dl = new Downloader(db, { downloadDir: dir, downloadConcurrency: 3, scrollIntervalMs: 2000, addressTtlMin: 30 }, fetchImpl, { validator: async () => true })
+    dl.enqueue(v.id)
+    dl.start()
+    await started
+    dl.pause() // 全局暂停：中断在途
+    dl.resume() // 在 abort 回调落定前已恢复
+    await new Promise(r => setTimeout(r, 150))
+    const row = listVideos(db, taskId)[0]
+    expect(row.status).not.toBe('cancelled') // 不能因回调迟到被误标取消
+    expect(row.status).toBe('done')
+    expect(fetchCount).toBe(2)
+  })
+
   it('网络重试回退窗口内单条 pause → 清定时器，5s 后不再重新下载', async () => {
     // 只伪造 setTimeout/clearTimeout，避免影响 Date/微任务
     vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
