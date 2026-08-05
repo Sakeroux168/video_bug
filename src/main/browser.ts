@@ -87,14 +87,16 @@ export class VideoBrowser {
   }
 
   async init(): Promise<void> {
-    // 独立可拖拽子窗口：以主窗口为 parent（总是盖在主窗口上层），初始隐藏，由 setVisible/focus 唤起
+    // 独立普通窗口（不带 parent：Windows 上带 parent 的 owned window 永远盖在父窗口上层，
+    // 用户抱怨抖音窗口一直挡在程序上方；去 parent 后点谁谁在上）。初始隐藏，由 setVisible/focus 唤起。
+    // 最小尺寸 = 抖音搜索页布局下限（实测窗口缩小时页面不缩放、右侧布局被裁出窗外，筛选键跑到窗外）；
+    // 900 为防布局溢出裁剪的下限，如仍偏小可微调，勿低于 860。
     const win = new BrowserWindow({
-      parent: this.host,
       show: false,
-      width: 480,
+      width: 1024,
       height: 760,
-      minWidth: 320,
-      minHeight: 480,
+      minWidth: 900,
+      minHeight: 600,
       title: '抖音浏览器',
       webPreferences: {
         partition: 'persist:douyin',
@@ -252,7 +254,7 @@ export class VideoBrowser {
         const w = this.win.getBounds()
         let x: number
         let y: number
-        // 主窗口不可见/最小化：直接放主显示器 workArea 居中（子窗口随最小化宿主自动隐藏，但避免残留越界坐标）
+        // 主窗口不可见/最小化：直接放主显示器 workArea 居中（无 parent 依赖，独立窗口位置自理；避免定位到不可见宿主旁产生越界坐标）
         if (!this.host.isVisible() || this.host.isMinimized()) {
           x = wa.x + Math.round((wa.width - w.width) / 2)
           y = wa.y + Math.round((wa.height - w.height) / 2)
