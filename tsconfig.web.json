@@ -5,5 +5,5 @@
     "skipLibCheck": true, "noEmit": true,
     "lib": ["ES2022", "DOM", "DOM.Iterable"]
   },
-  "include": ["src/renderer/**/*", "src/shared/**/*"]
+  "include": ["src/renderer/**/*", "src/shared/**/*", "tests/components/**/*", "tests/setup-renderer.ts", "tests/helpers/**/*"]
 }
