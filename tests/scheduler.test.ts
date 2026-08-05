@@ -50,7 +50,12 @@ class FakeBrowser {
   /** 滚动中止信号 spy：pause() 应触发 abortScroll（页面级即时停止，不等 scrollToBottom 跑完） */
   abortScroll = vi.fn()
   async findBottomText(): Promise<string | null> { return this.bottomText }
-  async applyDouyinFilter(_sel: unknown, _f: unknown): Promise<boolean> { return true }
+  /** onLog：模拟 browser 的 CDP 步骤打点（供全链路日志测试走真实接线） */
+  async applyDouyinFilter(_sel: unknown, _f: unknown, onLog?: (m: string) => void): Promise<boolean> {
+    onLog?.('CDP attach 成功')
+    onLog?.('面板出现')
+    return true
+  }
   setVisible(_v: boolean): void {}
   dispose(): void {}
 }
@@ -521,7 +526,7 @@ describe('抖音筛选续爬（T3）', () => {
     await s.run(taskId)
     // 只应用一次：应用后继续跑了几轮，再停滞时不再调用
     expect(spy).toHaveBeenCalledTimes(1)
-    expect(spy).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ duration: 1 }))
+    expect(spy).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ duration: 1 }), expect.any(Function))
     expect(db.prepare('SELECT status, error FROM tasks WHERE id=?').get(taskId)).toEqual({ status: 'paused', error: 'stalled_verify' })
   }, 10000)
 
@@ -550,7 +555,7 @@ describe('抖音筛选续爬（T3）', () => {
     const { s } = setup(db, new FakeDownloader(), browser)
     await s.run(taskId)
     expect(spy).toHaveBeenCalledTimes(1)
-    expect(spy).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ duration: 1 }))
+    expect(spy).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ duration: 1 }), expect.any(Function))
   }, 10000)
 
   it('无底部文案且未到 15 秒 → 不应用筛选，按原逻辑停止', async () => {
@@ -612,5 +617,66 @@ describe('抖音筛选续爬（T3）', () => {
     const { s } = setup(db, new FakeDownloader(), browser)
     await s.run(taskId)
     expect(spy).not.toHaveBeenCalled()
+  }, 10000)
+
+  it('触发决策与 CDP 步骤逐条写入 onFilterLog（全链路日志，成功路径）', async () => {
+    const db = newDb()
+    const taskId = createTask(db, filterInput)
+    const logs: string[] = []
+    const s = new Scheduler({
+      db, browser: new FakeBrowser(), analyzer: null, downloader: new FakeDownloader(),
+      emit: () => {}, scrollIntervalMs: 1,
+      getScrollParams: () => ({ scrollSpeed: 'slow' as const, scrollPageWaitMs: 8000 }),
+      onFilterLog: m => logs.push(m)
+    })
+    await s.run(taskId)
+    const all = logs.join('\n')
+    // 触发决策每步：停滞判定 → 到底文案 → 计时 → 执行
+    expect(all).toContain('筛选触发判定：停滞命中')
+    expect(all).toContain('到底文案命中')
+    expect(all).toContain('开始执行筛选流程')
+    // browser CDP 步骤（经 onLog 回调汇入同一通道）
+    expect(all).toContain('CDP attach 成功')
+    expect(all).toContain('面板出现')
+    // scheduler 汇总执行结果 + 重置计数
+    expect(all).toContain('执行结果：成功')
+    expect(all).toContain('筛选已生效：重置停滞计数')
+  }, 10000)
+
+  it('不满足触发条件时 onFilterLog 记录不触发原因', async () => {
+    const db = newDb()
+    const taskId = createTask(db, {
+      ...input,
+      filters: { ...input.filters, douyinFilter: { enabled: false, publishTime: 0, duration: 0, searchScope: 0, contentType: 0 } }
+    })
+    const logs: string[] = []
+    const s = new Scheduler({
+      db, browser: new FakeBrowser(), analyzer: null, downloader: new FakeDownloader(),
+      emit: () => {}, scrollIntervalMs: 1,
+      getScrollParams: () => ({ scrollSpeed: 'slow' as const, scrollPageWaitMs: 8000 }),
+      onFilterLog: m => logs.push(m)
+    })
+    await s.run(taskId)
+    const all = logs.join('\n')
+    expect(all).toContain('筛选触发判定：停滞命中')
+    expect(all).toContain('不触发筛选：未启用筛选')
+  }, 10000)
+
+  it('筛选执行失败时 onFilterLog 记录失败结果（含异常信息）', async () => {
+    const db = newDb()
+    const taskId = createTask(db, filterInput)
+    const browser = new FakeBrowser()
+    vi.spyOn(browser, 'applyDouyinFilter').mockRejectedValue(new Error('cdp_boom'))
+    const logs: string[] = []
+    const s = new Scheduler({
+      db, browser, analyzer: null, downloader: new FakeDownloader(),
+      emit: () => {}, scrollIntervalMs: 1,
+      getScrollParams: () => ({ scrollSpeed: 'slow' as const, scrollPageWaitMs: 8000 }),
+      onFilterLog: m => logs.push(m)
+    })
+    await s.run(taskId)
+    const all = logs.join('\n')
+    expect(all).toContain('执行结果：失败')
+    expect(all).toContain('cdp_boom')
   }, 10000)
 })

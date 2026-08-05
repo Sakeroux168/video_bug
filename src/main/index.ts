@@ -193,7 +193,9 @@ app.whenReady().then(() => {
       return { scrollSpeed: s.scrollSpeed, scrollPageWaitMs: s.scrollPageWaitMs }
     },
     organizer,
-    organizeDebounceMs: settings.organizeDebounceMs ?? 5000
+    organizeDebounceMs: settings.organizeDebounceMs ?? 5000,
+    // 筛选续爬全链路日志：汇入 rawLog 面板（与 dy:raw 拦截日志同列展示）
+    onFilterLog: pushFilterLog
   })
 
   registerIpc({
@@ -203,7 +205,8 @@ app.whenReady().then(() => {
     reloadOrganizer,
     getOrganizer: () => organizer,
     enqueueTask,
-    setBrowserVisible
+    setBrowserVisible,
+    pushFilterLog
   })
 
   void browser.init().then(() => {
@@ -223,17 +226,26 @@ app.whenReady().then(() => {
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow() })
 })
 
-// 调试：记录最近收到的 dy:raw（URL + 是否处理 + 解析出几条/过滤剩几条 + 0 时长诊断），供界面"查看拦截日志"查看
+// 调试：记录最近收到的 dy:raw（URL + 是否处理 + 解析出几条/过滤剩几条 + 0 时长诊断）+ 筛选续爬全链路日志，
+// 供界面"查看拦截日志"查看（筛选日志条目无 url/handled，带 filterLog 字段）
 const rawLog: Array<{
   at: string
-  url: string
-  handled: boolean
+  url?: string
+  handled?: boolean
   stats?: { items: number; kept: number }
   /** 该批有解析成功但时长取不到的条目（只标记，不影响解析流程） */
   durationZero?: boolean
   /** 0 时长条目（取第一条）的顶层字段名列表，供实跑对照真实接口字段位置 */
   topKeys?: string[]
+  /** 筛选续爬全链路日志行（scheduler 触发决策 / browser CDP 步骤），渲染层前缀 [筛选] 展示 */
+  filterLog?: string
 }> = []
+
+/** 筛选续爬全链路日志：scheduler 触发决策 / browser CDP 步骤逐行入 rawLog，与 dy:raw 拦截日志同面板展示 */
+function pushFilterLog(msg: string): void {
+  rawLog.push({ at: new Date().toISOString().slice(11, 19), filterLog: msg })
+  if (rawLog.length > 60) rawLog.shift()
+}
 ipcMain.on('dy:raw', async (_e, msg) => {
   const url = String(msg?.url ?? '')
   const json = msg?.json

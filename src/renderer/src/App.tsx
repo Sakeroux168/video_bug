@@ -11,7 +11,15 @@ import type { CreateTaskInput } from '../../shared/types'
 
 export default function App(): JSX.Element {
   const [tab, setTab] = useState('tasks')
-  const [rawLog, setRawLog] = useState<Array<{ at: string; url: string; handled: boolean; stats?: { items: number; kept: number }; durationZero?: boolean; topKeys?: string[] }>>([])
+  const [rawLog, setRawLog] = useState<Array<{
+    at: string
+    url?: string
+    handled?: boolean
+    stats?: { items: number; kept: number }
+    durationZero?: boolean
+    topKeys?: string[]
+    filterLog?: string
+  }>>([])
   const [showLog, setShowLog] = useState(false)
   const [toast, setToast] = useState<{ text: string } | null>(null)
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -29,6 +37,12 @@ export default function App(): JSX.Element {
   async function refreshLog(): Promise<void> {
     setRawLog(await api.getRawLog())
     setShowLog(true)
+  }
+  /** 手动测试筛选：一键对当前任务执行一次筛选流程，结果 toast + 日志进「查看拦截日志」面板 */
+  async function runTestFilter(): Promise<void> {
+    const r = await api.testFilter()
+    notify(r.message)
+    await refreshLog()
   }
 
   // 主进程主动通知（如触发验证暂停）→ 显示为固定 toast
@@ -55,6 +69,13 @@ export default function App(): JSX.Element {
           <button
             type="button"
             className="rounded-md border border-zinc-300 px-2 py-0.5 text-xs text-zinc-500 hover:bg-zinc-100"
+            onClick={() => void runTestFilter()}
+          >
+            手动测试筛选
+          </button>
+          <button
+            type="button"
+            className="rounded-md border border-zinc-300 px-2 py-0.5 text-xs text-zinc-500 hover:bg-zinc-100"
             onClick={() => void refreshLog()}
           >
             查看拦截日志
@@ -72,21 +93,28 @@ export default function App(): JSX.Element {
       {showLog && (
         <div className="border-b border-zinc-200 bg-zinc-50 p-3">
           <div className="mb-1 flex items-center justify-between text-xs text-zinc-500">
-            <span>主进程收到的接口拦截日志（{rawLog.length} 条，最新在后）</span>
+            <span>主进程收到的接口拦截 / 筛选日志（{rawLog.length} 条，最新在后）</span>
             <button className="text-zinc-400 hover:text-zinc-600" onClick={() => setShowLog(false)}>收起</button>
           </div>
           <div className="max-h-40 overflow-auto font-mono text-[11px] leading-5">
-            {rawLog.length === 0 && <span className="text-zinc-400">（空——主进程没收到任何 dy:raw 消息）</span>}
+            {rawLog.length === 0 && <span className="text-zinc-400">（空——还没有任何拦截/筛选日志）</span>}
             {rawLog.map((r, i) => (
-              <div key={i} className={r.handled ? 'text-emerald-700' : 'text-zinc-500'}>
-                {r.at} {r.handled ? '[已处理]' : '[忽略] '}
-                {r.stats ? `[解析${r.stats.items}→剩${r.stats.kept}] ` : ''}
-                {r.durationZero && (
-                  <span className="text-amber-600">
-                    [时长缺失{r.topKeys && r.topKeys.length > 0 ? ` 顶层字段:${r.topKeys.join(',')}` : ''}]&nbsp;
-                  </span>
+              <div key={i} className={r.filterLog ? 'text-sky-700' : r.handled ? 'text-emerald-700' : 'text-zinc-500'}>
+                {r.at}{' '}
+                {r.filterLog !== undefined ? (
+                  <span>[筛选] {r.filterLog}</span>
+                ) : (
+                  <>
+                    {r.handled ? '[已处理]' : '[忽略] '}
+                    {r.stats ? `[解析${r.stats.items}→剩${r.stats.kept}] ` : ''}
+                    {r.durationZero && (
+                      <span className="text-amber-600">
+                        [时长缺失{r.topKeys && r.topKeys.length > 0 ? ` 顶层字段:${r.topKeys.join(',')}` : ''}]&nbsp;
+                      </span>
+                    )}
+                    {r.url}
+                  </>
                 )}
-                {r.url}
               </div>
             ))}
           </div>

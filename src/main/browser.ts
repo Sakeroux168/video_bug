@@ -259,37 +259,53 @@ export class VideoBrowser {
    * → mouseMoved 悬停 → 轮询面板出现（250ms×20）→ 逐选项（index>0）取中心 → mouseMoved + mousePressed/mouseReleased
    * 真实点击 → 等 2.5s 页面刷新 → finally detach。
    * debugger attach 失败（如已开调试控制台）→ 回退旧合成事件方案；仍失败返回 false，由调度侧 notice 兜底。
-   * 返回 false：按钮找不到/面板 5s 内不出现/任一需要点的选项缺失（页面结构可能已变），调用方按原逻辑停止
+   * 返回 false：按钮找不到/面板 5s 内不出现/任一需要点的选项缺失（页面结构可能已变），调用方按原逻辑停止。
+   * onLog：全链路诊断日志回调（每步 CDP 交互都打点，调度侧汇入界面「查看拦截日志」面板）
    */
-  async applyDouyinFilter(sel: typeof FILTER_SELECTORS, f: DouyinFilter): Promise<boolean> {
-    if (!this.win) return false
+  async applyDouyinFilter(sel: typeof FILTER_SELECTORS, f: DouyinFilter, onLog?: (msg: string) => void): Promise<boolean> {
+    const log = (msg: string): void => { onLog?.(msg) }
+    if (!this.win) { log('浏览器窗口不存在，无法执行筛选'); return false }
     // 组号：1发布时间/2时长/3搜索范围/4内容形式（组 0=排序不操作）；选项 data-index2 即配置索引
     const pairs: Array<[number, number]> = []
     if (f.publishTime > 0) pairs.push([1, f.publishTime])
     if (f.duration > 0) pairs.push([2, f.duration])
     if (f.searchScope > 0) pairs.push([3, f.searchScope])
     if (f.contentType > 0) pairs.push([4, f.contentType])
+    if (pairs.length === 0) { log('筛选配置全为不限（各维度 0），无需操作，直接视为成功'); return true }
     const optionSelectors = pairs.map(([g, o]) => sel.option(g, o))
+    log(`开始执行筛选流程，待点选项 ${pairs.length} 个：${optionSelectors.join('，')}`)
     const wc = this.win.webContents
     // CDP 优先：真实鼠标输入才触发 :hover 面板；attach 失败（如已开调试控制台）→ 回退合成事件方案
     let attached = false
     try {
       wc.debugger.attach('1.3')
       attached = true
-      return await this.cdpFilterPath(wc, sel, optionSelectors)
-    } catch {
+      log('CDP attach 成功（协议 1.3）')
+      const r = await this.cdpFilterPath(wc, sel, optionSelectors, log)
+      log(`CDP 路径执行完成 → ${r ? '成功' : '失败'}`)
+      return r
+    } catch (err) {
       // 仅 attach 失败回退合成事件；CDP 已跑起来后的异常（sendCommand/取坐标失败）直接算失败
-      return attached ? false : this.legacyFilterPath(wc, sel, optionSelectors)
+      if (attached) {
+        log(`CDP 路径执行异常 → 失败（${String(err)}）`)
+        return false
+      }
+      log(`CDP attach 失败（${String(err)}），回退合成事件方案`)
+      const r = await this.legacyFilterPath(wc, sel, optionSelectors, log)
+      log(`合成事件回退路径执行完成 → ${r ? '成功' : '失败'}`)
+      return r
     } finally {
       if (attached) {
         try { wc.debugger.detach() } catch { /* detach 失败忽略 */ }
+        log('CDP detach 完成')
       }
     }
   }
 
   /** CDP 真实鼠标流程（attach 已成功）：取按钮中心 → mouseMoved 悬停 → 轮询面板出现 → 逐选项真实点击 → 等刷新。
-   *  坐标取 getBoundingClientRect() 中心：CSS 像素即 viewport 坐标，与 Input.dispatchMouseEvent 一致（页面缩放不影响） */
-  private async cdpFilterPath(wc: WebContents, sel: typeof FILTER_SELECTORS, optionSelectors: string[]): Promise<boolean> {
+   *  坐标取 getBoundingClientRect() 中心：CSS 像素即 viewport 坐标，与 Input.dispatchMouseEvent 一致（页面缩放不影响）。
+   *  log：全链路诊断打点（按钮坐标/面板轮询/每选项点击），供「查看拦截日志」面板展示 */
+  private async cdpFilterPath(wc: WebContents, sel: typeof FILTER_SELECTORS, optionSelectors: string[], log: (msg: string) => void): Promise<boolean> {
     const d = wc.debugger
     const sleep = (ms: number): Promise<void> => new Promise(r => setTimeout(r, ms))
     // 取元素中心坐标（executeJavaScript 返回 null = 找不到）。
@@ -310,36 +326,41 @@ export class VideoBrowser {
     }
     // 悬停筛选按钮（先 scrollIntoView 防"搜索到底"时按钮在视口外）→ 轮询面板出现（250ms×20 = 5s，面板只认真实 hover）
     const btn = await center(sel.button, true)
-    if (!btn) return false
+    if (!btn) { log(`筛选按钮未找到（selector=${sel.button}）`); return false }
+    log(`筛选按钮中心坐标：x=${Math.round(btn.x)} y=${Math.round(btn.y)}（已 scrollIntoView 居中）`)
     await d.sendCommand('Input.dispatchMouseEvent', { type: 'mouseMoved', x: btn.x, y: btn.y })
+    log(`已发送真实鼠标悬停 mouseMoved（${Math.round(btn.x)}, ${Math.round(btn.y)}）`)
     let shown = false
     for (let i = 0; i < 20; i++) {
       await sleep(250)
       const has = await wc.executeJavaScript(`!!document.querySelector(${JSON.stringify(sel.panel)})`)
-      if (has) { shown = true; break }
+      if (has) { shown = true; log(`筛选面板出现（第 ${i + 1} 次轮询命中，约 ${(i + 1) * 250}ms）`); break }
     }
-    if (!shown) return false
+    if (!shown) { log('筛选面板 5s 内未出现（CSS :hover 未触发或面板选择器已变）'); return false }
     // 面板布局落定一拍再点首选项（渲染/定位未稳时取到的 rect 可能过期）
     await sleep(100)
     // 逐组选项（index>0）：悬停 + 按下/松开即真实点击，找不到直接失败
     for (const s of optionSelectors) {
       const pos = await center(s)
-      if (!pos) return false
+      if (!pos) { log(`选项未找到（selector=${s}）`); return false }
+      log(`点击选项 ${s} @ (${Math.round(pos.x)}, ${Math.round(pos.y)})`)
       await realClick(pos.x, pos.y)
       await sleep(200)
     }
     // 等筛选条件生效、fetch 触发页面刷新（约 2.5s）
+    log('全部选项点击完成，等待 2.5s 让筛选条件生效并刷新页面...')
     await sleep(2500)
     return true
   }
 
   /** 旧方案兜底（debugger attach 失败时）：合成 mouseover/mouseenter/mousemove 弹面板 + click 点选项；
-   *  非 :hover 驱动的场景下仍可用；仍失败返回 false 由调度侧 notice 兜底 */
-  private async legacyFilterPath(wc: WebContents, sel: typeof FILTER_SELECTORS, optionSelectors: string[]): Promise<boolean> {
+   *  非 :hover 驱动的场景下仍可用；仍失败返回 false 由调度侧 notice 兜底。
+   *  页面脚本返回明细对象 { ok, buttonFound, panelShown, missing }，主进程据其打点 */
+  private async legacyFilterPath(wc: WebContents, sel: typeof FILTER_SELECTORS, optionSelectors: string[], log: (msg: string) => void): Promise<boolean> {
     const script = '(async () => {' +
       'const sleep = ms => new Promise(r => setTimeout(r, ms));' +
       `const button = document.querySelector(${JSON.stringify(sel.button)});` +
-      'if (!button) return false;' +
+      'if (!button) return { ok: false, buttonFound: false, panelShown: false, missing: [] };' +
       // hover 弹出：事件坐标取元素中心，模拟真实鼠标悬停（部分面板由 mouseover/enter/move 触发）
       'const c = button.getBoundingClientRect();' +
       'const evt = { bubbles: true, cancelable: true, clientX: c.left + c.width / 2, clientY: c.top + c.height / 2 };' +
@@ -354,20 +375,29 @@ export class VideoBrowser {
       'let panel = await waitPanel();' +
       // click 兼容：hover 未弹出则退回 click 再等一次
       'if (!panel) { button.click(); panel = await waitPanel(); }' +
-      'if (!panel) return false;' +
+      'if (!panel) return { ok: false, buttonFound: true, panelShown: false, missing: [] };' +
       'let ok = true;' +
+      'const missing = [];' +
       `const sels = ${JSON.stringify(optionSelectors)};` +
       'for (const s of sels) {' +
       'const el = document.querySelector(s);' +
-      'if (el) { el.click(); } else { ok = false; }' +
+      'if (el) { el.click(); } else { missing.push(s); ok = false; }' +
       '}' +
       // 等筛选条件生效、fetch 触发页面刷新（约 2.5s）
       'await sleep(2500);' +
-      'return ok;' +
+      'return { ok, buttonFound: true, panelShown: true, missing };' +
       '})()'
     try {
-      return !!(await wc.executeJavaScript(script))
-    } catch { return false }
+      const r = (await wc.executeJavaScript(script)) as { ok: boolean; buttonFound: boolean; panelShown: boolean; missing: string[] } | null
+      const detail = r
+        ? `按钮找到=${r.buttonFound}，面板出现=${r.panelShown}${r.missing.length > 0 ? `，缺失选项=${r.missing.join('，')}` : ''}`
+        : '脚本未返回结果'
+      log(`合成事件路径明细：${detail} → ${r?.ok ? '成功' : '失败'}`)
+      return !!r?.ok
+    } catch (err) {
+      log(`合成事件脚本执行异常 → 失败（${String(err)}）`)
+      return false
+    }
   }
 
   /** 打开抖音页面的开发者工具（调试用） */
