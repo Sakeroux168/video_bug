@@ -156,7 +156,7 @@ export class Scheduler {
       const speedDefault = { slow: 8000, medium: 5000, fast: 3000 }[p.scrollSpeed] ?? 8000
       this.scrollWaitMs = p.scrollPageWaitMs > 0 ? p.scrollPageWaitMs : speedDefault
       let stopReason: 'reached' | 'stalled' | null = null
-      // T3/T4：轮次计数器——触发检查点的 findBottomText 每 2 轮查一次（roundCount % 2 === 0）
+      // T3/T4：轮次计数器（触发检查点日志标注第几轮用）
       let roundCount = 0
       while (!this.aborted) {
         await this.sleep(this.deps.scrollIntervalMs + Math.random() * 1500)
@@ -176,17 +176,15 @@ export class Scheduler {
         // T3/T4：筛选触发检查点（每轮、停滞判定之前）——搜索到底或 15 秒无新视频入库即触发续爬。
         // 旧实现把触发判断锁死在停滞分支（连续 5 轮空数据）内：到底后接口仍零星返回新数据（每轮 1-2 条）
         // 使 emptyRounds 归零、停滞分支永远到不了 → 不自动触发。现在每轮独立检查，不再依赖停滞。
-        // findBottomText 每 2 轮查一次（每轮查一次 executeJavaScript 开销可接受，2 轮一次折中）；15s 判定每轮查。
+        // findBottomText 每轮查一次（一次 executeJavaScript 开销可接受）且与 15s 判定同频：
+        // 若隔轮才查，FILTER_BUSY 偶轮 continue 会让奇轮落回停滞分支误停（busy 期间任务被掐断）。
         roundCount++
         const df = this.filters?.douyinFilter
         const log = (msg: string): void => { this.deps.onFilterLog?.(msg) }
         if (this.fetched < target && df?.enabled && this.task?.type === 'keyword' && !this.filterApplied) {
-          log(`筛选触发判定（第${roundCount}轮）：fetched=${this.fetched} target=${target} 空轮=${this.emptyRounds} 静默轮=${this.silentRounds}（findBottomText 每 2 轮查一次）`)
-          let bottomText: string | null = null
-          if (roundCount % 2 === 0) {
-            bottomText = await this.deps.browser.findBottomText().catch(() => null)
-            log(bottomText !== null ? `到底文案命中：「${bottomText}」` : '未找到到底文案（findBottomText 返回 null）')
-          }
+          log(`筛选触发判定（第${roundCount}轮）：fetched=${this.fetched} target=${target} 空轮=${this.emptyRounds} 静默轮=${this.silentRounds}`)
+          const bottomText = await this.deps.browser.findBottomText().catch(() => null)
+          log(bottomText !== null ? `到底文案命中：「${bottomText}」` : '未找到到底文案（findBottomText 返回 null）')
           const elapsed = Date.now() - this.lastFetchedAt
           const noNewFor15s = elapsed > 15000
           log(`距上次有新视频入库 ${elapsed}ms（阈值 15000ms）→ ${noNewFor15s ? '已超时' : '未超时'}，filterApplied=${this.filterApplied}`)
