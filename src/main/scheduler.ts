@@ -53,6 +53,8 @@ export class Scheduler {
   private scrollWaitMs = 8000
   /** T3：本任务是否已应用过抖音筛选续爬（只应用一次，无论成败） */
   private filterApplied = false
+  /** T4：最近一次有新视频入库的时刻（handleRaw fetched++ 时更新）；停滞判定用它算"15 秒无新视频" */
+  private lastFetchedAt = 0
   private aiEnabled = false
   private autoDownload = true
   private pendingVideoIds: number[] = []
@@ -128,6 +130,7 @@ export class Scheduler {
       this.silentRounds = 0
       this.rawSinceLastRound = false
       this.filterApplied = false // 每次 run 重置：筛选续爬只应用一次，恢复任务后可再次尝试
+      this.lastFetchedAt = Date.now() // T4：15 秒无新视频计时的起点
       this.pendingVideoIds = []
       this.aiEnabled = !!(this.deps.analyzer) && !!this.filters.aiFilterEnabled
       this.autoDownload = !!task.auto_download
@@ -163,21 +166,26 @@ export class Scheduler {
         const decision = buildStopDecision(this.fetched, target, this.emptyRounds + this.silentRounds)
         if (decision === 'reached') { stopReason = 'reached'; break }
         if (decision === 'stop') {
-          // T3：搜索到底后用抖音自带筛选续爬——仅 keyword 任务、启用筛选、未应用过、且未达目标时
+          // T3/T4：搜索停滞后用抖音自带筛选续爬——仅 keyword 任务、启用筛选、未应用过、且未达目标时。
+          // 触发（先到先触发）：辅规则 DOM 找底部文案（如「暂时没有更多了」）；主规则 15 秒无新视频入库
           const df = this.filters?.douyinFilter
           if (this.fetched < target && df?.enabled && this.task?.type === 'keyword' && !this.filterApplied) {
-            this.filterApplied = true // 只应用一次：无论成败都不再重试
-            let applied = false
-            try {
-              applied = await this.deps.browser.applyDouyinFilter(FILTER_SELECTORS, df)
-            } catch { applied = false }
-            if (applied) {
-              // 筛选已生效：重置停滞计数继续抓（去重靠 seen 自然跳过已爬过的，只收新内容）
-              this.emptyRounds = 0
-              this.silentRounds = 0
-              continue
+            const bottomText = await this.deps.browser.findBottomText().catch(() => null)
+            const noNewFor15s = Date.now() - this.lastFetchedAt > 15000
+            if (bottomText !== null || noNewFor15s) {
+              this.filterApplied = true // 只应用一次：无论成败都不再重试
+              let applied = false
+              try {
+                applied = await this.deps.browser.applyDouyinFilter(FILTER_SELECTORS, df)
+              } catch { applied = false }
+              if (applied) {
+                // 筛选已生效：重置停滞计数继续抓（去重靠 seen 自然跳过已爬过的，只收新内容）
+                this.emptyRounds = 0
+                this.silentRounds = 0
+                continue
+              }
+              this.deps.emit({ type: 'task:notice', text: '筛选续爬未生效（页面结构可能已变），已按原逻辑停止' })
             }
-            this.deps.emit({ type: 'task:notice', text: '筛选续爬未生效（页面结构可能已变），已按原逻辑停止' })
           }
           stopReason = 'stalled'
           break
@@ -292,6 +300,7 @@ export class Scheduler {
                  new Date(item.publishTime * 1000).toISOString(), new Date().toISOString())
             if (insertedId.changes > 0) {
               this.fetched++
+              this.lastFetchedAt = Date.now() // T4：有新视频入库，重置"15 秒无新视频"计时
               db.prepare('UPDATE tasks SET fetched_count=? WHERE id=?').run(this.fetched, this.taskId)
             }
             continue
@@ -313,6 +322,7 @@ export class Scheduler {
            status, 'pass', new Date().toISOString())
       if (info.changes > 0) {
         this.fetched++
+        this.lastFetchedAt = Date.now() // T4：有新视频入库，重置"15 秒无新视频"计时
         if (!author.created) db.prepare('UPDATE authors SET video_count = video_count + 1 WHERE id = ?').run(author.id)
         if (this.autoDownload) {
           const vid = Number(info.lastInsertRowid)

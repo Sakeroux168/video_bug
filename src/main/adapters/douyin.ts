@@ -6,6 +6,8 @@ import type { PlatformAdapter, VideoItem } from './types'
 export const FILTER_SELECTORS = {
   button: 'span.bR4uhU1W',
   panel: 'div.IMWRHJOg',
+  /** 底部文案正则：命中"滚到底"（抖音实测「暂时没有更多了」；覆盖"没有更多了"/"暂时没有更多"等变体） */
+  bottomText: /没有更多|到底|暂时没有/i,
   option: (group: number, optionIndex: number): string =>
     `span[data-index1="${group}"][data-index2="${optionIndex}"]`
 }

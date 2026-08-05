@@ -16,6 +16,8 @@ type DlEvent = { type: 'video:status'; id: number; status: string; error?: strin
 
 class FakeBrowser {
   failLoad = false
+  /** 模拟页面底部文案（如抖音「暂时没有更多了」）；null 表示未滚到底/未命中 */
+  bottomText: string | null = '暂时没有更多了'
   private loadBlocked = false
   private pendingLoad: (() => void) | null = null
 
@@ -31,7 +33,8 @@ class FakeBrowser {
     }
   }
   async scrollToBottom(_opts?: { waitMs?: number }): Promise<void> {}
-  async applyDouyinFilter(): Promise<boolean> { return true }
+  async findBottomText(): Promise<string | null> { return this.bottomText }
+  async applyDouyinFilter(_sel: unknown, _f: unknown): Promise<boolean> { return true }
   setVisible(_v: boolean): void {}
   dispose(): void {}
 }
@@ -471,6 +474,47 @@ describe('抖音筛选续爬（T3）', () => {
     // 只应用一次：应用后继续跑了几轮，再停滞时不再调用
     expect(spy).toHaveBeenCalledTimes(1)
     expect(spy).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ duration: 1 }))
+    expect(db.prepare('SELECT status, error FROM tasks WHERE id=?').get(taskId)).toEqual({ status: 'paused', error: 'stalled_verify' })
+  }, 10000)
+
+  it('底部文案触发（findBottomText 命中「暂时没有更多了」）→ 应用筛选', async () => {
+    const db = newDb()
+    const taskId = createTask(db, filterInput)
+    const browser = new FakeBrowser()
+    browser.bottomText = '暂时没有更多了'
+    const spy = vi.spyOn(browser, 'applyDouyinFilter').mockResolvedValue(true)
+    const bottomSpy = vi.spyOn(browser, 'findBottomText')
+    const { s } = setup(db, new FakeDownloader(), browser)
+    await s.run(taskId)
+    expect(bottomSpy).toHaveBeenCalled()
+    expect(spy).toHaveBeenCalledTimes(1)
+    expect(db.prepare('SELECT status, error FROM tasks WHERE id=?').get(taskId)).toEqual({ status: 'paused', error: 'stalled_verify' })
+  }, 10000)
+
+  it('15 秒无新视频入库（无底部文案）→ 触发筛选续爬', async () => {
+    const db = newDb()
+    const taskId = createTask(db, filterInput)
+    const browser = new FakeBrowser()
+    browser.bottomText = null
+    // 模拟时钟：lastFetchedAt 首调取 T0，之后每次 Date.now() 都是 T0+16s（>15s 超时）
+    vi.spyOn(Date, 'now').mockReturnValueOnce(1000000).mockReturnValue(1000000 + 16000)
+    const spy = vi.spyOn(browser, 'applyDouyinFilter').mockResolvedValue(true)
+    const { s } = setup(db, new FakeDownloader(), browser)
+    await s.run(taskId)
+    expect(spy).toHaveBeenCalledTimes(1)
+    expect(spy).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ duration: 1 }))
+  }, 10000)
+
+  it('无底部文案且未到 15 秒 → 不应用筛选，按原逻辑停止', async () => {
+    const db = newDb()
+    const taskId = createTask(db, filterInput)
+    const browser = new FakeBrowser()
+    browser.bottomText = null
+    const spy = vi.spyOn(browser, 'applyDouyinFilter').mockResolvedValue(true)
+    const { s, events } = setup(db, new FakeDownloader(), browser)
+    await s.run(taskId)
+    expect(spy).not.toHaveBeenCalled()
+    expect(events).not.toContainEqual(expect.objectContaining({ type: 'task:notice' }))
     expect(db.prepare('SELECT status, error FROM tasks WHERE id=?').get(taskId)).toEqual({ status: 'paused', error: 'stalled_verify' })
   }, 10000)
 

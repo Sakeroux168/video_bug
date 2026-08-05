@@ -180,9 +180,38 @@ export class VideoBrowser {
     }
   }
 
+  /** 扫描全 DOM 文本节点找底部文案（如抖音「暂时没有更多了」），命中返回截断 30 字的文本，否则 null。
+   *  与"15 秒无新视频"先到先触发：命中说明搜索已到底，应触发筛选续爬 */
+  async findBottomText(): Promise<string | null> {
+    if (!this.win) return null
+    const script = `(() => {
+      const re = /没有更多|到底|暂时没有/i;
+      const body = document.body;
+      if (!body) return null;
+      const skip = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT']);
+      const walker = document.createTreeWalker(body, NodeFilter.SHOW_TEXT, {
+        acceptNode: (node) => {
+          const el = node.parentElement;
+          return el && skip.has(el.tagName) ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT;
+        }
+      });
+      for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+        const t = (node.textContent || '').trim();
+        if (t && re.test(t)) return t.slice(0, 30);
+      }
+      return null;
+    })()`
+    try {
+      const r = await this.win.webContents.executeJavaScript(script)
+      return typeof r === 'string' && r.length > 0 ? r : null
+    } catch { return null }
+  }
+
   /**
-   * 注入脚本操作抖音搜索筛选面板（T3 筛选续爬）：
-   * 点筛选按钮 → 等面板出现 → 对每组 index>0 的选项依次点击（找不到记失败但继续）→ 等 2.5s 页面刷新。
+   * 注入脚本操作抖音搜索筛选面板（T3/T4 筛选续爬）：
+   * 筛选面板是 hover 弹出（鼠标移开即消失）→ 对按钮依次 dispatch mouseover/mouseenter/mousemove（坐标=元素中心），
+   * 等面板出现（150ms×20 轮询）；hover 未弹出则退回 click 兼容再等一次；面板出现后对每组 index>0 的选项依次点击
+   * （找不到记失败但继续）→ 等 2.5s 页面刷新。操作全程在脚本内连续执行，不移动鼠标，面板不会中途收起。
    * 返回 false：按钮/面板没找到，或任一需要点的选项缺失（页面结构可能已变），调用方按原逻辑停止
    */
   async applyDouyinFilter(sel: typeof FILTER_SELECTORS, f: DouyinFilter): Promise<boolean> {
@@ -198,10 +227,20 @@ export class VideoBrowser {
       'const sleep = ms => new Promise(r => setTimeout(r, ms));' +
       `const button = document.querySelector(${JSON.stringify(sel.button)});` +
       'if (!button) return false;' +
-      'button.click();' +
+      // hover 弹出：事件坐标取元素中心，模拟真实鼠标悬停（面板由 mouseover/enter/move 触发）
+      'const c = button.getBoundingClientRect();' +
+      'const evt = { bubbles: true, cancelable: true, clientX: c.left + c.width / 2, clientY: c.top + c.height / 2 };' +
+      "button.dispatchEvent(new MouseEvent('mouseover', evt));" +
+      "button.dispatchEvent(new MouseEvent('mouseenter', evt));" +
+      "button.dispatchEvent(new MouseEvent('mousemove', evt));" +
       // 等筛选面板出现（最多 3s）
-      'let panel = null;' +
-      `for (let i = 0; i < 30; i++) { panel = document.querySelector(${JSON.stringify(sel.panel)}); if (panel) break; await sleep(100); }` +
+      'const waitPanel = async () => {' +
+      `for (let i = 0; i < 20; i++) { const p = document.querySelector(${JSON.stringify(sel.panel)}); if (p) return p; await sleep(150); }` +
+      'return null;' +
+      '};' +
+      'let panel = await waitPanel();' +
+      // click 兼容：hover 未弹出则退回 click 再等一次
+      'if (!panel) { button.click(); panel = await waitPanel(); }' +
       'if (!panel) return false;' +
       'let ok = true;' +
       `const sels = ${JSON.stringify(optionSelectors)};` +
