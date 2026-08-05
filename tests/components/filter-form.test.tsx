@@ -49,11 +49,12 @@ describe('测试筛选按钮（移入筛选续爬配置区）', () => {
     expect(screen.getByText('测试筛选')).toBeInTheDocument()
   })
 
-  it('点击调用 api.testFilter 并就地显示结果文案', async () => {
+  it('点击调用 api.testFilter(true)（静默版，不写拦截日志）并就地显示结果文案', async () => {
     setup()
     fireEvent.click(screen.getByLabelText('搜索到底后用抖音筛选续爬'))
     fireEvent.click(screen.getByText('测试筛选'))
     expect(window.api.testFilter).toHaveBeenCalledTimes(1)
+    expect(window.api.testFilter).toHaveBeenCalledWith(true)
     expect(await screen.findByText('筛选执行成功')).toBeInTheDocument()
   })
 
@@ -67,6 +68,7 @@ describe('测试筛选按钮（移入筛选续爬配置区）', () => {
     expect(busyBtn).toBeDisabled()
     fireEvent.click(busyBtn)
     expect(window.api.testFilter).toHaveBeenCalledTimes(1)
+    expect(window.api.testFilter).toHaveBeenCalledWith(true)
     resolveFn({ ok: true, message: '筛选执行成功' })
     expect(await screen.findByText('筛选执行成功')).toBeInTheDocument()
   })

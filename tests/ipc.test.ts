@@ -73,6 +73,49 @@ describe('debug:testFilter 互斥锁被拒文案', () => {
     expect(browser.applyDouyinFilter).toHaveBeenCalledTimes(1)
   })
 
+  it('silent=true 时流程日志回调丢弃（不进 rawLog），其余行为一致', async () => {
+    const db = new DatabaseSync(':memory:')
+    initDb(db)
+    const taskId = createTask(db, {
+      platform: 'douyin', type: 'keyword', query: '测试',
+      filters: {
+        timeRange: 'all', duration: 'all', targetCount: 200,
+        douyinFilter: { enabled: true, publishTime: 0, duration: 1, searchScope: 0, contentType: 0 }
+      },
+      aiFilterEnabled: false, aiOrganizeEnabled: false, autoDownload: true
+    })
+    db.prepare("UPDATE tasks SET status='running' WHERE id=?").run(taskId)
+
+    const logs: string[] = []
+    const browser = { applyDouyinFilter: vi.fn(async () => true) }
+    registerIpc({
+      db,
+      scheduler: {} as never,
+      downloader: {} as never,
+      analyzer: null,
+      browser: browser as never,
+      getWindow: () => ({}) as never,
+      reloadAnalyzer: () => {},
+      reloadOrganizer: () => {},
+      getOrganizer: () => null,
+      enqueueTask: () => {},
+      setBrowserVisible: () => {},
+      pushFilterLog: (m: string) => logs.push(m)
+    })
+
+    const fn = mockHandlers.get('debug:testFilter')
+    expect(fn).toBeDefined()
+    // handler 签名是 (event, opts)，测试直接调用需补一个假 event 占位
+    const r = (await fn!(null, { silent: true })) as { ok: boolean; message: string }
+    // 结果与带日志版一致
+    expect(r).toEqual({ ok: true, message: '筛选执行成功，详见「查看拦截日志」' })
+    expect(browser.applyDouyinFilter).toHaveBeenCalledTimes(1)
+    // 静默：传下去的日志回调是空函数，调用也不产生 rawLog 行
+    const cb = vi.mocked(browser.applyDouyinFilter).mock.calls[0][2] as (m: string) => void
+    cb('手动测试筛选：任务执行中')
+    expect(logs).toEqual([])
+  })
+
   it('无可用任务时返回提示且不调 browser', async () => {
     const db = new DatabaseSync(':memory:')
     initDb(db)

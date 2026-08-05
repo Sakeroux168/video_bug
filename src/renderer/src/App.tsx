@@ -21,6 +21,8 @@ export default function App(): JSX.Element {
     filterLog?: string
   }>>([])
   const [showLog, setShowLog] = useState(false)
+  /** 手动测试筛选执行中：按钮置灰防重复点击（筛选流程约 3-5s，主进程另有互斥锁兜底） */
+  const [testFilterBusy, setTestFilterBusy] = useState(false)
   const [toast, setToast] = useState<{ text: string } | null>(null)
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -37,6 +39,19 @@ export default function App(): JSX.Element {
   async function refreshLog(): Promise<void> {
     setRawLog(await api.getRawLog())
     setShowLog(true)
+  }
+  /** 手动测试筛选（诊断版）：一键对当前任务执行一次筛选流程，结果 toast + 日志进「查看拦截日志」面板；
+   *  筛选模块内另有 silent 静默版按钮（平时用，不写日志） */
+  async function runTestFilter(): Promise<void> {
+    if (testFilterBusy) return
+    setTestFilterBusy(true)
+    try {
+      const r = await api.testFilter()
+      notify(r.message)
+      await refreshLog()
+    } finally {
+      setTestFilterBusy(false)
+    }
   }
 
   // 主进程主动通知（如触发验证暂停）→ 显示为固定 toast
@@ -59,6 +74,14 @@ export default function App(): JSX.Element {
             onClick={() => void api.openBrowserDevtools()}
           >
             抖音调试控制台
+          </button>
+          <button
+            type="button"
+            disabled={testFilterBusy}
+            className="rounded-md border border-zinc-300 px-2 py-0.5 text-xs text-zinc-500 hover:bg-zinc-100 disabled:cursor-not-allowed disabled:opacity-50"
+            onClick={() => void runTestFilter()}
+          >
+            {testFilterBusy ? '筛选中...' : '手动测试筛选'}
           </button>
           <button
             type="button"

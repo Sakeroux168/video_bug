@@ -58,12 +58,13 @@ export default function FilterForm({ onSubmit }: { onSubmit: (t: CreateTaskInput
     if (r.skipped) setErr(r.reason ?? '已跳过：该作者已爬取过')
     else setQuery('')
   }
-  /** 测试筛选：对当前任务执行一次筛选流程，结果在配置区就地提示（App 头部按钮已移除移入此处） */
+  /** 测试筛选（静默版）：对当前任务执行一次筛选流程，结果在配置区就地提示；
+   *  与头部「手动测试筛选」诊断按钮功能相同，但 silent=true 不写拦截日志面板（平时用） */
   async function runTestFilter(): Promise<void> {
     if (testFilterBusy) return
     setTestFilterBusy(true)
     try {
-      setTestResult(await api.testFilter())
+      setTestResult(await api.testFilter(true))
     } finally {
       setTestFilterBusy(false)
     }
@@ -176,7 +177,7 @@ export default function FilterForm({ onSubmit }: { onSubmit: (t: CreateTaskInput
               </select>
             </label>
           </div>
-          {/* T10③：手动测试筛选从 App 头部移入此处（行为/防重不变），结果就地提示 */}
+          {/* T10③ 纠正版：头部诊断按钮保留，此处为静默版测试按钮（不写拦截日志），结果就地提示 */}
           <div className="mt-2 flex items-center gap-3">
             <button
               type="button"

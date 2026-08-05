@@ -151,8 +151,10 @@ export function registerIpc(deps: IpcDeps): void {
   ipcMain.handle('browser:devtools', () => browser.openDevTools())
 
   // 手动测试筛选：取当前最近一个 running/paused 且启用 douyinFilter 的 keyword 任务，
-  // 直接执行一次筛选流程（复用 browser.applyDouyinFilter，与自动触发同路径），日志逐行进 rawLog 面板
-  ipcMain.handle('debug:testFilter', async () => {
+  // 直接执行一次筛选流程（复用 browser.applyDouyinFilter，与自动触发同路径）。
+  // silent（筛选模块内按钮）：流程日志回调直接丢弃不进 rawLog 面板，其余行为（选任务/执行/结果返回）与头部诊断按钮一致
+  ipcMain.handle('debug:testFilter', async (_e, opts?: { silent?: boolean }) => {
+    const log = opts?.silent ? () => {} : (m: string) => deps.pushFilterLog(m)
     const rows = db
       .prepare("SELECT * FROM tasks WHERE type='keyword' AND status IN ('running','paused') ORDER BY CASE status WHEN 'running' THEN 0 ELSE 1 END, id DESC")
       .all() as unknown as TaskRow[]
@@ -160,31 +162,31 @@ export function registerIpc(deps: IpcDeps): void {
       try { const f = JSON.parse(r.filters) as Filters; return !!f.douyinFilter?.enabled } catch { return false }
     })
     if (!row) {
-      deps.pushFilterLog('手动测试筛选：无可用任务（需 keyword 类型 + 启用筛选 + 状态为运行中/已暂停）')
+      log('手动测试筛选：无可用任务（需 keyword 类型 + 启用筛选 + 状态为运行中/已暂停）')
       return { ok: false, message: '无可用任务：需要 keyword 类型、启用筛选、且状态为运行中或已暂停' }
     }
     let df: Filters['douyinFilter']
     try { df = (JSON.parse(row.filters) as Filters).douyinFilter } catch (err) {
-      deps.pushFilterLog(`手动测试筛选：任务 #${row.id} 的筛选配置解析失败（${String(err)}）`)
+      log(`手动测试筛选：任务 #${row.id} 的筛选配置解析失败（${String(err)}）`)
       return { ok: false, message: `任务 #${row.id} 的筛选配置解析失败` }
     }
     if (!df?.enabled) {
-      deps.pushFilterLog(`手动测试筛选：任务 #${row.id} 未启用筛选，跳过`)
+      log(`手动测试筛选：任务 #${row.id} 未启用筛选，跳过`)
       return { ok: false, message: `任务 #${row.id} 未启用筛选` }
     }
-    deps.pushFilterLog(`手动测试筛选：任务 #${row.id}（${row.query}）开始执行`)
+    log(`手动测试筛选：任务 #${row.id}（${row.query}）开始执行`)
     try {
-      const ok = await browser.applyDouyinFilter(FILTER_SELECTORS, df, deps.pushFilterLog)
-      deps.pushFilterLog(`手动测试筛选：执行结果 → ${ok ? '成功' : '失败'}`)
+      const ok = await browser.applyDouyinFilter(FILTER_SELECTORS, df, log)
+      log(`手动测试筛选：执行结果 → ${ok ? '成功' : '失败'}`)
       return { ok, message: ok ? '筛选执行成功，详见「查看拦截日志」' : '筛选执行失败，详见「查看拦截日志」' }
     } catch (err) {
       // 互斥锁被拒（自动触发/上一次手动测试在跑）：不是失败，给用户明确文案
       const code = (err as { code?: string } | null)?.code
       if (code === 'FILTER_BUSY') {
-        deps.pushFilterLog('手动测试筛选：已有筛选流程进行中，本次跳过')
+        log('手动测试筛选：已有筛选流程进行中，本次跳过')
         return { ok: false, message: '已有筛选流程进行中，本次跳过' }
       }
-      deps.pushFilterLog(`手动测试筛选：执行异常 → 失败（${String(err)}）`)
+      log(`手动测试筛选：执行异常 → 失败（${String(err)}）`)
       return { ok: false, message: `筛选执行异常：${String(err)}` }
     }
   })
