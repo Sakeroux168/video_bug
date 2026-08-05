@@ -10,7 +10,7 @@ const TASK_STATUS_LABEL: Record<string, string> = { pending: '等待中', runnin
 
 const STATUS_LABEL: Record<string, string> = {
   pending: '等待', downloading: '下载中', done: '完成', failed: '失败',
-  filtered: '已过滤', collected: '待下载', cancelled: '已取消'
+  filtered: '已过滤', collected: '待下载', cancelled: '已取消', paused: '已暂停'
 }
 
 const STATUS_CLASS: Record<string, string> = {
@@ -20,7 +20,8 @@ const STATUS_CLASS: Record<string, string> = {
   failed: 'text-red-500',
   filtered: 'text-zinc-400',
   collected: 'text-amber-600',
-  cancelled: 'text-zinc-400'
+  cancelled: 'text-zinc-400',
+  paused: 'text-orange-500'
 }
 
 const PAGE_SIZE = 50
@@ -280,6 +281,7 @@ export default function TaskList({ notify }: { notify: (text: string) => void })
                             {s.failed > 0 ? `（失败 ${s.failed}）` : ''}
                             {s.collected > 0 ? `（待下载 ${s.collected}）` : ''}
                             {s.cancelled > 0 ? `（已取消 ${s.cancelled}）` : ''}
+                            {s.paused > 0 ? `（已暂停 ${s.paused}）` : ''}
                           </span>
                           <div className="h-1.5 w-24 overflow-hidden rounded bg-zinc-200">
                             <div className="h-full bg-emerald-500" style={{ width: `${dp}%` }} />
@@ -515,6 +517,12 @@ function TaskVideoTable({
                         )}
                         {v.status === 'failed' && (
                           <RowBtn label="重试" onClick={() => { void api.retryVideos([v.id]).then(() => { refresh(); notify('已重试') }) }} />
+                        )}
+                        {(v.status === 'pending' || v.status === 'downloading') && (
+                          <RowBtn label="暂停" onClick={() => { void api.pauseVideos([v.id]).then(() => { refresh(); notify('已暂停') }) }} />
+                        )}
+                        {v.status === 'paused' && (
+                          <RowBtn label="继续" onClick={() => { void api.resumeVideos([v.id]).then(() => { refresh(); notify('已恢复下载') }) }} />
                         )}
                         {(v.status === 'pending' || v.status === 'downloading') && (
                           <RowBtn label="取消" onClick={() => { void api.cancelVideos([v.id]).then(() => { refresh(); notify('已取消') }) }} />

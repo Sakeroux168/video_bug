@@ -27,7 +27,7 @@ function makeVideo(id: number, overrides: Partial<VideoRow> = {}): VideoRow {
 }
 
 function makeStats(videos: VideoRow[]): TaskStats {
-  const s: TaskStats = { total: videos.length, done: 0, failed: 0, downloading: 0, pending: 0, filtered: 0, collected: 0, cancelled: 0 }
+  const s: TaskStats = { total: videos.length, done: 0, failed: 0, downloading: 0, pending: 0, filtered: 0, collected: 0, cancelled: 0, paused: 0 }
   for (const v of videos) {
     if (v.status === 'done') s.done++
     else if (v.status === 'failed') s.failed++

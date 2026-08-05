@@ -189,13 +189,13 @@ export function listVideos(db: DatabaseSync, taskId: number): VideoRow[] {
 
 export interface TaskStats {
   total: number; done: number; failed: number; downloading: number; pending: number; filtered: number
-  collected: number; cancelled: number
+  collected: number; cancelled: number; paused: number
 }
 
 /** 一个任务的视频按状态计数（供"下载 X/Y"进度展示） */
 export function taskStats(db: DatabaseSync, taskId: number): TaskStats {
   const rows = db.prepare('SELECT status, COUNT(*) c FROM videos WHERE task_id=? GROUP BY status').all(taskId) as unknown as Array<{ status: string; c: number }>
-  const s: TaskStats = { total: 0, done: 0, failed: 0, downloading: 0, pending: 0, filtered: 0, collected: 0, cancelled: 0 }
+  const s: TaskStats = { total: 0, done: 0, failed: 0, downloading: 0, pending: 0, filtered: 0, collected: 0, cancelled: 0, paused: 0 }
   for (const r of rows) {
     s.total += r.c
     if (r.status === 'done') s.done = r.c
@@ -205,6 +205,7 @@ export function taskStats(db: DatabaseSync, taskId: number): TaskStats {
     else if (r.status === 'filtered') s.filtered = r.c
     else if (r.status === 'collected') s.collected = r.c
     else if (r.status === 'cancelled') s.cancelled = r.c
+    else if (r.status === 'paused') s.paused = r.c
   }
   return s
 }

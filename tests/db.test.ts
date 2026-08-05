@@ -75,6 +75,15 @@ describe('db', () => {
     expect(listPendingVideos(db).map(x => x.aweme_id).sort()).toEqual(['AW2'])
   })
 
+  it('listPendingVideos 不含 paused（重启后 paused 项不自动下载）', () => {
+    const id = createTask(db, input)
+    insertVideos(db, [item({ awemeId: 'AW1' })], id, 'douyin')
+    insertVideos(db, [item({ awemeId: 'AW2' })], id, 'douyin')
+    const [v1] = listVideos(db, id)
+    setVideoStatus(db, v1.id, 'paused')
+    expect(listPendingVideos(db).map(x => x.aweme_id)).toEqual(['AW2'])
+  })
+
   it('setTaskStatus 更新任务', () => {
     const id = createTask(db, input)
     setTaskStatus(db, id, 'running')
@@ -132,6 +141,19 @@ describe('db 扩展（Task 1）', () => {
     const s = taskStats(db, id)
     expect(s.total).toBe(3)
     expect(s.collected).toBe(1)
+    expect(s.cancelled).toBe(1)
+    expect(s.pending).toBe(1)
+  })
+
+  it('taskStats 统计 paused 计数', () => {
+    const id = createTask(db, { ...input, autoDownload: false })
+    insertVideos(db, [item({ awemeId: 'S1' }), item({ awemeId: 'S2' }), item({ awemeId: 'S3' })], id, 'douyin')
+    const vs = listVideos(db, id)
+    setVideoStatus(db, vs[0].id, 'paused')
+    setVideoStatus(db, vs[1].id, 'cancelled')
+    const s = taskStats(db, id)
+    expect(s.total).toBe(3)
+    expect(s.paused).toBe(1)
     expect(s.cancelled).toBe(1)
     expect(s.pending).toBe(1)
   })

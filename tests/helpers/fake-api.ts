@@ -19,7 +19,7 @@ function freshApi(): Api {
     listTasks: vi.fn(async () => []),
     listTaskVideos: vi.fn(async () => []),
     getTaskStats: vi.fn(async () => ({
-      total: 0, done: 0, failed: 0, downloading: 0, pending: 0, filtered: 0, collected: 0, cancelled: 0
+      total: 0, done: 0, failed: 0, downloading: 0, pending: 0, filtered: 0, collected: 0, cancelled: 0, paused: 0
     })),
     pauseTask: vi.fn(async () => {}),
     resumeTask: vi.fn(async () => {}),
@@ -30,6 +30,8 @@ function freshApi(): Api {
     getDownloadState: vi.fn(async () => ({ paused: false })),
     downloadVideos: vi.fn(async () => true),
     cancelVideos: vi.fn(async () => true),
+    pauseVideos: vi.fn(async () => true),
+    resumeVideos: vi.fn(async () => true),
     listAuthors: vi.fn(async () => []),
     updateAuthorCategory: vi.fn(async () => true),
     deleteAuthors: vi.fn(async () => true),

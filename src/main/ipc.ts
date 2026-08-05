@@ -74,6 +74,9 @@ export function registerIpc(deps: IpcDeps): void {
   // 手动下载（collected/cancelled/failed → pending 并入队）与取消（在途 abort / 排队移出）
   ipcMain.handle('video:download', (_e, ids: number[]) => { downloader.download(ids); return true })
   ipcMain.handle('video:cancel', (_e, ids: number[]) => { downloader.cancel(ids); return true })
+  // 单条暂停/继续（paused 状态：在途中断、排队出队；继续 = paused → pending 重新入队）
+  ipcMain.handle('video:pause', (_e, ids: number[]) => { downloader.pauseVideo(ids); return true })
+  ipcMain.handle('video:resume', (_e, ids: number[]) => { downloader.resumeVideo(ids); return true })
 
   ipcMain.handle('authors:list', () => listAuthors(db))
   ipcMain.handle('authors:updateCategory', (_e, id: number, category: string) => {

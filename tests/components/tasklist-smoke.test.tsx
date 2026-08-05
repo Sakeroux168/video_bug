@@ -15,7 +15,7 @@ function makeTask(id = 1): TaskRow {
 }
 
 const emptyStats: TaskStats = {
-  total: 10, done: 10, failed: 0, downloading: 0, pending: 0, filtered: 0, collected: 0, cancelled: 0
+  total: 10, done: 10, failed: 0, downloading: 0, pending: 0, filtered: 0, collected: 0, cancelled: 0, paused: 0
 }
 
 describe('TaskList 冒烟', () => {

@@ -265,4 +265,208 @@ describe('Downloader', () => {
       vi.useRealTimers()
     }
   })
+
+  it('全局 pause 中断在途：fetch 收到 abort，状态回 pending，resume 后重新下载', async () => {
+    const taskId = createTask(db, input)
+    insertVideos(db, [item()], taskId, 'douyin')
+    const [v] = listVideos(db, taskId)
+    const mp4 = Buffer.alloc(2048)
+    mp4.writeUInt32BE(0x18, 0)
+    mp4.write('ftypisom', 4)
+    let fetchCount = 0
+    let firstStarted!: () => void
+    const started = new Promise<void>(res => { firstStarted = res })
+    const fetchImpl = (async (url: unknown, init?: RequestInit) => {
+      fetchCount++
+      if (fetchCount === 1) { // 第一次在途阻塞，等 abort；之后的调用直接成功
+        firstStarted()
+        const signal = init?.signal!
+        await new Promise((_, reject) => {
+          signal.addEventListener('abort', () => reject(Object.assign(new Error('The operation was aborted.'), { name: 'AbortError' })))
+        })
+      }
+      return new Response(mp4, { status: 200 })
+    }) as typeof fetch
+    const dl = new Downloader(db, { downloadDir: dir, downloadConcurrency: 3, scrollIntervalMs: 2000, addressTtlMin: 30 }, fetchImpl, { validator: async () => true })
+    dl.enqueue(v.id)
+    dl.start()
+    await started // fetch 已发起并阻塞在 abort 上
+    dl.pause() // 全局暂停：应中断在途
+    await new Promise(r => setTimeout(r, 30))
+    let row = listVideos(db, taskId)[0]
+    expect(row.status).toBe('pending') // 全局暂停中断 → 回 pending（非 cancelled）
+    expect(row.error).toBeNull()
+    expect(fetchCount).toBe(1) // 暂停中不重新拉取
+    dl.resume()
+    await new Promise(r => setTimeout(r, 50))
+    row = listVideos(db, taskId)[0]
+    expect(row.status).toBe('done') // resume 后重新下载成功
+    expect(fetchCount).toBe(2)
+  })
+
+  it('单条 pause 在途：中断标 paused（区别于全局暂停的 pending 与取消的 cancelled），resumeVideo 后恢复', async () => {
+    const taskId = createTask(db, input)
+    insertVideos(db, [item()], taskId, 'douyin')
+    const [v] = listVideos(db, taskId)
+    const mp4 = Buffer.alloc(2048)
+    mp4.writeUInt32BE(0x18, 0)
+    mp4.write('ftypisom', 4)
+    let fetchCount = 0
+    let firstStarted!: () => void
+    const started = new Promise<void>(res => { firstStarted = res })
+    const fetchImpl = (async (url: unknown, init?: RequestInit) => {
+      fetchCount++
+      if (fetchCount === 1) {
+        firstStarted()
+        const signal = init?.signal!
+        await new Promise((_, reject) => {
+          signal.addEventListener('abort', () => reject(Object.assign(new Error('The operation was aborted.'), { name: 'AbortError' })))
+        })
+      }
+      return new Response(mp4, { status: 200 })
+    }) as typeof fetch
+    const dl = new Downloader(db, { downloadDir: dir, downloadConcurrency: 3, scrollIntervalMs: 2000, addressTtlMin: 30 }, fetchImpl, { validator: async () => true })
+    dl.enqueue(v.id)
+    dl.start()
+    await started
+    dl.pauseVideo([v.id]) // 单条暂停在途
+    await new Promise(r => setTimeout(r, 30))
+    let row = listVideos(db, taskId)[0]
+    expect(row.status).toBe('paused')
+    expect(row.error).toBeNull()
+    expect(fetchCount).toBe(1) // 暂停后不重新拉取
+    dl.resumeVideo([v.id]) // 单条继续
+    await new Promise(r => setTimeout(r, 50))
+    row = listVideos(db, taskId)[0]
+    expect(row.status).toBe('done')
+    expect(fetchCount).toBe(2)
+  })
+
+  it('单条 pause 排队项：移出队列标 paused，不再下载', async () => {
+    const taskId = createTask(db, input)
+    insertVideos(db, [item('A'), item('B')], taskId, 'douyin')
+    const [v1, v2] = listVideos(db, taskId)
+    let fetchCount = 0
+    let firstStarted!: () => void
+    const started = new Promise<void>(res => { firstStarted = res })
+    const fetchImpl = (async (url: unknown, init?: RequestInit) => {
+      fetchCount++
+      firstStarted()
+      const signal = init?.signal!
+      await new Promise((_, reject) => {
+        signal.addEventListener('abort', () => reject(Object.assign(new Error('The operation was aborted.'), { name: 'AbortError' })))
+      })
+    }) as typeof fetch
+    // 并发=1：v1 在途阻塞，v2 只能排队
+    const dl = new Downloader(db, { downloadDir: dir, downloadConcurrency: 1, scrollIntervalMs: 2000, addressTtlMin: 30 }, fetchImpl)
+    dl.enqueue(v1.id)
+    dl.enqueue(v2.id)
+    await started
+    expect(fetchCount).toBe(1) // v2 尚未开始
+    dl.pauseVideo([v2.id])
+    await new Promise(r => setTimeout(r, 20))
+    const rows = listVideos(db, taskId)
+    expect(rows.find(r => r.id === v2.id)!.status).toBe('paused')
+    expect(fetchCount).toBe(1) // 移出队列，不再下载
+    dl.cancel([v1.id]) // 清理在途，避免悬挂 promise
+    await new Promise(r => setTimeout(r, 20))
+  })
+
+  it('AbortError 路由：全局暂停中断后若被 cancel 抢先 → 保持 cancelled 不再重排', async () => {
+    const taskId = createTask(db, input)
+    insertVideos(db, [item()], taskId, 'douyin')
+    const [v] = listVideos(db, taskId)
+    let fetchCount = 0
+    let firstStarted!: () => void
+    const started = new Promise<void>(res => { firstStarted = res })
+    const fetchImpl = (async (url: unknown, init?: RequestInit) => {
+      fetchCount++
+      firstStarted()
+      const signal = init?.signal!
+      await new Promise((_, reject) => {
+        signal.addEventListener('abort', () => reject(Object.assign(new Error('The operation was aborted.'), { name: 'AbortError' })))
+      })
+    }) as typeof fetch
+    const dl = new Downloader(db, { downloadDir: dir, downloadConcurrency: 3, scrollIntervalMs: 2000, addressTtlMin: 30 }, fetchImpl)
+    dl.enqueue(v.id)
+    dl.start()
+    await started
+    dl.pause() // 全局暂停中断在途
+    dl.cancel([v.id]) // 中断后立刻取消：应优先于重排
+    await new Promise(r => setTimeout(r, 30))
+    const row = listVideos(db, taskId)[0]
+    expect(row.status).toBe('cancelled')
+    dl.resume()
+    await new Promise(r => setTimeout(r, 30))
+    expect(fetchCount).toBe(1) // 未被重新下载
+  })
+
+  it('全局 resume 同时恢复单条暂停项（清空 pausedIds）', async () => {
+    const taskId = createTask(db, input)
+    insertVideos(db, [item('A'), item('B')], taskId, 'douyin')
+    const [v1, v2] = listVideos(db, taskId)
+    const mp4 = Buffer.alloc(2048)
+    mp4.writeUInt32BE(0x18, 0)
+    mp4.write('ftypisom', 4)
+    let fetchCount = 0
+    let firstStarted!: () => void
+    const started = new Promise<void>(res => { firstStarted = res })
+    const fetchImpl = (async (url: unknown, init?: RequestInit) => {
+      fetchCount++
+      if (fetchCount === 1) {
+        firstStarted()
+        const signal = init?.signal!
+        await new Promise((_, reject) => {
+          signal.addEventListener('abort', () => reject(Object.assign(new Error('The operation was aborted.'), { name: 'AbortError' })))
+        })
+      }
+      return new Response(mp4, { status: 200 })
+    }) as typeof fetch
+    // 并发=1：v1 在途阻塞，v2 只能排队
+    const dl = new Downloader(db, { downloadDir: dir, downloadConcurrency: 1, scrollIntervalMs: 2000, addressTtlMin: 30 }, fetchImpl, { validator: async () => true })
+    dl.enqueue(v1.id)
+    dl.enqueue(v2.id)
+    await started // v1 在途阻塞
+    dl.pauseVideo([v2.id]) // 单条暂停排队项 v2
+    expect(listVideos(db, taskId).find(r => r.id === v2.id)!.status).toBe('paused')
+    dl.pause() // 全局暂停（中断 v1）
+    await new Promise(r => setTimeout(r, 30))
+    expect(listVideos(db, taskId).find(r => r.id === v1.id)!.status).toBe('pending')
+    dl.resume() // 全局继续：v1 重新下载，单条暂停的 v2 也一并恢复
+    await new Promise(r => setTimeout(r, 80))
+    const rows = listVideos(db, taskId)
+    expect(rows.find(r => r.id === v1.id)!.status).toBe('done')
+    expect(rows.find(r => r.id === v2.id)!.status).toBe('done')
+    expect(fetchCount).toBe(3) // v1(中断) + v1(重下) + v2
+  })
+
+  it('网络重试回退窗口内单条 pause → 清定时器，5s 后不再重新下载', async () => {
+    // 只伪造 setTimeout/clearTimeout，避免影响 Date/微任务
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      const taskId = createTask(db, input)
+      insertVideos(db, [item()], taskId, 'douyin')
+      const [v] = listVideos(db, taskId)
+      let fetchCount = 0
+      const fetchImpl = (async () => { fetchCount++; return new Response('err', { status: 500 }) }) as typeof fetch
+      const dl = new Downloader(db, { downloadDir: dir, downloadConcurrency: 3, scrollIntervalMs: 2000, addressTtlMin: 30 }, fetchImpl)
+      dl.enqueue(v.id)
+      dl.start()
+      // 让第一次下载(500)跑完 → 进入 5s 网络重试回退（status=pending, retry_count=1）
+      await vi.advanceTimersByTimeAsync(0)
+      let row = listVideos(db, taskId)[0]
+      expect(row.status).toBe('pending')
+      expect(row.retry_count).toBe(1)
+      // 回退窗口内单条暂停：应清掉定时器并标 paused
+      dl.pauseVideo([v.id])
+      row = listVideos(db, taskId)[0]
+      expect(row.status).toBe('paused')
+      await vi.advanceTimersByTimeAsync(6000) // 超过 5s 回退窗口
+      row = listVideos(db, taskId)[0]
+      expect(row.status).toBe('paused') // 定时器被清，未被重新下载
+      expect(fetchCount).toBe(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })

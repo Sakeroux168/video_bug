@@ -28,7 +28,7 @@ function makeVideo(id: number): VideoRow {
 }
 
 const stats: TaskStats = {
-  total: 7, done: 7, failed: 0, downloading: 0, pending: 0, filtered: 0, collected: 7, cancelled: 0
+  total: 7, done: 7, failed: 0, downloading: 0, pending: 0, filtered: 0, collected: 7, cancelled: 0, paused: 0
 }
 
 function makeVideos(n: number): VideoRow[] {

@@ -1,6 +1,6 @@
 export type TaskType = 'keyword' | 'author' | 'hashtag'
 export type TaskStatus = 'pending' | 'running' | 'done' | 'paused' | 'failed'
-export type VideoStatus = 'pending' | 'downloading' | 'done' | 'failed' | 'filtered' | 'collected' | 'cancelled'
+export type VideoStatus = 'pending' | 'downloading' | 'done' | 'failed' | 'filtered' | 'collected' | 'cancelled' | 'paused'
 export type TimeRange = 'all' | '7d' | '30d' | 'custom'
 export type DurationFilter = 'all' | 'short' | 'medium' | 'long'
 
@@ -47,7 +47,7 @@ export interface TaskRow {
 /** 一个任务下视频按状态计数（进度展示 + 手动模式提示条） */
 export interface TaskStats {
   total: number; done: number; failed: number; downloading: number; pending: number; filtered: number
-  collected: number; cancelled: number
+  collected: number; cancelled: number; paused: number
 }
 
 export interface VideoRow {
