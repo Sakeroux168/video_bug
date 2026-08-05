@@ -94,10 +94,12 @@ export class Scheduler {
     this.abortWait?.() // 即时唤醒当前 sleep，不等它自然结束
     this.clearOrganizeTimer()
   }
-  /** A1：暂停——置 aborted + 即时唤醒当前 sleep + 等 run() 完全退出后才返回（跑完收尾，避免状态/上下文竞态） */
+  /** A1：暂停——置 aborted + 即时唤醒当前 sleep + 通知页面滚动脚本立即中止（不等 scrollToBottom 跑完）
+   *  + 等 run() 完全退出后才返回（跑完收尾，避免状态/上下文竞态） */
   async pause(): Promise<void> {
     this.aborted = true
     this.abortWait?.()
+    this.deps.browser.abortScroll?.() // 页面级中止信号：滚动脚本下个检查点即退出，1 秒内停止滚动
     const exit = this.runExit
     if (exit) await exit
   }

@@ -33,6 +33,8 @@ class FakeBrowser {
     }
   }
   async scrollToBottom(_opts?: { waitMs?: number }): Promise<void> {}
+  /** 滚动中止信号 spy：pause() 应触发 abortScroll（页面级即时停止，不等 scrollToBottom 跑完） */
+  abortScroll = vi.fn()
   async findBottomText(): Promise<string | null> { return this.bottomText }
   async applyDouyinFilter(_sel: unknown, _f: unknown): Promise<boolean> { return true }
   setVisible(_v: boolean): void {}
@@ -323,6 +325,19 @@ describe('暂停即时打断（A1）', () => {
     await new Promise(r => setTimeout(r, 50))
     expect(pauseResolved).toBe(true) // run 退出后 pause 才返回
     expect((s as any).running).toBe(false)
+    await pRun
+    expect(db.prepare('SELECT status, error FROM tasks WHERE id=?').get(taskId)).toEqual({ status: 'paused', error: null })
+  }, 10000)
+
+  it('pause() 触发 abortScroll 滚动中止信号（页面级即时停止，不等 scrollToBottom 跑完）', async () => {
+    const db = newDb()
+    const taskId = createTask(db, input)
+    const browser = new FakeBrowser()
+    const { s } = setup(db, new FakeDownloader(), browser, 50)
+    const pRun = s.run(taskId)
+    await new Promise(r => setTimeout(r, 10)) // run 已进入循环，正在第一个 sleep
+    await s.pause()
+    expect(browser.abortScroll).toHaveBeenCalledTimes(1)
     await pRun
     expect(db.prepare('SELECT status, error FROM tasks WHERE id=?').get(taskId)).toEqual({ status: 'paused', error: null })
   }, 10000)

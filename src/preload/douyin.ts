@@ -7,3 +7,8 @@ window.addEventListener('message', (e: MessageEvent) => {
     ipcRenderer.send('dy:raw', { url: d.url ?? '', json: d.data })
   }
 })
+
+// 主进程滚动中止信号 → 页面世界：隔离世界 postMessage 主世界滚动脚本能收到（爬取暂停即时生效）
+ipcRenderer.on('dy:scroll-abort', () => {
+  window.postMessage({ type: 'dy:scroll-abort' }, '*')
+})

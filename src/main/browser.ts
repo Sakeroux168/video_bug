@@ -80,13 +80,20 @@ export class VideoBrowser {
   }
 
   /** 渐进滚动到底：滚 window + 所有可滚容器，多轮小步，并点击"加载更多"，尽力触发抖音加载更多。
-   *  waitMs：滚到底后等当页新内容进来自动进下一轮的 waitForGrowth 超时（默认 8000，对应"每页最大等待秒数"设置） */
+   *  waitMs：滚到底后等当页新内容进来自动进下一轮的 waitForGrowth 超时（默认 8000，对应"每页最大等待秒数"设置）。
+   *  暂停即时：脚本开头清 __scrollAborted 并注册 message 监听，pause() 经 abortScroll() 置位后下个检查点即退出 */
   async scrollToBottom(opts?: { waitMs?: number }): Promise<void> {
     if (!this.win) return
     const waitMs = opts?.waitMs ?? 8000
     const pollMs = Math.max(100, Math.round(waitMs / 32)) // 轮询间隔随超时缩放：8s→250ms，3s→~100ms
     const script = `(async () => {
       const sleep = ms => new Promise(r => setTimeout(r, ms));
+      // 中止信号（暂停即时）：pause() → 主进程 send → preload postMessage → 这里置位；循环每步检查，置位立即 break
+      window.__scrollAborted = false;
+      const onAbort = (e) => {
+        try { if (e.data && e.data.type === 'dy:scroll-abort') window.__scrollAborted = true; } catch (err) {}
+      };
+      window.addEventListener('message', onAbort);
       const sc = document.scrollingElement || document.documentElement;
       // 收集所有明显可滚动的元素（列表容器）
       const bigs = [];
@@ -123,6 +130,7 @@ export class VideoBrowser {
         const deadline = Date.now() + ${waitMs};
         let last = base;
         while (Date.now() < deadline) {
+          if (window.__scrollAborted) return false; // 中止：立即退出等增长，交还控制权
           await sleep(${pollMs});
           const cur = snapshot();
           if (cur.h > last.h || cur.items > last.items) return true;
@@ -131,21 +139,37 @@ export class VideoBrowser {
         return false;
       };
       // 放慢节奏：单步小、间隔长，每轮到底后等当页结果加载完再滚下一轮，避免漏抓
-      for (let round = 0; round < 4; round++) {
-        for (let i = 0; i < 10; i++) {
-          targets.forEach(t => { try { t.scrollTop += 500; } catch (e) {} });
-          wheel(500);
-          await sleep(450);
+      try {
+        for (let round = 0; round < 4; round++) {
+          if (window.__scrollAborted) break; // 每轮顶部检查中止
+          for (let i = 0; i < 10; i++) {
+            if (window.__scrollAborted) break; // 每步顶部检查中止
+            targets.forEach(t => { try { t.scrollTop += 500; } catch (e) {} });
+            wheel(500);
+            await sleep(450);
+          }
+          if (window.__scrollAborted) break;
+          targets.forEach(t => { try { t.scrollTop = t.scrollHeight; } catch (e) {} });
+          wheel(1500);
+          clickMore();
+          await waitForGrowth(snapshot());
         }
-        targets.forEach(t => { try { t.scrollTop = t.scrollHeight; } catch (e) {} });
-        wheel(1500);
-        clickMore();
-        await waitForGrowth(snapshot());
+      } finally {
+        // 防泄漏：正常结束或中止退出都移除监听，脚本多次执行不叠加
+        window.removeEventListener('message', onAbort);
       }
-      await sleep(1500); // 最后再等一拍，等网络/渲染落定
+      if (!window.__scrollAborted) await sleep(1500); // 最后再等一拍，等网络/渲染落定；已中止则立即返回
       return targets.length;
     })()`
     await this.win.webContents.executeJavaScript(script).catch(() => {})
+  }
+
+  /** 通知页面滚动脚本立即中止（fire-and-forget，不等待脚本返回）：
+   *  webContents.send('dy:scroll-abort') → preload（隔离世界）→ window.postMessage → 主世界滚动脚本置 __scrollAborted，
+   *  滚动循环在下个检查点退出（步间隔 ≤450ms，暂停 1 秒内生效） */
+  abortScroll(): void {
+    if (!this.win || this.win.isDestroyed()) return
+    this.win.webContents.send('dy:scroll-abort')
   }
 
   /**
