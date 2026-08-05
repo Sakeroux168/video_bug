@@ -645,7 +645,7 @@ describe('抖音筛选续爬（T3）', () => {
     expect(db.prepare('SELECT status, error FROM tasks WHERE id=?').get(taskId)).toEqual({ status: 'paused', error: 'stalled' })
   }, 10000)
 
-  it('未启用筛选（enabled=false）→ 不调 applyDouyinFilter，停滞后直接暂停', async () => {
+  it('未启用筛选（enabled=false）→ 不调 applyDouyinFilter；停滞走重搜自救', async () => {
     const db = newDb()
     const taskId = createTask(db, {
       ...input,
@@ -653,9 +653,11 @@ describe('抖音筛选续爬（T3）', () => {
     })
     const browser = new FakeBrowser()
     const spy = vi.spyOn(browser, 'applyDouyinFilter').mockResolvedValue(true)
+    const loadSpy = vi.spyOn(browser, 'load')
     const { s } = setup(db, new FakeDownloader(), browser)
     await s.run(taskId)
     expect(spy).not.toHaveBeenCalled()
+    expect(loadSpy.mock.calls.length).toBe(4) // 初始 + 重搜 3 次（重搜不依赖筛选配置）
     expect(db.prepare('SELECT status, error FROM tasks WHERE id=?').get(taskId)).toEqual({ status: 'paused', error: 'stalled' })
   }, 10000)
 
@@ -685,7 +687,7 @@ describe('抖音筛选续爬（T3）', () => {
     expect(all).toContain('筛选已生效：重置停滞计数')
   }, 10000)
 
-  it('未启用筛选时 onFilterLog 记录暂停原因（无自救策略）', async () => {
+  it('未启用筛选时 onFilterLog 记录重搜自救（不再直接暂停）', async () => {
     const db = newDb()
     const taskId = createTask(db, {
       ...input,
@@ -702,7 +704,8 @@ describe('抖音筛选续爬（T3）', () => {
     await s.run(taskId)
     const all = logs.join('\n')
     expect(all).toContain('停滞检测')
-    expect(all).toContain('未启用筛选续爬')
+    expect(all).toContain('次重搜') // 未启用筛选也重搜
+    expect(all).toContain('已重搜 3 次仍爬不满')
   }, 10000)
 
   it('筛选执行失败时 onFilterLog 记录失败结果（含异常信息）+ 降级重搜日志', async () => {
@@ -864,7 +867,7 @@ describe('停滞自救循环（R11）', () => {
     expect(db.prepare('SELECT status, error FROM tasks WHERE id=?').get(taskId)).toEqual({ status: 'paused', error: 'stalled' })
   }, 10000)
 
-  it('T4: 未启用筛选续爬 → 停滞直接暂停（不重搜，load 仅初始一次）', async () => {
+  it('T4: 未启用筛选续爬 → 停滞同样重搜（重搜不依赖筛选配置）；重搜 3 次超限后暂停', async () => {
     const db = newDb()
     const taskId = createTask(db, input) // 无 douyinFilter
     const browser = new FakeBrowser()
@@ -872,9 +875,10 @@ describe('停滞自救循环（R11）', () => {
     const loadSpy = vi.spyOn(browser, 'load')
     const { s, events } = setup(db, new FakeDownloader(), browser)
     await s.run(taskId)
-    expect(loadSpy).toHaveBeenCalledTimes(1) // 无重搜
-    expect(events).toContainEqual({ type: 'task:notice', text: '爬取停滞已自动暂停' })
-    expect(events).not.toContainEqual(expect.objectContaining({ type: 'task:notice', text: expect.stringContaining('已自动重新搜索关键词') }))
+    expect(loadSpy).toHaveBeenCalledTimes(4) // 初始 + 重搜 3 次（未启用筛选也重搜）
+    expect(events).toContainEqual({ type: 'task:notice', text: '已自动重新搜索关键词（第 1 次）' })
+    expect(events).not.toContainEqual({ type: 'task:notice', text: '爬取停滞已自动暂停' })
+    expect(events).toContainEqual({ type: 'task:notice', text: '已重搜 3 次仍爬不满，请调整关键词或筛选条件' })
     expect(db.prepare('SELECT status, error FROM tasks WHERE id=?').get(taskId)).toEqual({ status: 'paused', error: 'stalled' })
   }, 10000)
 
@@ -891,7 +895,7 @@ describe('停滞自救循环（R11）', () => {
     expect(db.prepare('SELECT status FROM tasks WHERE id=?').get(taskId)).toEqual({ status: 'done' })
   }, 10000)
 
-  it('T6: 非到底停滞 → 第 1 轮只继续等待（防页面加载慢误判），连续第 2 轮才重搜；重搜超限后暂停', async () => {
+  it('T6: 非到底停滞 → 立即重搜（去掉"连续 2 轮观察"延迟）；重搜 3 次超限后暂停', async () => {
     const db = newDb()
     const taskId = createTask(db, filterInput)
     const browser = new FakeBrowser()
@@ -906,8 +910,8 @@ describe('停滞自救循环（R11）', () => {
     browser.blockNextLoad() // 立即重新设锁（同步，先于 run 的微任务继续）：block 第 1 次重搜
     for (let i = 0; i < 300 && loadSpy.mock.calls.length < 2; i++) await new Promise(r => setTimeout(r, 2))
     expect(loadSpy.mock.calls.length).toBe(2) // 已停在第 1 次重搜的 load（被 block）
-    expect(bottomSpy.mock.calls.length).toBe(2) // 第 1 轮停滞只继续等待，第 2 轮才重搜（若第 1 轮就重搜，此处为 1）
-    expect((s as any).stuckRounds).toBe(2) // 计数器已累到 2 才触发重搜
+    expect(bottomSpy.mock.calls.length).toBe(1) // 第 1 轮停滞即重搜：无观察延迟（若先观察一轮，此处为 2）
+    expect((s as any).reSearchCount).toBe(1)
     expect(events).toContainEqual({ type: 'task:notice', text: '已自动重新搜索关键词（第 1 次）' })
     browser.releaseLoad()
     await p
