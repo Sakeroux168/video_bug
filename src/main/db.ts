@@ -179,6 +179,24 @@ export function insertVideos(db: DatabaseSync, items: VideoItem[], taskId: numbe
   return inserted
 }
 
+/** 按 id 删除视频行（Task 3 程序内删除），返回删除条数 */
+export function deleteVideos(db: DatabaseSync, ids: number[]): { deleted: number } {
+  if (!ids.length) return { deleted: 0 }
+  const ph = ids.map(() => '?').join(',')
+  const info = db.prepare(`DELETE FROM videos WHERE id IN (${ph})`).run(...(ids as unknown as SQLInputValue[]))
+  return { deleted: Number(info.changes) }
+}
+
+/** 按作者 id 重算 video_count（= 剩余视频数；Task 3 删除视频后计数联动） */
+export function recomputeAuthorCounts(db: DatabaseSync, authorIds: number[]): void {
+  const unique = [...new Set(authorIds)].filter((x): x is number => typeof x === 'number')
+  if (!unique.length) return
+  const ph = unique.map(() => '?').join(',')
+  db.prepare(
+    `UPDATE authors SET video_count = (SELECT COUNT(*) FROM videos WHERE author_id = authors.id) WHERE id IN (${ph})`
+  ).run(...(unique as unknown as SQLInputValue[]))
+}
+
 export function listVideos(db: DatabaseSync, taskId: number): VideoRow[] {
   return db.prepare(
     `SELECT v.*, a.nickname AS author_nickname

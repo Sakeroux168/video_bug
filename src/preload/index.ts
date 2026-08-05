@@ -12,6 +12,7 @@ const api = {
   resumeTask: (id: number): Promise<void> => ipcRenderer.invoke('task:resume', id),
   deleteTask: (id: number): Promise<void> => ipcRenderer.invoke('task:delete', id),
   retryVideos: (ids: number[]): Promise<boolean> => ipcRenderer.invoke('video:retry', ids),
+  deleteVideos: (ids: number[]): Promise<{ ok: boolean; deleted: number; error?: string }> => ipcRenderer.invoke('video:delete', ids),
   downloadPause: (): Promise<boolean> => ipcRenderer.invoke('download:pause'),
   downloadResume: (): Promise<boolean> => ipcRenderer.invoke('download:resume'),
   getDownloadState: (): Promise<{ paused: boolean }> => ipcRenderer.invoke('download:state'),

@@ -1,6 +1,8 @@
 import { ipcMain, BrowserWindow, dialog, shell } from 'electron'
 import type { DatabaseSync } from 'node:sqlite'
-import { createTask, listTasks, listVideos, listAuthors, setTaskStatus, setVideoStatus, updateAuthorCategory, deleteAuthors, taskStats } from './db'
+import { unlink } from 'fs/promises'
+import { createTask, listTasks, listVideos, listAuthors, setTaskStatus, setVideoStatus, updateAuthorCategory, deleteAuthors, taskStats, recomputeAuthorCounts } from './db'
+import { isPathInside } from './pathSafety'
 import { getSettings, saveSettings } from './settings'
 import { listAdapters } from './adapters'
 import type { Scheduler } from './scheduler'
@@ -64,6 +66,43 @@ export function registerIpc(deps: IpcDeps): void {
       downloader.enqueue(id)
     }
     return true
+  })
+
+  // Task3：程序内删除视频（③）——查 local_path → 路径安全则删本地文件（ENOENT 忽略）→ 删 DB 行 →
+  // 受影响作者 video_count 重算。单条 unlink 失败返回错误信息但不中断整批；任何状态都能删。
+  ipcMain.handle('video:delete', async (_e, ids: number[]) => {
+    try {
+      const downloadDir = getSettings().downloadDir
+      const authorIds: number[] = []
+      const errors: string[] = []
+      let deleted = 0
+      for (const id of ids) {
+        const row = db.prepare('SELECT author_id, local_path FROM videos WHERE id = ?')
+          .get(id) as { author_id: number | null; local_path: string | null } | undefined
+        if (!row) continue
+        if (row.author_id != null) authorIds.push(row.author_id)
+        if (row.local_path) {
+          // 路径防护：只允许删 downloadDir 下的文件（删除请求只来自受信渲染层，防御性校验照做）
+          if (!isPathInside(downloadDir, row.local_path)) continue
+          try {
+            await unlink(row.local_path)
+          } catch (err) {
+            // ENOENT：文件已被移走/删除，忽略继续删 DB 行；其它错误：报错并保留 DB 行（文件未删，可重试）
+            if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
+              errors.push(`删除文件失败 ${row.local_path}：${String(err)}`)
+              continue
+            }
+          }
+        }
+        db.prepare('DELETE FROM videos WHERE id = ?').run(id)
+        deleted++
+      }
+      recomputeAuthorCounts(db, authorIds)
+      if (errors.length) return { ok: false, error: errors.join('；'), deleted }
+      return { ok: true, deleted }
+    } catch (err) {
+      return { ok: false, error: String(err) }
+    }
   })
 
   // 全局下载控制：暂停（在途任务跑完，不再拉新）/ 恢复 / 查询暂停状态

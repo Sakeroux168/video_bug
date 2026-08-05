@@ -39,6 +39,7 @@ interface Derived {
   selDownloadable: number[]
   selCancellable: number[]
   selFailed: number[]
+  selDeletable: number[]
   collectedIds: number[]
 }
 
@@ -148,6 +149,24 @@ export default function TaskList({ notify }: { notify: (text: string) => void })
     setSelected(new Set())
   }
 
+  // Task3：程序内删除视频（③）——confirm 二次确认后删本地文件+DB 记录，成功后刷新列表/统计
+  function handleDeleteVideos(ids: number[]): void {
+    if (ids.length === 0) return
+    const msg = ids.length > 1
+      ? `确定删除选中的 ${ids.length} 个视频？将同时删除本地文件`
+      : '确定删除该视频？将同时删除本地文件'
+    if (!window.confirm(msg)) return
+    void api.deleteVideos(ids)
+      .then(r => {
+        if (r && r.ok === false) { notify(`删除失败：${r.error ?? '未知错误'}`); return }
+        // 清掉已删除行的勾选，避免 selected 残留失效 id
+        setSelected(prev => { const next = new Set(prev); ids.forEach(i => next.delete(i)); return next })
+        refresh()
+        notify(`已删除 ${r?.deleted ?? ids.length} 个视频`)
+      })
+      .catch(err => notify(`删除失败：${String(err)}`))
+  }
+
   function handleSort(taskId: number, key: SortKey): void {
     setSortState(prev => {
       const p = { ...prev }
@@ -206,8 +225,10 @@ export default function TaskList({ notify }: { notify: (text: string) => void })
         return st === 'pending' || st === 'downloading'
       })
       const selFailed = [...selected].filter(vid => vmap.get(vid)?.status === 'failed')
+      // Task3：删除对任何状态都可用，可删项 = 本任务 selected 全集（跨任务勾选经 vmap 排除）
+      const selDeletable = [...selected].filter(vid => vmap.has(vid))
       const collectedIds = vs.filter(v => v.status === 'collected').map(v => v.id)
-      out[id] = { filtered, pageCount, curPage, pageVideos, selectableIds, allOnPageSelected, someOnPageSelected, selDownloadable, selCancellable, selFailed, collectedIds }
+      out[id] = { filtered, pageCount, curPage, pageVideos, selectableIds, allOnPageSelected, someOnPageSelected, selDownloadable, selCancellable, selFailed, selDeletable, collectedIds }
     }
     return out
   }, [expanded, videos, sortState, searchText, page, selected, onlyFailed])
@@ -355,6 +376,11 @@ export default function TaskList({ notify }: { notify: (text: string) => void })
                               onClick={() => { void api.retryVideos(d.selFailed).then(() => { refresh(); notify(`已重试 ${d.selFailed.length} 个视频`) }) }}
                             >重试选中失败({d.selFailed.length})</button>
                             <button
+                              className={btnSmall}
+                              disabled={d.selDeletable.length === 0}
+                              onClick={() => handleDeleteVideos(d.selDeletable)}
+                            >删除选中({d.selDeletable.length})</button>
+                            <button
                               className={`${btnSmall} ${onlyFailed[t.id] ? '!border-red-300 bg-red-50 !text-red-600 hover:!bg-red-100' : ''}`}
                               onClick={() => {
                                 setOnlyFailed(prev => ({ ...prev, [t.id]: !(prev[t.id] ?? false) }))
@@ -378,6 +404,7 @@ export default function TaskList({ notify }: { notify: (text: string) => void })
                             onPageChange={p => setPage(prev => ({ ...prev, [t.id]: p }))}
                             onReplaceSelect={replaceSelect}
                             onClearSelection={clearSelection}
+                            onDeleteVideos={handleDeleteVideos}
                             notify={notify}
                             refresh={refresh}
                           />
@@ -405,7 +432,7 @@ export default function TaskList({ notify }: { notify: (text: string) => void })
  */
 function TaskVideoTable({
   d, sort, selected, onSelectRows, onTogglePage, onSort, onPageChange,
-  onReplaceSelect, onClearSelection, notify, refresh
+  onReplaceSelect, onClearSelection, onDeleteVideos, notify, refresh
 }: {
   d: Derived
   sort: { key: SortKey; dir: 1 | -1 } | undefined
@@ -416,6 +443,7 @@ function TaskVideoTable({
   onPageChange: (page: number) => void
   onReplaceSelect: (ids: number[]) => void
   onClearSelection: () => void
+  onDeleteVideos: (ids: number[]) => void
   notify: (text: string) => void
   refresh: () => void
 }): React.ReactElement {
@@ -531,6 +559,7 @@ function TaskVideoTable({
                           <RowBtn label="定位" onClick={() => void api.locateVideo(v.local_path!)} />
                         )}
                         <a className="text-blue-500 hover:underline" href={`https://www.douyin.com/video/${v.aweme_id}`} target="_blank" rel="noreferrer">原视频</a>
+                        <button className="text-red-400 hover:text-red-500" onClick={() => onDeleteVideos([v.id])}>删除</button>
                       </div>
                     )}
                   </td>

@@ -25,6 +25,7 @@ function freshApi(): Api {
     resumeTask: vi.fn(async () => {}),
     deleteTask: vi.fn(async () => {}),
     retryVideos: vi.fn(async () => true),
+    deleteVideos: vi.fn(async () => ({ ok: true, deleted: 0 })),
     downloadPause: vi.fn(async () => true),
     downloadResume: vi.fn(async () => true),
     getDownloadState: vi.fn(async () => ({ paused: false })),

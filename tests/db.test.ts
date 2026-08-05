@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { DatabaseSync } from 'node:sqlite'
-import { initDb, createTask, listTasks, insertVideos, listVideos, upsertAuthor, listAuthors, setVideoStatus, listPendingVideos, setTaskStatus, taskStats } from '../src/main/db'
+import { initDb, createTask, listTasks, insertVideos, listVideos, upsertAuthor, listAuthors, setVideoStatus, listPendingVideos, setTaskStatus, taskStats, deleteVideos, recomputeAuthorCounts } from '../src/main/db'
 import type { CreateTaskInput, Filters } from '../src/shared/types'
 import type { VideoItem } from '../src/main/adapters/types'
 
@@ -163,5 +163,48 @@ describe('db 扩展（Task 1）', () => {
     insertVideos(db, [item()], id, 'douyin')
     const [v] = listVideos(db, id)
     expect(v.author_nickname).toBe('作者1')
+  })
+})
+
+describe('deleteVideos / recomputeAuthorCounts（Task 3 程序内删除）', () => {
+  it('deleteVideos 按 id 删行并返回删除数', () => {
+    const id = createTask(db, input)
+    insertVideos(db, [item(), item({ awemeId: 'AW2' }), item({ awemeId: 'AW3' })], id, 'douyin')
+    const vs = listVideos(db, id)
+    expect(deleteVideos(db, [vs[0].id, vs[2].id]).deleted).toBe(2)
+    expect(listVideos(db, id).map(v => v.aweme_id)).toEqual(['AW2'])
+  })
+
+  it('deleteVideos 空数组/不存在的 id 返回 0 且不报错', () => {
+    const id = createTask(db, input)
+    insertVideos(db, [item()], id, 'douyin')
+    expect(deleteVideos(db, []).deleted).toBe(0)
+    expect(deleteVideos(db, [99999]).deleted).toBe(0)
+    expect(listVideos(db, id)).toHaveLength(1)
+  })
+
+  it('删 1 条后 recomputeAuthorCounts 让 video_count 从 2 → 1', () => {
+    const id = createTask(db, input)
+    insertVideos(db, [item(), item({ awemeId: 'AW2' })], id, 'douyin')
+    expect(listAuthors(db)[0].video_count).toBe(2)
+    const [v1] = listVideos(db, id)
+    deleteVideos(db, [v1.id])
+    recomputeAuthorCounts(db, [v1.author_id!])
+    expect(listAuthors(db)[0].video_count).toBe(1)
+  })
+
+  it('多作者：删光一个作者的视频后该作者 video_count 归 0，其它作者不受影响', () => {
+    const id = createTask(db, input)
+    insertVideos(db, [item(), item({ awemeId: 'AW2' })], id, 'douyin') // 作者 SEC1 两条
+    insertVideos(db, [item({ awemeId: 'AW3', authorSecUid: 'SEC2', authorNickname: '作者2' })], id, 'douyin') // 作者 SEC2 一条
+    const authors = listAuthors(db)
+    const sec1 = authors.find(a => a.sec_uid === 'SEC1')!
+    const sec2 = authors.find(a => a.sec_uid === 'SEC2')!
+    const vs = listVideos(db, id)
+    deleteVideos(db, vs.filter(v => v.author_id === sec1.id).map(v => v.id))
+    recomputeAuthorCounts(db, [sec1.id, sec2.id])
+    const after = listAuthors(db)
+    expect(after.find(a => a.id === sec1.id)!.video_count).toBe(0)
+    expect(after.find(a => a.id === sec2.id)!.video_count).toBe(1)
   })
 })
