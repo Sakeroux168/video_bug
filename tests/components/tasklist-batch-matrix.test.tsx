@@ -234,6 +234,19 @@ describe('批量操作矩阵（全选/indeterminate + 批量按钮 + 行内按�
     expect(window.api.deleteVideos).not.toHaveBeenCalled()
   })
 
+  it('搜索过滤后批量下载：勾选可见行 → 参数为过滤后 id（非全列表）', async () => {
+    const c = await setup(Array.from({ length: 10 }, (_, i) => makeVideo(i + 1, { status: 'collected' })))
+    // 搜索词「视频1」→ 只匹配 视频1 / 视频10 两条可见（与 status='filtered' 行是两套机制）
+    fireEvent.change(screen.getByPlaceholderText('搜索标题/作者'), { target: { value: '视频1' } })
+
+    // 全选 = 过滤后的可见行；批量计数与调用参数都只含这 2 条
+    fireEvent.click(headerCheckbox())
+    const btn = screen.getByText('下载选中(2)') as HTMLButtonElement
+    expect(btn).toBeEnabled()
+    fireEvent.click(btn)
+    expect(window.api.downloadVideos).toHaveBeenCalledWith([1, 10])
+  })
+
   it('行内按钮组合矩阵：每行只显示对应按钮 + 代表性按钮点击调接口', async () => {
     const c = await setup([
       makeVideo(1, { status: 'pending' }),
