@@ -9,6 +9,8 @@ export class VideoBrowser {
   private win: BrowserWindow | null = null
   // 首次显示前定位到主窗口右侧；之后尊重用户拖拽/缩放后的位置，不再重置
   private positioned = false
+  // T4：窗口是否已显示过——首次显示必须 show()（showInactive 对从未显示的窗口是空操作），随后 blur 不抢焦点
+  private everShown = false
   // 主动销毁开关：dispose 时置 true，避免 close 拦截把销毁变成隐藏
   private forceClose = false
 
@@ -147,9 +149,10 @@ export class VideoBrowser {
   }
 
   /**
-   * 显示/隐藏抖音窗口。程序化调用一律不抢焦点（showInactive），
-   * 避免盖住用户正在打字/看文件的窗口；仅用户主动切到浏览器标签时传 focus=true（show 激活窗口）。
-   * 注意：showInactive 对已显示的窗口是无操作且安全的
+   * 显示/隐藏抖音窗口。程序化调用一律不抢焦点，避免盖住用户正在打字/看文件的窗口；
+   * 仅用户主动切到浏览器标签时传 focus=true（show 激活窗口）。
+   * 首次显示：showInactive（SW_SHOWNOACTIVATE）对从未显示过的窗口是空操作 → 必须 show() 才真正显示，
+   * 显示后立即 blur() 解除激活态，不抢用户焦点；之后再显示才用 showInactive。
    */
   setVisible(v: boolean, focus = false): void {
     if (!this.win || this.win.isDestroyed()) return
@@ -160,8 +163,18 @@ export class VideoBrowser {
         this.win.setPosition(b.x + b.width + 24, b.y)
         this.positioned = true
       }
-      if (focus) this.win.show()
-      else this.win.showInactive()
+      if (!this.everShown) {
+        this.everShown = true
+        this.win.show()
+        // 显示后一拍再 blur：窗口已可见但焦点回到用户之前的窗口，不打断用户操作
+        setImmediate(() => {
+          if (!focus && this.win && !this.win.isDestroyed()) this.win.blur()
+        })
+      } else if (focus) {
+        this.win.show()
+      } else {
+        this.win.showInactive()
+      }
     } else {
       this.win.hide()
     }
