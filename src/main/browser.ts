@@ -11,6 +11,21 @@ export interface ClickOptionsRetries {
   option?: number
 }
 
+/** 定位成功返回值：中心坐标 + 悬停前遮挡/视口检查结果（hitDesc/covered/inViewport 与取坐标同脚本得出——
+ *  按钮元素引用无法跨 executeJavaScript 调用传递，elementFromPoint 检查必须与 rect 计算在同一脚本内完成）。
+ *  inViewport=false：坐标在视口外（窗口过窄按钮被裁出，elementFromPoint 结果不可信）；
+ *  hitDesc：elementFromPoint 命中元素的 tag.class 摘要（视口外或未命中时为 null）；
+ *  covered：命中元素非按钮本体/其子孙（可能被其它元素遮挡）。 */
+export interface LocatedEl {
+  ok: true
+  x: number
+  y: number
+  index: number
+  hitDesc: string | null
+  covered: boolean
+  inViewport: boolean
+}
+
 /** 选项点击脚本（单次 executeJavaScript 完成「面板重找 + 逐选项查找 + el.click」）：
  *  hover 弹层在两次 executeJavaScript 调用间隙（sleep + IPC 往返）会关闭——「面板出现」与「点选项」分两次调用
  *  会报「面板未找到」，合并为一次脚本执行杜绝间隙丢面板；面板/选项各带 200ms×N 重试等待渲染；
@@ -397,13 +412,14 @@ export class VideoBrowser {
    *  页面脚本里的 find 即 resolveSelector 的 toString 嵌入（与单测同一份逻辑），并注入 rectOf 做可见性校验：
    *  CSS :hover 驱动的筛选面板大概率常驻 DOM 但隐藏（display:none/visibility:hidden，rect 宽高为 0），
    *  命中但不可见视为未命中，防止轮询假命中 → 坐标全 0 → realClick 打到 (0,0) 的静默假成功。
-   *  返回：ok=true 带中心坐标/命中下标；ok=false 时 scopeFound 区分容器未命中/目标未命中，
-   *  hitIndex >= 0 = 目标候选「命中但不可见」（打点用），-1 = 完全未命中。 */
+   *  返回：ok=true 带中心坐标/命中下标，并带悬停前遮挡/视口检查结果（hitDesc/covered/inViewport——
+   *  elementFromPoint 命中元素是否为按钮本体/其子孙；坐标在视口外则 inViewport=false，供调用方打点诊断）；
+   *  ok=false 时 scopeFound 区分容器未命中/目标未命中，hitIndex >= 0 = 目标候选「命中但不可见」（打点用），-1 = 完全未命中。 */
   private async locateElement(
     wc: WebContents,
     cands: readonly FilterCandidate[],
     opts: { scopeCands?: readonly FilterCandidate[]; scrollFirst?: boolean } = {}
-  ): Promise<{ ok: true; x: number; y: number; index: number } | { ok: false; scopeFound: boolean; hitIndex: number }> {
+  ): Promise<LocatedEl | { ok: false; scopeFound: boolean; hitIndex: number }> {
     // scope 先找面板再在其内找目标；scope 未命中即返回（打点区分「面板未找到」与「选项候选未命中」）
     const scopePart = opts.scopeCands
       ? `const sc = find(${JSON.stringify(opts.scopeCands)}, document, textOf, null, rectOf); if (!sc.el) return { found: false, scopeFound: false, hitIndex: -1 };`
@@ -420,15 +436,39 @@ export class VideoBrowser {
       const el = r.el;
       ${scrollPart}
       const c = el.getBoundingClientRect();
-      return { found: true, x: c.left + c.width / 2, y: c.top + c.height / 2, index: r.index };
+      const x = c.left + c.width / 2, y = c.top + c.height / 2;
+      // 悬停前遮挡/视口检查（与取坐标同脚本完成：按钮元素引用无法跨 executeJavaScript 调用传递）：
+      // 坐标在视口外（窗口过窄按钮被裁出，elementFromPoint 结果不可信）→ inViewport=false；
+      // 否则 elementFromPoint 命中元素：非按钮本体/其子孙（contains 判定）→ covered=true（可能被遮挡）
+      let inViewport = x >= 0 && y >= 0 && x <= window.innerWidth && y <= window.innerHeight;
+      let hitDesc = null;
+      let covered = false;
+      if (inViewport) {
+        const hit = document.elementFromPoint(x, y);
+        if (hit) {
+          const cls = hit.className && String(hit.className).trim() ? '.' + String(hit.className).trim().split(/\\s+/).join('.') : '';
+          hitDesc = hit.tagName.toLowerCase() + cls;
+          covered = hit !== el && !el.contains(hit);
+        }
+      }
+      return { found: true, x: x, y: y, index: r.index, hitDesc: hitDesc, covered: covered, inViewport: inViewport };
     })()`
     const r = (await wc.executeJavaScript(script).catch(() => null)) as
-      | { found: true; x: number; y: number; index: number }
+      | { found: true; x: number; y: number; index: number; hitDesc: string | null; covered: boolean; inViewport: boolean }
       | { found: false; scopeFound: boolean; hitIndex: number }
       | null
     if (!r) return { ok: false, scopeFound: false, hitIndex: -1 }
     if (!r.found) return { ok: false, scopeFound: r.scopeFound, hitIndex: r.hitIndex }
-    return { ok: true, x: r.x, y: r.y, index: r.index }
+    // 兜底默认：旧形状/异常缺失字段按「视口内、未遮挡」处理，避免误报窗口过窄
+    return {
+      ok: true,
+      x: r.x,
+      y: r.y,
+      index: r.index,
+      hitDesc: r.hitDesc ?? null,
+      covered: r.covered ?? false,
+      inViewport: r.inViewport ?? true
+    }
   }
 
   /** 候选依次尝试打点：候选1 css("span.bR4uhU1W")未命中 → 候选2 文字"筛选"命中；hitIndex=-1 表示全部未命中 */
@@ -443,6 +483,24 @@ export class VideoBrowser {
       return `候选${hitIndex + 1} 命中但不可见（rect 宽高为 0，疑似 display:none/visibility:hidden 的常驻 DOM 元素）`
     }
     return this.candidateHitText(cands, -1)
+  }
+
+  /** 悬停前检查打点（真机诊断用，不改变悬停行为）：
+   *  坐标在视口外 → 窗口过窄按钮被裁出视口，提示拉宽抖音窗口；
+   *  命中按钮本体/其子孙 → 正常；
+   *  命中其它元素 → 可能被遮挡（仍尝试悬停，防 elementFromPoint 因滚动/渲染时机误判） */
+  private logPreHoverCheck(btn: LocatedEl, log: (msg: string) => void): void {
+    const rx = Math.round(btn.x)
+    const ry = Math.round(btn.y)
+    if (!btn.inViewport) {
+      log(`[筛选] 悬停前检查：窗口过窄，筛选按钮在视口外（坐标 (${rx}, ${ry}) 超出 innerWidth/innerHeight），请拉宽抖音窗口`)
+    } else if (btn.hitDesc && !btn.covered) {
+      log(`[筛选] 悬停前检查：坐标 (${rx}, ${ry}) 命中 ${btn.hitDesc}（按钮本体/子元素）→ 正常`)
+    } else if (btn.hitDesc) {
+      log(`[筛选] 悬停前检查：坐标 (${rx}, ${ry}) 命中 ${btn.hitDesc}，可能被遮挡，仍尝试悬停`)
+    } else {
+      log(`[筛选] 悬停前检查：坐标 (${rx}, ${ry}) 未命中任何元素（elementFromPoint 返回 null），仍尝试悬停`)
+    }
   }
 
   /** 执行选项点击脚本并返回明细（脚本异常/未返回 → null） */
@@ -483,6 +541,7 @@ export class VideoBrowser {
       log(`面板在选项脚本执行期间关闭（panelLost），重新悬停按钮并重试整批（第 ${attempt + 1} 次失败，上限 3 次）...`)
       const btn = await this.locateElement(wc, sel.button, { scrollFirst: true })
       if (!btn.ok) { log(`重新悬停前筛选按钮未找到（${this.failHitText(sel.button, btn.hitIndex)}）→ 放弃重试`); return false }
+      this.logPreHoverCheck(btn, log)
       await hover(btn.x, btn.y)
       log(`已重新发送真实鼠标悬停（${Math.round(btn.x)}, ${Math.round(btn.y)}）`)
       let shown = false
@@ -514,6 +573,9 @@ export class VideoBrowser {
     const btn = await this.locateElement(wc, sel.button, { scrollFirst: true })
     if (!btn.ok) { log(`筛选按钮未找到（${this.failHitText(sel.button, btn.hitIndex)}）`); return false }
     log(`筛选按钮 ${this.candidateHitText(sel.button, btn.index)}；中心坐标 x=${Math.round(btn.x)} y=${Math.round(btn.y)}（已 scrollIntoView 居中）`)
+    // 悬停前遮挡/视口检查（与取坐标同脚本的 elementFromPoint 打点）：命中按钮本体/子元素 → 正常；
+    // 命中其它元素 → 可能被遮挡（仍尝试悬停）；坐标在视口外 → 窗口过窄按钮被裁出，提示拉宽窗口。真机诊断用
+    this.logPreHoverCheck(btn, log)
     await d.sendCommand('Input.dispatchMouseEvent', { type: 'mouseMoved', x: btn.x, y: btn.y })
     log(`已发送真实鼠标悬停 mouseMoved（${Math.round(btn.x)}, ${Math.round(btn.y)}）`)
     // 面板轮询 = 等到真正可见：候选命中但不可见（常驻 DOM 隐藏）不视为出现，继续等；

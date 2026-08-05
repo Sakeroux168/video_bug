@@ -22,7 +22,7 @@ function fakeWebContents(): {
     executeJavaScript: vi.fn(async (script: string) =>
       script.includes('panelLost')
         ? { ok: true, panelFound: true, panelLost: false, clicked: [0], missing: [] }
-        : { found: true, x: 100, y: 100, index: 0 }
+        : { found: true, x: 100, y: 100, index: 0, hitDesc: 'button.mock', covered: false, inViewport: true }
     )
   }
 }
@@ -76,7 +76,7 @@ describe('VideoBrowser 选项点击：面板丢失（panelLost）→ 重新悬�
         if (script.includes('panelLost')) {
           return clickResults[Math.min(runs++, clickResults.length - 1)]
         }
-        return { found: true, x: 100, y: 100, index: 0 }
+        return { found: true, x: 100, y: 100, index: 0, hitDesc: 'button.mock', covered: false, inViewport: true }
       })
     }
   }
