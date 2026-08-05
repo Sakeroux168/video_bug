@@ -167,6 +167,27 @@ describe('deleteFileCategory / deleteFileAuthor（递归删除 + DB 联动）', 
     expect(left.map(r => r.aweme_id).sort()).toEqual(['AW2', 'AW4'])
   })
 
+  it('前缀碰撞：删「美食」不误删「美食家」的行（LIKE 前缀必须目录分隔符收尾）', async () => {
+    mkdirSync(join(tmp, '美食', 'x'), { recursive: true })
+    mkdirSync(join(tmp, '美食家', 'x'), { recursive: true })
+    writeFileSync(join(tmp, '美食', 'x', 'v.mp4'), 'x')
+    writeFileSync(join(tmp, '美食家', 'x', 'v.mp4'), 'x')
+    addVideo('AW1', join(tmp, '美食', 'x', 'v.mp4'))
+    addVideo('AW2', join(tmp, '美食家', 'x', 'v.mp4'))
+
+    const r = await deleteFileCategory({ db, downloadDir: tmp }, '美食')
+    expect(r.ok).toBe(true)
+    expect(r.deleted).toBe(1)
+    // 兄弟品类目录与行都保留
+    expect(existsSync(join(tmp, '美食家'))).toBe(true)
+    const left = db.prepare('SELECT aweme_id FROM videos').all() as Array<{ aweme_id: string }>
+    expect(left.map(x => x.aweme_id)).toEqual(['AW2'])
+    // 计数联动只影响被删品类的作者
+    const byName = Object.fromEntries(listAuthors(db).map(a => [a.nickname, a.video_count]))
+    expect(byName['作者AW1']).toBe(0)
+    expect(byName['作者AW2']).toBe(1)
+  })
+
   it('路径防护：../ 与 . 拒绝，目录不动、库不动', async () => {
     mkdirSync(join(tmp, '正常'), { recursive: true })
     writeFileSync(join(tmp, '正常', 'v.mp4'), 'x')

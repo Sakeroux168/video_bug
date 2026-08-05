@@ -1,4 +1,5 @@
 import type { DatabaseSync, SQLInputValue } from 'node:sqlite'
+import { sep } from 'path'
 import type { CreateTaskInput, TaskRow, TaskStatus, VideoRow, AuthorRow, VideoStatus } from '../shared/types'
 import type { VideoItem } from './adapters/types'
 
@@ -192,9 +193,13 @@ function escapeLike(s: string): string {
   return s.replace(/[\\%_]/g, (m) => `\\${m}`)
 }
 
-/** 按本地路径前缀删除视频行（文件管理删品类/作者联动），返回删除条数与受影响作者 id */
+/**
+ * 按本地路径前缀删除视频行（文件管理删品类/作者联动），返回删除条数与受影响作者 id。
+ * 前缀必须以目录分隔符收尾：删「美食」只匹配 `.../美食/` 下的行，不会命中「美食家」等
+ * 名称互为前缀的兄弟品类/作者目录（品类名来自 AI 分类、作者名来自昵称，碰撞完全现实）。
+ */
 export function deleteVideosByPathPrefix(db: DatabaseSync, prefix: string): { deleted: number; authorIds: number[] } {
-  const like = `${escapeLike(prefix)}%`
+  const like = `${escapeLike(prefix + sep)}%`
   const rows = db.prepare(`SELECT author_id FROM videos WHERE local_path LIKE ? ESCAPE '\\'`)
     .all(like) as unknown as Array<{ author_id: number | null }>
   const info = db.prepare(`DELETE FROM videos WHERE local_path LIKE ? ESCAPE '\\'`).run(like)
