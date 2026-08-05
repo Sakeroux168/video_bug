@@ -1,4 +1,4 @@
-import { BrowserWindow } from 'electron'
+import { BrowserWindow, screen } from 'electron'
 import { join } from 'path'
 import type { PlatformAdapter } from './adapters/types'
 import { FILTER_SELECTORS } from './adapters/douyin'
@@ -160,7 +160,28 @@ export class VideoBrowser {
       // 首次显示前定位到主窗口右侧；之后不再重置，保留用户拖拽后的位置
       if (!this.positioned) {
         const b = this.host.getBounds()
-        this.win.setPosition(b.x + b.width + 24, b.y)
+        const wa = screen.getPrimaryDisplay().workArea
+        const w = this.win.getBounds()
+        let x: number
+        let y: number
+        // 主窗口不可见/最小化：直接放主显示器 workArea 居中（子窗口随最小化宿主自动隐藏，但避免残留越界坐标）
+        if (!this.host.isVisible() || this.host.isMinimized()) {
+          x = wa.x + Math.round((wa.width - w.width) / 2)
+          y = wa.y + Math.round((wa.height - w.height) / 2)
+        } else {
+          x = b.x + b.width + 24
+          y = b.y
+          // 钳制到 workArea 内：主窗口右侧放不下（x 越界）→ 回退主窗口左侧 → 仍越界则贴右缘；y 同理贴下缘
+          if (x + w.width > wa.x + wa.width) {
+            x = b.x - w.width - 24
+            if (x < wa.x) x = wa.x + wa.width - w.width
+          }
+          if (y + w.height > wa.y + wa.height) {
+            y = wa.y + wa.height - w.height
+            if (y < wa.y) y = wa.y
+          }
+        }
+        this.win.setPosition(x, y)
         this.positioned = true
       }
       if (!this.everShown) {
