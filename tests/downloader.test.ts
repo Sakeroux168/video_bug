@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { DatabaseSync } from 'node:sqlite'
 import { initDb, createTask, insertVideos, listVideos, setVideoStatus } from '../src/main/db'
 import { Downloader, buildUserAgent } from '../src/main/downloader'
-import { mkdtempSync, readFileSync, rmSync, existsSync } from 'fs'
+import { mkdtempSync, readFileSync, rmSync, existsSync, readdirSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
 import type { CreateTaskInput } from '../src/shared/types'
@@ -190,6 +190,36 @@ describe('Downloader', () => {
     const row = listVideos(db, taskId)[0]
     expect(row.status).toBe('cancelled')
     expect(row.retry_count).toBe(0) // 不走 5s 网络重试，retry_count 不增
+  })
+
+  it('校验阶段 cancel：文件已完整落盘但 validator 阻塞期间删除 → done 提交前 signal 守卫走 aborted 收尾，完整文件被删不留孤儿', async () => {
+    const taskId = createTask(db, input)
+    insertVideos(db, [item()], taskId, 'douyin')
+    const [v] = listVideos(db, taskId)
+    const mp4 = Buffer.alloc(2048)
+    mp4.writeUInt32BE(0x18, 0)
+    mp4.write('ftypisom', 4)
+    let valStarted!: () => void
+    let releaseVal!: () => void
+    const started = new Promise<void>(res => { valStarted = res })
+    // 校验阶段（statSync/isMp4/ffprobe/validator）不感知 abort：阻塞直到外部放行
+    const validator = async () => {
+      valStarted()
+      await new Promise<void>(res => { releaseVal = res })
+      return true
+    }
+    const fetchImpl = (async () => new Response(mp4, { status: 200 })) as typeof fetch
+    const dl = new Downloader(db, { downloadDir: dir, downloadConcurrency: 3, scrollIntervalMs: 2000, addressTtlMin: 30 }, fetchImpl, { validator })
+    dl.enqueue(v.id)
+    dl.start()
+    await started // 已进入校验阶段，文件已完整写盘
+    dl.cancel([v.id]) // 删除/取消发生在此非 abort 感知窗口
+    releaseVal() // 校验结束 → runOne 继续 → done 提交前的 signal 守卫应拦截
+    await new Promise(r => setTimeout(r, 30)) // 等 runOne aborted 收尾
+    const row = listVideos(db, taskId)[0]
+    expect(row.status).toBe('cancelled') // 不提交 done
+    expect(row.local_path).toBeNull()
+    expect(readdirSync(dir)).toHaveLength(0) // 完整文件被 rmSync，不留孤儿
   })
 
   it('cancel 排队项：队列中 pending 移除并标 cancelled，不再下载', async () => {

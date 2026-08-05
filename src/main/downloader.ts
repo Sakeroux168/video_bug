@@ -230,6 +230,10 @@ export class Downloader {
         lastErr = new Error('bad_mp4')
       }
       if (lastErr) throw lastErr
+      // 校验阶段（statSync/isMp4/ffprobe/validator）不感知 abort：若删除/取消发生在该窗口，
+      // 文件已完整落盘但 runOne 会继续提交 done → 行已删时留孤儿 mp4。提交 done 前再查一次信号，
+      // 已 abort 则抛错走既有 aborted 收尾（rmSync 半成品 + 标 cancelled + 清 fetching）。
+      if (aborter.signal.aborted) throw new Error('AbortError')
       const downloadedAt = new Date().toISOString()
       this.db.prepare("UPDATE videos SET status='done', local_path=?, file_size=?, downloaded_at=?, error=NULL WHERE id=?")
         .run(target, size, downloadedAt, id)
