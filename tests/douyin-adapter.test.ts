@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { douyinAdapter, collectAwemeList } from '../src/main/adapters/douyin'
+import { douyinAdapter, collectAwemeList, drainDurationDiags } from '../src/main/adapters/douyin'
 
 const AWEME = {
   aweme_id: '7300000000000000001',
@@ -34,6 +34,48 @@ describe('douyinAdapter.parseApiJson', () => {
   it('过滤掉无播放地址/无 id 的脏数据', () => {
     const items = douyinAdapter.parseApiJson('https://x/', { aweme_list: [AWEME, { aweme_id: '', desc: 'x' }] })
     expect(items).toHaveLength(1)
+  })
+})
+
+describe('douyinAdapter 时长多候选解析（毫秒→秒）', () => {
+  it('顶层无 duration 时回退 video.duration', () => {
+    const aweme = { ...AWEME, duration: undefined, video: { ...AWEME.video, duration: 45000 } }
+    const items = douyinAdapter.parseApiJson('https://x/', { aweme_list: [aweme] })
+    expect(items).toHaveLength(1)
+    expect(items[0].durationSec).toBe(45)
+  })
+
+  it('顶层 duration 优先于 video.duration（候选顺序正确）', () => {
+    const aweme = { ...AWEME, video: { ...AWEME.video, duration: 60000 } }
+    const items = douyinAdapter.parseApiJson('https://x/', { aweme_list: [aweme] })
+    expect(items).toHaveLength(1)
+    expect(items[0].durationSec).toBe(45)
+  })
+
+  it('顶层与 video 皆无时长时解析为 0', () => {
+    const aweme = { ...AWEME, duration: undefined }
+    const items = douyinAdapter.parseApiJson('https://x/', { aweme_list: [aweme] })
+    expect(items[0].durationSec).toBe(0)
+  })
+})
+
+describe('douyinAdapter 0 时长诊断（drainDurationDiags）', () => {
+  it('解析出 0 时长有效条目时记录其顶层字段名', () => {
+    drainDurationDiags() // 先清空历史诊断
+    const aweme = { ...AWEME }
+    delete (aweme as Record<string, unknown>).duration // 真实接口无该字段时键不存在
+    const items = douyinAdapter.parseApiJson('https://x/', { aweme_list: [aweme] })
+    expect(items[0].durationSec).toBe(0)
+    const diags = drainDurationDiags()
+    expect(diags).toHaveLength(1)
+    expect(diags[0].topKeys).toEqual(expect.arrayContaining(['aweme_id', 'desc', 'author', 'video', 'create_time', 'statistics']))
+    expect(diags[0].topKeys).not.toContain('duration')
+  })
+
+  it('时长正常时不产生诊断', () => {
+    drainDurationDiags()
+    douyinAdapter.parseApiJson('https://x/', { aweme_list: [{ ...AWEME }] })
+    expect(drainDurationDiags()).toHaveLength(0)
   })
 })
 

@@ -11,7 +11,7 @@ import type { CreateTaskInput } from '../../shared/types'
 
 export default function App(): JSX.Element {
   const [tab, setTab] = useState('tasks')
-  const [rawLog, setRawLog] = useState<Array<{ at: string; url: string; handled: boolean; stats?: { items: number; kept: number } }>>([])
+  const [rawLog, setRawLog] = useState<Array<{ at: string; url: string; handled: boolean; stats?: { items: number; kept: number }; durationZero?: boolean; topKeys?: string[] }>>([])
   const [showLog, setShowLog] = useState(false)
   const [toast, setToast] = useState<{ text: string } | null>(null)
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -81,6 +81,11 @@ export default function App(): JSX.Element {
               <div key={i} className={r.handled ? 'text-emerald-700' : 'text-zinc-500'}>
                 {r.at} {r.handled ? '[已处理]' : '[忽略] '}
                 {r.stats ? `[解析${r.stats.items}→剩${r.stats.kept}] ` : ''}
+                {r.durationZero && (
+                  <span className="text-amber-600">
+                    [时长缺失{r.topKeys && r.topKeys.length > 0 ? ` 顶层字段:${r.topKeys.join(',')}` : ''}]&nbsp;
+                  </span>
+                )}
                 {r.url}
               </div>
             ))}

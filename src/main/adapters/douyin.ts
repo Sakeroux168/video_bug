@@ -47,7 +47,29 @@ function asObj(v: unknown): Record<string, any> {
   return v && typeof v === 'object' ? (v as Record<string, any>) : {}
 }
 
-function parseAweme(a: unknown): VideoItem | null {
+/** 时长多候选解析（抖音接口为毫秒 → 取整秒）：顶层 duration → video.duration → 0。
+ *  真实接口时长字段位置不定（可能在 video 下），做兜底；候选值为字符串数字也兼容（Number 转换）。 */
+function pickDurationSec(o: Record<string, any>): number {
+  const ms = Number(o.duration ?? (asObj(o.video).duration ?? 0))
+  return Number.isFinite(ms) ? Math.round(ms / 1000) : 0
+}
+
+/** 0 时长诊断：解析出有效条目但时长多候选仍取不到（durationSec === 0）时，记录该条目顶层字段名，
+ *  经 dy:raw 拦截日志展示，供实跑时对照真实接口字段位置 */
+export interface DurationDiag {
+  topKeys: string[]
+}
+
+// parseApiJson 同步暂存诊断，主进程 dy:raw 通道解析后经 drainDurationDiags 取走（只标记，不影响解析流程）
+let durationDiags: DurationDiag[] = []
+
+export function drainDurationDiags(): DurationDiag[] {
+  const out = durationDiags
+  durationDiags = []
+  return out
+}
+
+function parseAweme(a: unknown, diags: DurationDiag[]): VideoItem | null {
   const o = asObj(a)
   const id = String(o.aweme_id ?? '')
   const author = asObj(o.author)
@@ -68,7 +90,10 @@ function parseAweme(a: unknown): VideoItem | null {
     }
   }
   const stats = asObj(o.statistics)
+  const durationSec = pickDurationSec(o)
   if (!id || !playRaw) return null
+  // 0 时长诊断：该条目 id/playUrl 有效（真实视频），仅时长多候选仍取不到 → 记顶层字段名（只标记，不影响解析）
+  if (durationSec === 0) diags.push({ topKeys: Object.keys(o) })
   return {
     awemeId: id,
     title: String(o.desc ?? ''),
@@ -77,7 +102,7 @@ function parseAweme(a: unknown): VideoItem | null {
     authorHomeUrl: secUid ? `https://www.douyin.com/user/${secUid}` : '',
     // 优先用原始地址（网页播放器即用它，通常已是无水印）；转换留作下载失败时的回退变体
     playUrl: playRaw,
-    durationSec: Math.round(Number(o.duration ?? 0) / 1000),
+    durationSec,
     publishTime: Number(o.create_time ?? 0),
     likes: Number(stats.digg_count ?? 0)
   }
@@ -99,7 +124,13 @@ export const douyinAdapter: PlatformAdapter = {
   buildSearchUrl: (q: string) => `https://www.douyin.com/search/${encodeURIComponent(q)}`,
   buildAuthorUrl: (secUid: string) => `https://www.douyin.com/user/${secUid}`,
   buildHashtagUrl: (q: string) => `https://www.douyin.com/search/%23${encodeURIComponent(q)}`,
-  parseApiJson: (_url: string, json: unknown) =>
-    collectAwemeList(json).map(parseAweme).filter((x): x is VideoItem => x !== null),
+  parseApiJson: (_url: string, json: unknown) => {
+    const diags: DurationDiag[] = []
+    const items = collectAwemeList(json)
+      .map(a => parseAweme(a, diags))
+      .filter((x): x is VideoItem => x !== null)
+    durationDiags = diags // 暂存 0 时长诊断，供 dy:raw 通道取走
+    return items
+  },
   normalizePlayUrl
 }

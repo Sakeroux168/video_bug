@@ -10,7 +10,7 @@ import { Organizer } from './organizer'
 import type { ResolveCategoryFn } from './organizer'
 import { registerIpc } from './ipc'
 import { getSettings } from './settings'
-import { douyinAdapter } from './adapters/douyin'
+import { douyinAdapter, drainDurationDiags } from './adapters/douyin'
 import { classifyAuthor } from './ai/organizer-ai'
 import { transcribeFor } from './asr/asr'
 import type { Transcript } from './asr/asr'
@@ -223,15 +223,32 @@ app.whenReady().then(() => {
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow() })
 })
 
-// 调试：记录最近收到的 dy:raw（URL + 是否处理 + 解析出几条/过滤剩几条），供界面"查看拦截日志"查看
-const rawLog: Array<{ at: string; url: string; handled: boolean; stats?: { items: number; kept: number } }> = []
+// 调试：记录最近收到的 dy:raw（URL + 是否处理 + 解析出几条/过滤剩几条 + 0 时长诊断），供界面"查看拦截日志"查看
+const rawLog: Array<{
+  at: string
+  url: string
+  handled: boolean
+  stats?: { items: number; kept: number }
+  /** 该批有解析成功但时长取不到的条目（只标记，不影响解析流程） */
+  durationZero?: boolean
+  /** 0 时长条目（取第一条）的顶层字段名列表，供实跑对照真实接口字段位置 */
+  topKeys?: string[]
+}> = []
 ipcMain.on('dy:raw', async (_e, msg) => {
   const url = String(msg?.url ?? '')
   const json = msg?.json
   const handled = douyinAdapter.apiUrlPatterns.some(r => r.test(url))
   let stats: { items: number; kept: number } | null = null
   if (handled) stats = (await scheduler?.handleRaw(douyinAdapter, url, json)) ?? null
-  rawLog.push({ at: new Date().toISOString().slice(11, 19), url: url.slice(0, 120), handled, stats: stats ?? undefined })
+  // 0 时长诊断：parseApiJson 暂存的诊断同步取走（取走即清空）
+  const diags = drainDurationDiags()
+  const durationZero = diags.length > 0
+  rawLog.push({
+    at: new Date().toISOString().slice(11, 19), url: url.slice(0, 120), handled,
+    stats: stats ?? undefined,
+    durationZero: durationZero || undefined,
+    topKeys: durationZero ? diags[0].topKeys : undefined
+  })
   if (rawLog.length > 60) rawLog.shift()
 })
 ipcMain.handle('debug:rawLog', () => rawLog.slice(-60))
