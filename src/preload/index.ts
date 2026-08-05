@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { CreateTaskInput, AppSettings, TaskRow, VideoRow, AuthorRow, TaskStats, AsrStatus, AsrProgress, FilesTree, FileDeleteResult } from '../shared/types'
+import type { CreateTaskInput, AppSettings, TaskRow, VideoRow, AuthorRow, TaskStats, AsrStatus, AsrProgress, FilesTree, FileDeleteResult, TaskProgressEvent } from '../shared/types'
 
 const api = {
   ping: () => ipcRenderer.sendSync('api:ping') as string,
@@ -48,8 +48,8 @@ const api = {
   deleteFileCategory: (name: string): Promise<FileDeleteResult> => ipcRenderer.invoke('files:deleteCategory', name),
   deleteFileAuthor: (category: string, author: string): Promise<FileDeleteResult> => ipcRenderer.invoke('files:deleteAuthor', category, author),
   locateFileDir: (path: string): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke('files:locate', path),
-  onTaskProgress: (cb: (e: unknown) => void): (() => void) => {
-    const l = (_e: unknown, data: unknown) => cb(data)
+  onTaskProgress: (cb: (e: TaskProgressEvent) => void): (() => void) => {
+    const l = (_e: unknown, data: unknown) => cb(data as TaskProgressEvent)
     ipcRenderer.on('evt:task:progress', l)
     return () => ipcRenderer.removeListener('evt:task:progress', l)
   },

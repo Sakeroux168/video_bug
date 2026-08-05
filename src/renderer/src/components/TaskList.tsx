@@ -82,6 +82,9 @@ export default function TaskList({ notify }: { notify: (text: string) => void })
   const [searchText, setSearchText] = useState<Record<number, string>>({})
   const [page, setPage] = useState<Record<number, number>>({})
   const [onlyFailed, setOnlyFailed] = useState<Record<number, boolean>>({})
+  // R11 Task2：任务「已重搜 N 次」计数——progress 瞬时推送携带 reSearchCount，DB 无此列，
+  // 故存内存 Map；run 恢复/重跑时调度器重置计数并随 progress 推送 0，自动清零。
+  const [reSearchCount, setReSearchCount] = useState<Record<number, number>>({})
 
   const refresh = () => {
     void api.getDownloadState().then(s => setDownloadPaused(s.paused))
@@ -110,7 +113,13 @@ export default function TaskList({ notify }: { notify: (text: string) => void })
 
   useEffect(() => {
     refreshRef.current()
-    const off = api.onTaskProgress(() => refreshRef.current())
+    // R11 Task2：progress 瞬时推送带 reSearchCount → 先更新徽标计数再照常刷新任务行
+    const off = api.onTaskProgress(e => {
+      if (e.type === 'task:progress' && typeof e.reSearchCount === 'number') {
+        setReSearchCount(prev => ({ ...prev, [e.taskId]: e.reSearchCount as number }))
+      }
+      refreshRef.current()
+    })
     return off
   }, [])
 
@@ -304,6 +313,12 @@ export default function TaskList({ notify }: { notify: (text: string) => void })
                     <td className="py-2 pr-3">
                       <div className="flex items-center gap-2">
                         <span className="whitespace-nowrap text-xs text-zinc-500">{t.fetched_count}/{t.target_count}</span>
+                        {/* R11 Task2：爬不动自救触发过重搜 → 蓝色小标签显示已重搜次数（reSearchCount 来自 progress 瞬时推送） */}
+                        {reSearchCount[t.id] > 0 && (
+                          <span className="whitespace-nowrap rounded bg-blue-50 px-1 py-0.5 text-[10px] text-blue-600">
+                            已重搜 {reSearchCount[t.id]} 次
+                          </span>
+                        )}
                         <div className="h-2 w-28 overflow-hidden rounded bg-zinc-200">
                           <div className="h-full bg-blue-500" style={{ width: `${pct}%` }} />
                         </div>

@@ -50,6 +50,15 @@ export interface TaskStats {
   collected: number; cancelled: number; paused: number
 }
 
+/** 任务进度瞬时推送（main → 渲染层 evt:task:progress；R11 Task1 起带 reSearchCount，Task2 用于界面显示「已重搜 N 次」） */
+export interface TaskProgressEvent {
+  type: 'task:progress'
+  taskId: number
+  fetched: number
+  status: TaskStatus
+  reSearchCount?: number
+}
+
 export interface VideoRow {
   id: number; platform: string; task_id: number; aweme_id: string; title: string
   author_id: number | null; play_addr: string | null; duration: number

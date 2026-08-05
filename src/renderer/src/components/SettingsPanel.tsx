@@ -111,10 +111,6 @@ export default function SettingsPanel() {
             下载并发
             <input type="number" min={1} max={5} className={inputCls} value={s.downloadConcurrency} onChange={e => set('downloadConcurrency', Number(e.target.value))} />
           </label>
-          <label className="flex flex-col gap-1">
-            滚动间隔(ms)
-            <input type="number" className={inputCls} value={s.scrollIntervalMs} onChange={e => set('scrollIntervalMs', Number(e.target.value))} />
-          </label>
           {/* T2：滚动速度三档预设"每页最大等待秒数"初始值（慢8s/中5s/快3s）；数字微调直接生效 */}
           <label className="flex flex-col gap-1">
             滚动速度
@@ -133,6 +129,16 @@ export default function SettingsPanel() {
             每页最大等待(秒)
             <input type="number" min={1} className={inputCls} value={s.scrollPageWaitMs / 1000}
               onChange={e => set('scrollPageWaitMs', Number(e.target.value) * 1000)} />
+          </label>
+          {/* R11 Task2：停滞检测阈值（默认 5 秒；爬取 5 秒无新视频即判爬不动，进入筛选/重搜自救循环） */}
+          <label className="flex flex-col gap-1">
+            停滞检测(秒)
+            <input type="number" min={1} max={60} className={inputCls} value={s.stallThresholdSec}
+              onChange={e => set('stallThresholdSec', Number(e.target.value))} />
+          </label>
+          <label className="flex flex-col gap-1">
+            滚动间隔(ms)
+            <input type="number" className={inputCls} value={s.scrollIntervalMs} onChange={e => set('scrollIntervalMs', Number(e.target.value))} />
           </label>
           <label className="flex flex-col gap-1">
             地址过期(分钟)
