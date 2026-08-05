@@ -16,9 +16,14 @@ export default defineConfig({
       }
     }
   ],
+  // 测试里的 .tsx 用 automatic JSX（与 tsconfig.web.json 的 react-jsx 一致）
+  esbuild: { jsx: 'automatic' },
   test: {
+    // 组件测试（tests/components/**）走 jsdom，其余主进程测试保持 node 环境
+    environmentMatchGlobs: [['tests/components/**', 'jsdom']],
     environment: 'node',
-    include: ['tests/**/*.test.ts'],
+    include: ['tests/**/*.test.ts', 'tests/**/*.test.tsx'],
+    setupFiles: ['tests/setup-renderer.ts'],
     server: { deps: { external: [/node-sqlite\.cjs$/] } }
   }
 })
