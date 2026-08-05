@@ -3,6 +3,7 @@ import { api } from '../api'
 import type { AuthorRow } from '../../../shared/types'
 import { Card, btnPrimary } from './ui'
 import { useMarqueeSelect } from './useMarqueeSelect'
+import { useTableSelection } from './useTableSelection'
 
 export default function AuthorCollection({ notify }: { notify: (text: string) => void }) {
   const [authors, setAuthors] = useState<AuthorRow[]>([])
@@ -14,25 +15,24 @@ export default function AuthorCollection({ notify }: { notify: (text: string) =>
 
   function refresh(): void { void api.listAuthors().then(setAuthors) }
 
-  // 点行 = 排他：行已选中 → 全不选；未选中 → 只选它（清空其它）
-  function toggle(id: number): void {
-    setSelected(prev => (prev.has(id) ? new Set() : new Set([id])))
-  }
   const allSelected = authors.length > 0 && authors.every(a => selected.has(a.id))
   function toggleAll(): void {
     setSelected(allSelected ? new Set() : new Set(authors.map(a => a.id)))
   }
 
-  // —— 拖拽框选（替换+框内翻转：松手后选中集合 = 框内命中的行 ∖ 原有已选，框外一律取消）——
+  // 行选择终版语义（排他/ctrl 切换/shift 范围），锚点按本组件实例独立
+  const { rowClick } = useTableSelection<number>()
+
+  // —— 拖拽框选（纯替换：松手后选中集合 = 框内命中的行，框外一律取消；不改锚点）——
   const { containerRef, marquee, didDragRef, onMouseDown, onMouseMove, endDrag } = useMarqueeSelect({
-    onSelect: ids => setSelected(prev => new Set([...ids].filter(id => !prev.has(id))))
+    onSelect: ids => setSelected(new Set(ids))
   })
 
-  // 点行任意位置切换选中（勾选框/链接/按钮不触发行切换；拖拽框选后的 click 不切换）
+  // 点行任意位置选择（勾选框/链接/按钮不触发行切换；拖拽框选后的 click 不切换）
   function handleRowClick(a: AuthorRow, e: React.MouseEvent): void {
     if (didDragRef.current) return
     if ((e.target as HTMLElement).closest('button, a, input')) return
-    toggle(a.id)
+    setSelected(rowClick(a.id, authors.map(x => x.id), selected, { ctrlKey: e.ctrlKey, shiftKey: e.shiftKey }))
   }
 
   // 点容器内空白区域（非行、非交互元素）→ 清空全部选择；
@@ -98,7 +98,7 @@ export default function AuthorCollection({ notify }: { notify: (text: string) =>
             删除选中{selected.size > 0 ? `（${selected.size}）` : ''}
           </button>
         )}
-        <span className="text-zinc-300">提示：点行可选中/取消，点空白取消全部，按住左键拖动可框选</span>
+        <span className="text-zinc-300">提示：点行排他选中，Ctrl 点选切换，Shift 点选范围，点空白取消，按住左键拖动框选替换</span>
       </div>
       {authors.length === 0 ? (
         <span className="text-sm text-zinc-400">暂无收藏的作者，抓取后自动收录</span>
@@ -128,7 +128,7 @@ export default function AuthorCollection({ notify }: { notify: (text: string) =>
                   className={`cursor-pointer border-b border-zinc-100 transition-colors hover:bg-zinc-50 ${selected.has(a.id) ? 'bg-blue-50' : ''}`}
                   onClick={e => handleRowClick(a, e)}
                 >
-                  <td className="py-2 pr-1"><input type="checkbox" checked={selected.has(a.id)} onChange={() => toggle(a.id)} /></td>
+                  <td className="py-2 pr-1"><input type="checkbox" checked={selected.has(a.id)} onChange={() => setSelected(rowClick(a.id, authors.map(x => x.id), selected, {}))} /></td>
                   <td className="py-2 pr-2 font-medium">{a.nickname}</td>
                   <td className="max-w-[240px] truncate py-2 pr-2">
                     <a className="text-blue-500 hover:underline" href={a.home_url ?? '#'} target="_blank" rel="noreferrer">

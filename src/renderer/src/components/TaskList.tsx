@@ -3,6 +3,7 @@ import { api } from '../api'
 import type { TaskRow, VideoRow, TaskStats } from '../../../shared/types'
 import { Card, inputCls } from './ui'
 import { useMarqueeSelect } from './useMarqueeSelect'
+import { useTableSelection } from './useTableSelection'
 import { describeError } from '../errors'
 
 const TASK_STATUS_LABEL: Record<string, string> = { pending: '等待中', running: '进行中', done: '完成', paused: '已暂停', failed: '失败' }
@@ -125,11 +126,6 @@ export default function TaskList({ notify }: { notify: (text: string) => void })
     setExpanded(next)
   }
 
-  // 点行 = 排他：行已选中 → 全不选；未选中 → 只选它（清空其它）
-  function toggleSelectVideo(id: number): void {
-    setSelected(prev => (prev.has(id) ? new Set() : new Set([id])))
-  }
-
   function toggleSelectPage(taskId: number, allSelected: boolean, selectableIds: number[]): void {
     setSelected(prev => {
       const next = new Set(prev)
@@ -140,11 +136,10 @@ export default function TaskList({ notify }: { notify: (text: string) => void })
     })
   }
 
-  // 框选 = 替换 + 框内翻转：松手后选中集合 = 框内命中的行 ∖ 原有已选
-  // （框内已选的翻转取消、未选的选中；框外一律取消）。函数式 setState 读到的 prev
-  // 即 endDrag 时刻的选中快照，无需 hook 额外传参。
+  // 框选 = 纯替换：松手后选中集合 = 框内命中的行（框住的全选中，含已选中的保持），
+  // 框外一律取消；不更新锚点。函数式 setState 读到的 prev 即 endDrag 时刻的选中快照。
   function replaceSelect(ids: number[]): void {
-    setSelected(prev => new Set([...ids].filter(id => !prev.has(id))))
+    setSelected(new Set(ids))
   }
 
   // 点击表格容器空白区域 → 清空全部选择
@@ -375,7 +370,7 @@ export default function TaskList({ notify }: { notify: (text: string) => void })
                             d={d}
                             sort={sortState[t.id]}
                             selected={selected}
-                            onToggleVideo={toggleSelectVideo}
+                            onSelectRows={setSelected}
                             onTogglePage={all => toggleSelectPage(t.id, all, d.selectableIds)}
                             onSort={key => handleSort(t.id, key)}
                             onPageChange={p => setPage(prev => ({ ...prev, [t.id]: p }))}
@@ -399,19 +394,21 @@ export default function TaskList({ notify }: { notify: (text: string) => void })
 }
 
 /**
- * 任务展开区视频表格（独立组件以便每个任务的表格各自实例化框选 hook）。
- * 选择交互：点行排他（已选行 → 全不选；未选行 → 只选它；勾选框/链接/按钮除外）、
- * 点容器空白清空、拖动框选 = 替换+框内翻转（框外取消）。
+ * 任务展开区视频表格（独立组件以便每个任务的表格各自实例化框选 hook 与选择锚点）。
+ * 选择交互（终版语义）：点行排他（已选行 → 全不选；未选行 → 只选它）、ctrl+点切换、
+ * shift+点范围（锚点 = 最近普通/shift 点击行，ctrl 与框选不改锚点）、
+ * 拖动框选 = 纯替换（框住的全选中、框外取消）、点容器空白清空；
+ * 勾选框/链接/按钮不触发行选择；didDrag 防拖拽误伤。
  * 跨页选择语义由父组件 selected 集合承载（批量操作按完整 selected 过滤）。
  */
 function TaskVideoTable({
-  d, sort, selected, onToggleVideo, onTogglePage, onSort, onPageChange,
+  d, sort, selected, onSelectRows, onTogglePage, onSort, onPageChange,
   onReplaceSelect, onClearSelection, notify, refresh
 }: {
   d: Derived
   sort: { key: SortKey; dir: 1 | -1 } | undefined
   selected: Set<number>
-  onToggleVideo: (id: number) => void
+  onSelectRows: (next: Set<number>) => void
   onTogglePage: (allSelected: boolean) => void
   onSort: (key: SortKey) => void
   onPageChange: (page: number) => void
@@ -421,6 +418,8 @@ function TaskVideoTable({
   refresh: () => void
 }): React.ReactElement {
   const { containerRef, marquee, didDragRef, onMouseDown, onMouseMove, endDrag } = useMarqueeSelect({ onSelect: onReplaceSelect })
+  // 行选择终版语义（排他/ctrl 切换/shift 范围），锚点按表格实例独立
+  const { rowClick } = useTableSelection<number>()
 
   // 点容器内空白区域（非行、非交互元素）→ 清空全部选择；行内点击由行自身的 onClick 处理。
   // 跨行拖拽松手后 click 在公共祖先（tbody）派发并冒泡到这里，需用 didDragRef 跳过。
@@ -434,7 +433,8 @@ function TaskVideoTable({
   function handleRowClick(v: VideoRow, e: React.MouseEvent): void {
     if (didDragRef.current) return // 行内小拖拽（≥5px）后的 click 不切换选中
     if ((e.target as HTMLElement).closest('button, a, input')) return // 勾选框/链接/按钮不触发行切换
-    onToggleVideo(v.id)
+    // 终版语义：普通点排他 / ctrl 切换 / shift 范围；可见行 = 当前页可选行（锚点不在视图则退化）
+    onSelectRows(rowClick(v.id, d.selectableIds, selected, { ctrlKey: e.ctrlKey, shiftKey: e.shiftKey }))
   }
 
   function sortHeader(key: SortKey, label: string): React.ReactNode {
@@ -494,7 +494,7 @@ function TaskVideoTable({
                   onClick={isFiltered ? undefined : e => handleRowClick(v, e)}
                 >
                   <td className="py-1 pr-1">
-                    <input type="checkbox" disabled={isFiltered} checked={selected.has(v.id)} onChange={() => onToggleVideo(v.id)} />
+                    <input type="checkbox" disabled={isFiltered} checked={selected.has(v.id)} onChange={() => onSelectRows(rowClick(v.id, d.selectableIds, selected, {}))} />
                   </td>
                   <td className="max-w-0 py-1 pr-2"><span className="block truncate">{v.title || '（无标题）'}</span></td>
                   <td className="whitespace-nowrap py-1 pr-2">{v.author_nickname ?? '—'}</td>
