@@ -306,19 +306,35 @@ export class VideoBrowser {
     }
   }
 
-  /** 扫描全 DOM 文本节点找底部文案（如抖音「暂时没有更多了」），命中返回截断 30 字的文本，否则 null。
-   *  与"15 秒无新视频"先到先触发：命中说明搜索已到底，应触发筛选续爬 */
+  /** 扫描全 DOM 找"到底"文案（如抖音「暂时没有更多了」），命中返回截断 30 字的文本，否则 null。
+   *  与"15 秒无新视频"先到先触发：命中说明搜索已到底，应触发筛选续爬。
+   *  可见性 + 视口校验：抖音把提示常驻 DOM 但隐藏（display:none/visibility:hidden，rect 宽高 0），
+   *  且未滚到底时提示在视口外——隐藏/视口外文本不算命中，避免「还没到底就触发筛选续爬」。
+   *  快速路径：先查真实元素 div.nU717OFZ（含同样校验，命中直接返回），再走文字正则扫描。 */
   async findBottomText(): Promise<string | null> {
     if (!this.win) return null
     const script = `(() => {
       const re = /没有更多|到底|暂时没有/i;
+      // 可见 + 视口内：宽高 > 0（排除 display:none/visibility:hidden）且与视口相交（排除滚到底前就存在的隐藏提示）
+      const inView = el => {
+        const r = el.getBoundingClientRect();
+        return r.width > 0 && r.height > 0 && r.bottom > 0 && r.top < window.innerHeight;
+      };
+      // 快速路径：真实元素 css 候选（抖音实测 div.nU717OFZ），同样校验可见性 + 视口
+      try {
+        const real = document.querySelector('div.nU717OFZ');
+        if (real && inView(real)) {
+          const t = (real.textContent || '').trim();
+          if (t && re.test(t)) return t.slice(0, 30);
+        }
+      } catch (e) {}
       const body = document.body;
       if (!body) return null;
       const skip = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT']);
       const walker = document.createTreeWalker(body, NodeFilter.SHOW_TEXT, {
         acceptNode: (node) => {
           const el = node.parentElement;
-          return el && skip.has(el.tagName) ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT;
+          return el && !skip.has(el.tagName) && inView(el) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
         }
       });
       for (let node = walker.nextNode(); node; node = walker.nextNode()) {
