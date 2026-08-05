@@ -3,7 +3,7 @@ import type { DatabaseSync } from 'node:sqlite'
 import { createTask, listTasks, listVideos, listAuthors, setTaskStatus, setVideoStatus, updateAuthorCategory, deleteAuthors, taskStats } from './db'
 import { getSettings, saveSettings } from './settings'
 import { deleteVideoRows } from './videoDelete'
-import { scanFilesTree, deleteFileCategory, deleteFileAuthor } from './fileManager'
+import { scanFilesTree, deleteFileCategory, deleteFileAuthor, locateFileDir } from './fileManager'
 import { listAdapters } from './adapters'
 import { FILTER_SELECTORS } from './adapters/douyin'
 import type { Scheduler } from './scheduler'
@@ -198,6 +198,12 @@ export function registerIpc(deps: IpcDeps): void {
   ipcMain.handle('files:deleteAuthor', (_e, category: string, author: string) =>
     deleteFileAuthor({ db, downloadDir: getSettings().downloadDir }, category, author)
   )
+  // 定位品类/作者文件夹（资源管理器选中该目录）：路径防护 + 目录存在才调 shell，其余返回错误提示
+  ipcMain.handle('files:locate', (_e, dirPath: string) => {
+    const r = locateFileDir(getSettings().downloadDir, dirPath)
+    if (r.ok) shell.showItemInFolder(dirPath)
+    return r
+  })
 
   // 选择下载目录（#1）
   ipcMain.handle('dialog:pickDir', async () => {

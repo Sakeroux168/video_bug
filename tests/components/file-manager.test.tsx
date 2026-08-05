@@ -17,7 +17,9 @@ function makeTree(): FilesTree {
         ]
       },
       { name: '旅行', videoCount: 1, size: 0.5 * 1024 * 1024, authors: [{ name: '作者C', videoCount: 1, size: 0.5 * 1024 * 1024 }] }
-    ]
+    ],
+    totalSize: 3.5 * 1024 * 1024,
+    downloadDir: 'D:/下载'
   }
 }
 
@@ -38,7 +40,7 @@ describe('FileManager（文件管理 tab）', () => {
 
   it('一级页：品类表格展示 品类名｜视频数｜总大小(MB)，空状态提示', async () => {
     installFakeApi()
-    vi.mocked(window.api.getFilesTree).mockResolvedValue({ categories: [] })
+    vi.mocked(window.api.getFilesTree).mockResolvedValue({ categories: [], totalSize: 0, downloadDir: 'D:/下载' })
     render(<FileManager notify={() => {}} />)
     await screen.findByText('下载目录还没有品类文件夹')
     vi.mocked(window.api.getFilesTree).mockResolvedValue(makeTree())
@@ -139,5 +141,51 @@ describe('FileManager（文件管理 tab）', () => {
     const delBtn = Array.from(row.querySelectorAll('button')).find(b => b.textContent === '删除')
     fireEvent.click(delBtn!)
     await waitFor(() => expect(notify).toHaveBeenCalledWith('删除失败：磁盘错误'))
+  })
+
+  it('一级页顶部显示总大小（GB/MB 自适应：3.5MB → "3.5 MB"）', async () => {
+    await setup()
+    expect(screen.getByText('总大小：3.5 MB')).toBeTruthy()
+  })
+
+  it('二级页顶部显示「该品类共 X」', async () => {
+    await setup()
+    fireEvent.click(screen.getByText('美食'))
+    await screen.findByText('作者A')
+    expect(screen.getByText('该品类共 3.0 MB')).toBeTruthy()
+  })
+
+  it('行「定位」品类：调 locateFileDir(下载目录/品类) → notify 成功反馈', async () => {
+    const notify = vi.fn()
+    await setup(notify)
+    vi.mocked(window.api.locateFileDir).mockResolvedValue({ ok: true })
+    const row = screen.getByText('美食').closest('tr')!
+    const locBtn = Array.from(row.querySelectorAll('button')).find(b => b.textContent === '定位')
+    fireEvent.click(locBtn!)
+    expect(window.api.locateFileDir).toHaveBeenCalledWith('D:/下载/美食')
+    await waitFor(() => expect(notify).toHaveBeenCalledWith('已在资源管理器中定位 品类「美食」'))
+  })
+
+  it('行「定位」品类失败（ok:false）→ notify 错误', async () => {
+    const notify = vi.fn()
+    await setup(notify)
+    vi.mocked(window.api.locateFileDir).mockResolvedValue({ ok: false, error: '目录不存在' })
+    const row = screen.getByText('旅行').closest('tr')!
+    const locBtn = Array.from(row.querySelectorAll('button')).find(b => b.textContent === '定位')
+    fireEvent.click(locBtn!)
+    await waitFor(() => expect(notify).toHaveBeenCalledWith('定位失败：目录不存在'))
+  })
+
+  it('二级页：行「定位」作者：调 locateFileDir(下载目录/品类/作者)', async () => {
+    const notify = vi.fn()
+    await setup(notify)
+    vi.mocked(window.api.locateFileDir).mockResolvedValue({ ok: true })
+    fireEvent.click(screen.getByText('美食'))
+    await screen.findByText('作者A')
+    const row = screen.getByText('作者A').closest('tr')!
+    const locBtn = Array.from(row.querySelectorAll('button')).find(b => b.textContent === '定位')
+    fireEvent.click(locBtn!)
+    expect(window.api.locateFileDir).toHaveBeenCalledWith('D:/下载/美食/作者A')
+    await waitFor(() => expect(notify).toHaveBeenCalledWith('已在资源管理器中定位 作者「作者A」'))
   })
 })

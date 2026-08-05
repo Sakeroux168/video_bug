@@ -46,6 +46,7 @@ const api = {
   getFilesTree: (): Promise<FilesTree> => ipcRenderer.invoke('files:tree'),
   deleteFileCategory: (name: string): Promise<FileDeleteResult> => ipcRenderer.invoke('files:deleteCategory', name),
   deleteFileAuthor: (category: string, author: string): Promise<FileDeleteResult> => ipcRenderer.invoke('files:deleteAuthor', category, author),
+  locateFileDir: (path: string): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke('files:locate', path),
   onTaskProgress: (cb: (e: unknown) => void): (() => void) => {
     const l = (_e: unknown, data: unknown) => cb(data)
     ipcRenderer.on('evt:task:progress', l)

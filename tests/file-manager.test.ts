@@ -4,7 +4,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
 import { initDb, createTask, insertVideos, listVideos, listAuthors } from '../src/main/db'
-import { scanFilesTree, deleteFileCategory, deleteFileAuthor } from '../src/main/fileManager'
+import { scanFilesTree, deleteFileCategory, deleteFileAuthor, locateFileDir } from '../src/main/fileManager'
 import type { VideoItem } from '../src/main/adapters/types'
 import type { CreateTaskInput, Filters } from '../src/shared/types'
 
@@ -85,11 +85,59 @@ describe('scanFilesTree（目录树扫描）', () => {
     expect(categories[0].videoCount).toBe(0)
   })
 
-  it('目录不存在 → 空树；空目录 → 空树', () => {
-    expect(scanFilesTree(join(tmp, '不存在'))).toEqual({ categories: [] })
+  it('目录不存在 → 空树；空目录 → 空树（totalSize=0、downloadDir 回传）', () => {
+    expect(scanFilesTree(join(tmp, '不存在'))).toEqual({ categories: [], totalSize: 0, downloadDir: join(tmp, '不存在') })
     const empty = join(tmp, 'empty')
     mkdirSync(empty)
-    expect(scanFilesTree(empty)).toEqual({ categories: [] })
+    expect(scanFilesTree(empty)).toEqual({ categories: [], totalSize: 0, downloadDir: empty })
+  })
+})
+
+// —— totalSize 汇总 ——
+
+describe('scanFilesTree（总大小汇总）', () => {
+  it('totalSize = 所有品类 size 合计（多品类多作者递归，含品类直属 mp4）', () => {
+    mkdirSync(join(tmp, '美食', '作者A', '5-10分钟'), { recursive: true })
+    mkdirSync(join(tmp, '美食', '作者B'), { recursive: true })
+    mkdirSync(join(tmp, '未分类', '作者C'), { recursive: true })
+    writeFileSync(join(tmp, '美食', '作者A', '5-10分钟', 'v1.mp4'), 'x'.repeat(10))
+    writeFileSync(join(tmp, '美食', '作者A', 'v2.mp4'), 'x'.repeat(20))
+    writeFileSync(join(tmp, '美食', '作者B', 'v3.mp4'), 'x'.repeat(40))
+    writeFileSync(join(tmp, '未分类', '作者C', 'v4.mp4'), 'x'.repeat(50))
+    writeFileSync(join(tmp, '未分类', 'v5.mp4'), 'x'.repeat(5)) // 品类直属 mp4 计入品类总量
+
+    const tree = scanFilesTree(tmp)
+    expect(tree.categories.reduce((s, c) => s + c.size, 0)).toBe(125) // 美食 70 + 未分类 55
+    expect(tree.totalSize).toBe(125)
+    expect(tree.downloadDir).toBe(tmp)
+  })
+})
+
+// —— 定位目录（locateFileDir：校验部分，shell 调用留在 ipc 层）——
+
+describe('locateFileDir（定位校验）', () => {
+  it('目录存在且在下载目录内 → ok', () => {
+    mkdirSync(join(tmp, '美食', '作者A'), { recursive: true })
+    expect(locateFileDir(tmp, join(tmp, '美食'))).toEqual({ ok: true })
+    expect(locateFileDir(tmp, join(tmp, '美食', '作者A'))).toEqual({ ok: true })
+  })
+
+  it('逃逸路径（..）与下载目录自身 → 拒绝', () => {
+    mkdirSync(join(tmp, '美食'), { recursive: true })
+    const r1 = locateFileDir(tmp, join(tmp, '..', '越界'))
+    const r2 = locateFileDir(tmp, join(tmp, '美食', '..', '..', '越界'))
+    expect(r1.ok).toBe(false)
+    expect(r2.ok).toBe(false)
+    expect(locateFileDir(tmp, tmp).ok).toBe(false) // root 自身不可定位（isPathInside 拒绝）
+  })
+
+  it('目录不存在 → 错误提示（不触 shell）', () => {
+    expect(locateFileDir(tmp, join(tmp, '不存在'))).toEqual({ ok: false, error: '目录不存在' })
+  })
+
+  it('目标是文件而非目录 → 错误提示', () => {
+    writeFileSync(join(tmp, 'v.mp4'), 'x')
+    expect(locateFileDir(tmp, join(tmp, 'v.mp4'))).toEqual({ ok: false, error: '目录不存在' })
   })
 })
 

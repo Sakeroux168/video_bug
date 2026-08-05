@@ -5,9 +5,21 @@ import { Card } from './ui'
 import { useMarqueeSelect } from './useMarqueeSelect'
 import { useTableSelection } from './useTableSelection'
 
-/** 字节 → MB 字符串（保留 1 位小数） */
+/** 字节 → MB 字符串（保留 1 位小数，行内列用） */
 function formatMB(size: number): string {
   return (size / 1024 / 1024).toFixed(1)
+}
+
+/** 字节 → 可读大小（>=1GB 显示 GB 两位小数，否则 MB 一位小数；顶部汇总用） */
+function formatSize(size: number): string {
+  const mb = size / 1024 / 1024
+  if (mb >= 1024) return `${(mb / 1024).toFixed(2)} GB`
+  return `${mb.toFixed(1)} MB`
+}
+
+/** 拼接下载目录与子路径（renderer 不引 node:path；正斜杠 win32 解析兼容，主进程 isPathInside 不受影响） */
+function joinPath(base: string, ...parts: string[]): string {
+  return `${base.replace(/[\\/]+$/, '')}/${parts.join('/')}`
 }
 
 /**
@@ -30,6 +42,7 @@ export default function FileManager({ notify }: { notify: (text: string) => void
   const cats = tree?.categories ?? []
   const cat = current ? cats.find(c => c.name === current) : undefined
   const authors: FilesTreeAuthor[] = cat?.authors ?? []
+  const downloadDir = tree?.downloadDir ?? '' // 定位路径基准（与 tree 同一次刷新快照，主进程按最新设置二次校验）
 
   // 两级各自独立锚点；普通点击：一级钻取 / 二级排他选择，Ctrl 切换，Shift 范围（与作者表格语义一致）
   const { rowClick: rowClickCat } = useTableSelection<string>()
@@ -106,6 +119,13 @@ export default function FileManager({ notify }: { notify: (text: string) => void
     void refresh()
   }
 
+  // 定位：主进程校验（路径防护 + 目录存在）后调资源管理器选中；结果 notify 反馈
+  async function locateDir(path: string, label: string): Promise<void> {
+    const r = await api.locateFileDir(path)
+    if (r.ok) notify(`已在资源管理器中定位 ${label}`)
+    else notify(`定位失败：${r.error ?? '未知错误'}`)
+  }
+
   const allCats = cats.length > 0 && cats.every(c => selectedCats.has(c.name))
   const allAuthors = authors.length > 0 && authors.every(a => selectedAuthors.has(a.name))
 
@@ -124,6 +144,7 @@ export default function FileManager({ notify }: { notify: (text: string) => void
             ← 返回品类列表
           </button>
           <span className="text-sm font-medium text-zinc-700">当前品类：{current}</span>
+          <span className="text-xs text-zinc-500">该品类共 {formatSize(cat?.size ?? 0)}</span>
         </div>
         <div className="mb-2 flex items-center gap-3 text-xs">
           <button
@@ -168,6 +189,7 @@ export default function FileManager({ notify }: { notify: (text: string) => void
                     <td className="py-2 pr-2 text-zinc-500">{a.videoCount}</td>
                     <td className="py-2 pr-2 text-zinc-500">{formatMB(a.size)}</td>
                     <td className="py-2">
+                      <button className="rounded px-2 py-1 text-xs text-blue-500 hover:bg-blue-50" onClick={() => void locateDir(joinPath(downloadDir, current, a.name), `作者「${a.name}」`)}>定位</button>
                       <button className="rounded px-2 py-1 text-xs text-red-400 hover:bg-red-50" onClick={() => void deleteAuthorNames([a.name])}>删除</button>
                     </td>
                   </tr>
@@ -198,6 +220,7 @@ export default function FileManager({ notify }: { notify: (text: string) => void
           删除选中品类({selectedCats.size})
         </button>
         <button className="rounded-md border border-zinc-300 px-2 py-1 text-zinc-500 hover:bg-zinc-100" onClick={() => void refresh()}>刷新</button>
+        <span className="text-sm font-medium text-zinc-700">总大小：{formatSize(tree?.totalSize ?? 0)}</span>
         <span className="text-zinc-300">提示：点品类行进入二级页，Ctrl 点选切换，Shift 点选范围，按住左键拖动框选替换</span>
       </div>
       {cats.length === 0 ? (
@@ -232,6 +255,7 @@ export default function FileManager({ notify }: { notify: (text: string) => void
                   <td className="py-2 pr-2 text-zinc-500">{c.videoCount}</td>
                   <td className="py-2 pr-2 text-zinc-500">{formatMB(c.size)}</td>
                   <td className="py-2">
+                    <button className="rounded px-2 py-1 text-xs text-blue-500 hover:bg-blue-50" onClick={() => void locateDir(joinPath(downloadDir, c.name), `品类「${c.name}」`)}>定位</button>
                     <button className="rounded px-2 py-1 text-xs text-red-400 hover:bg-red-50" onClick={() => void deleteCategories([c.name])}>删除</button>
                   </td>
                 </tr>

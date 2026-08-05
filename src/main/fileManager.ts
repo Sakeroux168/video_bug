@@ -66,18 +66,34 @@ function scanCategory(dir: string): FilesTreeCategory | null {
 /**
  * Task4 文件管理：扫描下载目录 → { 品类 → 作者 → 视频 } 树。
  * 一级目录 = 品类、二级目录 = 作者、.mp4 文件 = 视频；隐藏/临时项（~ . 开头）跳过；
- * 目录不存在或为空 → { categories: [] }。纯函数（不入库、不落盘），便于单测。
+ * 目录不存在或为空 → { categories: [] }；totalSize = 所有品类合计，downloadDir 回传供前端拼定位路径。
+ * 纯函数（不入库、不落盘），便于单测。
  */
 export function scanFilesTree(downloadDir: string): FilesTree {
   const categories: FilesTreeCategory[] = []
+  let totalSize = 0
   let entries: Dirent[]
-  try { entries = readdirSync(downloadDir, { withFileTypes: true }) } catch { return { categories } }
+  try { entries = readdirSync(downloadDir, { withFileTypes: true }) } catch { return { categories, totalSize, downloadDir } }
   for (const e of entries) {
     if (isIgnoredName(e.name) || !e.isDirectory()) continue // 顶层只认目录当品类
     const cat = scanCategory(join(downloadDir, e.name))
-    if (cat) categories.push(cat)
+    if (cat) { categories.push(cat); totalSize += cat.size }
   }
-  return { categories }
+  return { categories, totalSize, downloadDir }
+}
+
+/**
+ * 定位目录校验（ipc files:locate 复用）：路径穿越防护 + 目标必须是存在的目录。
+ * 校验通过返回 { ok: true }，由 ipc 层再调 shell.showItemInFolder（本函数不触 shell，便于单测）。
+ */
+export function locateFileDir(downloadDir: string, dirPath: string): { ok: boolean; error?: string } {
+  if (!isPathInside(downloadDir, dirPath)) return { ok: false, error: '非法路径：目标不在下载目录内' }
+  try {
+    if (!statSync(dirPath).isDirectory()) return { ok: false, error: '目录不存在' }
+  } catch {
+    return { ok: false, error: '目录不存在' }
+  }
+  return { ok: true }
 }
 
 /** 删除目标名合法性：空、. / .. 或含路径分隔符的一律拒绝（与 isPathInside 双层防护） */

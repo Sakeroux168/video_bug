@@ -67,10 +67,10 @@ export interface AuthorRow {
   organize_state: string | null; ai_classified_at: string | null // Task2 归档状态与 AI 分类时间
 }
 
-/** 文件管理：下载目录扫描结果（品类 → 作者 → 视频，以磁盘为准） */
+/** 文件管理：下载目录扫描结果（品类 → 作者 → 视频，以磁盘为准；totalSize 所有 mp4 合计，downloadDir 供前端拼定位路径） */
 export interface FilesTreeAuthor { name: string; videoCount: number; size: number }
 export interface FilesTreeCategory { name: string; videoCount: number; size: number; authors: FilesTreeAuthor[] }
-export interface FilesTree { categories: FilesTreeCategory[] }
+export interface FilesTree { categories: FilesTreeCategory[]; totalSize: number; downloadDir: string }
 
 /** 文件管理删除结果：deleted = DB 删除的视频行数（文件夹删除成功与否看 ok/filesRemoved） */
 export interface FileDeleteResult {
