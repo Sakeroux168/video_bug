@@ -292,10 +292,13 @@ export class VideoBrowser {
   private async cdpFilterPath(wc: WebContents, sel: typeof FILTER_SELECTORS, optionSelectors: string[]): Promise<boolean> {
     const d = wc.debugger
     const sleep = (ms: number): Promise<void> => new Promise(r => setTimeout(r, ms))
-    // 取元素中心坐标（executeJavaScript 返回 null = 找不到）
-    const center = async (selector: string): Promise<{ x: number; y: number } | null> => {
+    // 取元素中心坐标（executeJavaScript 返回 null = 找不到）。
+    // scrollFirst：先 scrollIntoView 居中再取坐标——触发场景恰是"搜索到底"（页面停在底部），
+    // 筛选栏非 sticky 时按钮在视口外，CDP 真实鼠标打到视口外坐标悬停不到；sticky 场景是 no-op 无害。
+    // 选项不滚动：面板已悬停弹出，滚动页面会把按钮移出鼠标位置导致面板收起
+    const center = async (selector: string, scrollFirst = false): Promise<{ x: number; y: number } | null> => {
       const r = await wc.executeJavaScript(
-        `(() => { const el = document.querySelector(${JSON.stringify(selector)}); if (!el) return null; const c = el.getBoundingClientRect(); return { x: c.left + c.width / 2, y: c.top + c.height / 2 }; })()`
+        `(() => { const el = document.querySelector(${JSON.stringify(selector)}); if (!el) return null; ${scrollFirst ? "el.scrollIntoView({ block: 'center' });" : ''}const c = el.getBoundingClientRect(); return { x: c.left + c.width / 2, y: c.top + c.height / 2 }; })()`
       )
       return (r as { x: number; y: number } | null)
     }
@@ -305,8 +308,8 @@ export class VideoBrowser {
       await d.sendCommand('Input.dispatchMouseEvent', { type: 'mousePressed', button: 'left', clickCount: 1, x, y })
       await d.sendCommand('Input.dispatchMouseEvent', { type: 'mouseReleased', button: 'left', clickCount: 1, x, y })
     }
-    // 悬停筛选按钮 → 轮询面板出现（250ms×20 = 5s，面板只认真实 hover）
-    const btn = await center(sel.button)
+    // 悬停筛选按钮（先 scrollIntoView 防"搜索到底"时按钮在视口外）→ 轮询面板出现（250ms×20 = 5s，面板只认真实 hover）
+    const btn = await center(sel.button, true)
     if (!btn) return false
     await d.sendCommand('Input.dispatchMouseEvent', { type: 'mouseMoved', x: btn.x, y: btn.y })
     let shown = false
@@ -316,6 +319,8 @@ export class VideoBrowser {
       if (has) { shown = true; break }
     }
     if (!shown) return false
+    // 面板布局落定一拍再点首选项（渲染/定位未稳时取到的 rect 可能过期）
+    await sleep(100)
     // 逐组选项（index>0）：悬停 + 按下/松开即真实点击，找不到直接失败
     for (const s of optionSelectors) {
       const pos = await center(s)
