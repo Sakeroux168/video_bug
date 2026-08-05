@@ -93,12 +93,11 @@ export default function App(): JSX.Element {
         </div>
       )}
       <main className="flex-1 overflow-auto p-4">
-        {tab === 'tasks' && (
-          <div className="space-y-4">
-            <FilterForm onSubmit={startTask} />
-            <TaskList notify={notify} />
-          </div>
-        )}
+        {/* 任务页常驻挂载：切 tab 用 hidden 隐藏而非卸载，参数/展开状态/进度订阅保留 */}
+        <div className={tab === 'tasks' ? 'space-y-4' : 'hidden'}>
+          <FilterForm onSubmit={startTask} />
+          <TaskList notify={notify} />
+        </div>
         {tab === 'authors' && <AuthorCollection notify={notify} />}
         {tab === 'browser' && <BrowserPanel />}
         {tab === 'settings' && <SettingsPanel />}
