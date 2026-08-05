@@ -13,6 +13,9 @@ export class VideoBrowser {
   private everShown = false
   // 主动销毁开关：dispose 时置 true，避免 close 拦截把销毁变成隐藏
   private forceClose = false
+  /** 筛选流程互斥锁：同一 webContents 的 CDP attach 排他，自动触发（scheduler）与手动测试（debug:testFilter）
+   *  并发时后到者直接失败，避免真实鼠标事件互相干扰导致诊断失真/任务误停 */
+  private filterInFlight = false
 
   constructor(
     private host: BrowserWindow,
@@ -264,6 +267,22 @@ export class VideoBrowser {
    */
   async applyDouyinFilter(sel: typeof FILTER_SELECTORS, f: DouyinFilter, onLog?: (msg: string) => void): Promise<boolean> {
     const log = (msg: string): void => { onLog?.(msg) }
+    // 互斥锁：一次只允许一个筛选流程在跑（自动触发与手动测试共用入口，天然互斥）。
+    // CDP attach 对同一 webContents 排他，并发会让后到者静默回退 legacy、真实鼠标事件互相干扰
+    if (this.filterInFlight) {
+      log('筛选流程进行中（上一次未结束），本次跳过，返回失败')
+      return false
+    }
+    this.filterInFlight = true
+    try {
+      return await this.applyDouyinFilterLocked(sel, f, log)
+    } finally {
+      this.filterInFlight = false
+    }
+  }
+
+  /** 互斥锁已持有后的实际筛选流程（含 CDP 优先 / 合成事件回退） */
+  private async applyDouyinFilterLocked(sel: typeof FILTER_SELECTORS, f: DouyinFilter, log: (msg: string) => void): Promise<boolean> {
     if (!this.win) { log('浏览器窗口不存在，无法执行筛选'); return false }
     // 组号：1发布时间/2时长/3搜索范围/4内容形式（组 0=排序不操作）；选项 data-index2 即配置索引
     const pairs: Array<[number, number]> = []
