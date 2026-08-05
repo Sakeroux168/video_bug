@@ -5,8 +5,9 @@ import type { DouyinFilter } from '../src/shared/types'
 
 const f: DouyinFilter = { enabled: true, publishTime: 0, duration: 1, searchScope: 0, contentType: 0 }
 
-/** 假 webContents：debugger 桩 + executeJavaScript 恒返回坐标对象（模拟 DOM 命中），
- *  CDP 全流程可跑完（面板轮询立即命中），用于验证 applyDouyinFilter 的互斥锁 */
+/** 假 webContents：debugger 桩 + executeJavaScript 恒返回候选命中的坐标对象（模拟 DOM 命中，
+ *  返回形状与 locateElement 页面脚本一致：found/index/x/y），CDP 全流程可跑完（面板轮询立即命中），
+ *  用于验证 applyDouyinFilter 的互斥锁 */
 function fakeWebContents(): {
   debugger: { attach: ReturnType<typeof vi.fn>; detach: ReturnType<typeof vi.fn>; sendCommand: ReturnType<typeof vi.fn> }
   executeJavaScript: ReturnType<typeof vi.fn>
@@ -17,7 +18,7 @@ function fakeWebContents(): {
       detach: vi.fn(),
       sendCommand: vi.fn(async () => {})
     },
-    executeJavaScript: vi.fn(async () => ({ x: 100, y: 100 }))
+    executeJavaScript: vi.fn(async () => ({ found: true, x: 100, y: 100, index: 0 }))
   }
 }
 
