@@ -9,6 +9,7 @@ import { Analyzer } from './analyzer'
 import { Organizer } from './organizer'
 import type { ResolveCategoryFn } from './organizer'
 import { registerIpc } from './ipc'
+import { enqueuePendingTasks } from './recovery'
 import { getSettings } from './settings'
 import { douyinAdapter, drainDurationDiags } from './adapters/douyin'
 import { classifyAuthor } from './ai/organizer-ai'
@@ -223,6 +224,8 @@ app.whenReady().then(() => {
   db.prepare("UPDATE videos SET status='pending' WHERE status='downloading'").run()
   const pend = db.prepare("SELECT id FROM videos WHERE status='pending'").all() as Array<{ id: number }>
   for (const v of pend) downloader.enqueue(v.id)
+  // R11-3：遗留 pending 任务重新入队——内存 FIFO 重启即空，不恢复则旧任务永远没人启动（卡「等待」）
+  enqueuePendingTasks(db, enqueueTask)
   downloader.start()
 
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow() })

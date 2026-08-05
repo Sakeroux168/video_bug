@@ -348,6 +348,10 @@ export default function TaskList({ notify }: { notify: (text: string) => void })
                     </td>
                     <td className="whitespace-nowrap py-2" onClick={e => e.stopPropagation()}>
                       <div className="flex items-center gap-2 text-xs">
+                        {t.status === 'pending' && (
+                          // R11-3：等待中的任务可手动启动（与「继续」同通道 task:resume → scheduler.run；run 对 pending 无阻碍）
+                          <button className="font-medium text-blue-600 hover:underline" onClick={() => { void api.resumeTask(t.id).then(refresh) }}>开始</button>
+                        )}
                         {t.status === 'running' && (
                           <button className="text-zinc-400 hover:text-zinc-600" onClick={() => { void api.pauseTask(t.id).then(refresh) }}>暂停</button>
                         )}

@@ -972,4 +972,15 @@ describe('爬满即停与启动即时进度（R11-2）', () => {
     browser.releaseLoad()
     await p
   }, 10000)
+
+  it('status=pending 的任务可被 run 正常启动（UI「开始」/重启恢复走同一通道）', async () => {
+    const db = newDb()
+    const taskId = createTask(db, input)
+    expect(db.prepare('SELECT status FROM tasks WHERE id=?').get(taskId)).toEqual({ status: 'pending' }) // 创建即 pending
+    const { s, events } = setup(db, new FakeDownloader(), new FakeBrowser())
+    await s.run(taskId)
+    expect(events[0]).toEqual({ type: 'task:progress', taskId, fetched: 0, status: 'running' }) // 启动即进行中
+    // run 对 pending 无阻碍：正常跑完自救循环（未启用筛选 → 停滞自动暂停）
+    expect(db.prepare('SELECT status, error FROM tasks WHERE id=?').get(taskId)).toEqual({ status: 'paused', error: 'stalled' })
+  }, 10000)
 })
