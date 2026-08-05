@@ -185,16 +185,24 @@ export class Scheduler {
             const noNewFor15s = elapsed > 15000
             log(`距上次有新视频入库 ${elapsed}ms（阈值 15000ms）→ ${noNewFor15s ? '已超时' : '未超时'}，filterApplied=${this.filterApplied}`)
             if (bottomText !== null || noNewFor15s) {
-              this.filterApplied = true // 只应用一次：无论成败都不再重试
               log('条件满足，开始执行筛选流程')
               let applied = false
               let errMsg: string | null = null
+              let busy = false
               try {
                 applied = await this.deps.browser.applyDouyinFilter(FILTER_SELECTORS, df, log)
               } catch (err) {
-                applied = false
-                errMsg = err instanceof Error ? err.message : String(err)
+                const code = (err as { code?: string } | null)?.code
+                if (code === 'FILTER_BUSY') {
+                  // 并发拒绝（如手动测试在跑）：不算失败——不消耗 filterApplied、不停止，下一轮再试
+                  busy = true
+                  log('筛选流程进行中（可能是手动测试在跑），本次跳过：不消耗 filterApplied、不停止，下一轮重试')
+                } else {
+                  errMsg = err instanceof Error ? err.message : String(err)
+                }
               }
+              if (busy) continue
+              this.filterApplied = true // 只应用一次：无论成败都不再重试
               log(`执行结果：${applied ? '成功' : '失败'}${errMsg ? `（异常：${errMsg}）` : ''}`)
               if (applied) {
                 // 筛选已生效：重置停滞计数继续抓（去重靠 seen 自然跳过已爬过的，只收新内容）

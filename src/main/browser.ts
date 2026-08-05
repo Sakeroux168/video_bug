@@ -263,15 +263,19 @@ export class VideoBrowser {
    * 真实点击 → 等 2.5s 页面刷新 → finally detach。
    * debugger attach 失败（如已开调试控制台）→ 回退旧合成事件方案；仍失败返回 false，由调度侧 notice 兜底。
    * 返回 false：按钮找不到/面板 5s 内不出现/任一需要点的选项缺失（页面结构可能已变），调用方按原逻辑停止。
+   * 互斥锁被拒（上一次筛选未结束）时抛 code='FILTER_BUSY' 的错误（与真实失败区分），调用方应稍后重试。
    * onLog：全链路诊断日志回调（每步 CDP 交互都打点，调度侧汇入界面「查看拦截日志」面板）
    */
   async applyDouyinFilter(sel: typeof FILTER_SELECTORS, f: DouyinFilter, onLog?: (msg: string) => void): Promise<boolean> {
     const log = (msg: string): void => { onLog?.(msg) }
     // 互斥锁：一次只允许一个筛选流程在跑（自动触发与手动测试共用入口，天然互斥）。
-    // CDP attach 对同一 webContents 排他，并发会让后到者静默回退 legacy、真实鼠标事件互相干扰
+    // CDP attach 对同一 webContents 排他，并发会让后到者静默回退 legacy、真实鼠标事件互相干扰。
+    // 被拒时抛带 code=FILTER_BUSY 的错误（与"真实失败"区分）：调度侧据此不消耗 filterApplied、不停止，下一轮重试
     if (this.filterInFlight) {
-      log('筛选流程进行中（上一次未结束），本次跳过，返回失败')
-      return false
+      log('筛选流程进行中（上一次未结束），本次跳过（FILTER_BUSY）')
+      const err = new Error('filter_busy') as Error & { code: string }
+      err.code = 'FILTER_BUSY'
+      throw err
     }
     this.filterInFlight = true
     try {

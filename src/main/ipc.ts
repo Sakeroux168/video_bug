@@ -178,6 +178,12 @@ export function registerIpc(deps: IpcDeps): void {
       deps.pushFilterLog(`手动测试筛选：执行结果 → ${ok ? '成功' : '失败'}`)
       return { ok, message: ok ? '筛选执行成功，详见「查看拦截日志」' : '筛选执行失败，详见「查看拦截日志」' }
     } catch (err) {
+      // 互斥锁被拒（自动触发/上一次手动测试在跑）：不是失败，给用户明确文案
+      const code = (err as { code?: string } | null)?.code
+      if (code === 'FILTER_BUSY') {
+        deps.pushFilterLog('手动测试筛选：已有筛选流程进行中，本次跳过')
+        return { ok: false, message: '已有筛选流程进行中，本次跳过' }
+      }
       deps.pushFilterLog(`手动测试筛选：执行异常 → 失败（${String(err)}）`)
       return { ok: false, message: `筛选执行异常：${String(err)}` }
     }

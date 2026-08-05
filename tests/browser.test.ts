@@ -27,15 +27,15 @@ function makeBrowser(): { b: VideoBrowser; logs: string[] } {
 }
 
 describe('VideoBrowser.applyDouyinFilter 互斥锁（并发防护）', () => {
-  it('并发调用时第二个直接返回 false 并打点；首次结束后解锁', async () => {
+  it('并发调用时第二个抛 FILTER_BUSY（与真实失败区分）并打点；首次结束后解锁', async () => {
     const { b, logs } = makeBrowser()
     const wc = fakeWebContents()
     ;(b as unknown as { win: unknown }).win = { webContents: wc }
     const p1 = b.applyDouyinFilter(FILTER_SELECTORS, f, m => logs.push(m))
-    // 第一次尚在 CDP 流程中（互斥锁已持有）→ 第二次应被挡回
-    const r2 = await b.applyDouyinFilter(FILTER_SELECTORS, f, m => logs.push(m))
-    expect(r2).toBe(false)
-    expect(logs.join('\n')).toContain('筛选流程进行中（上一次未结束），本次跳过，返回失败')
+    // 第一次尚在 CDP 流程中（互斥锁已持有）→ 第二次应抛带标记的 FILTER_BUSY 错误
+    await expect(b.applyDouyinFilter(FILTER_SELECTORS, f, m => logs.push(m)))
+      .rejects.toMatchObject({ code: 'FILTER_BUSY' })
+    expect(logs.join('\n')).toContain('筛选流程进行中（上一次未结束），本次跳过')
     await p1
     expect((b as unknown as { filterInFlight: boolean }).filterInFlight).toBe(false)
   }, 15000)

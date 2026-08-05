@@ -679,4 +679,58 @@ describe('抖音筛选续爬（T3）', () => {
     expect(all).toContain('执行结果：失败')
     expect(all).toContain('cdp_boom')
   }, 10000)
+
+  it('并发拒绝（FILTER_BUSY）→ 不消耗 filterApplied、不停止、有重试日志；下轮重试成功后正常结束', async () => {
+    const db = newDb()
+    const taskId = createTask(db, filterInput)
+    const browser = new FakeBrowser()
+    // 第一次被互斥锁拒绝（如手动测试在跑），第二次重试成功
+    const busyErr = Object.assign(new Error('filter_busy'), { code: 'FILTER_BUSY' })
+    const spy = vi.spyOn(browser, 'applyDouyinFilter')
+      .mockRejectedValueOnce(busyErr)
+      .mockResolvedValue(true)
+    const logs: string[] = []
+    const events: unknown[] = []
+    const s = new Scheduler({
+      db, browser, analyzer: null, downloader: new FakeDownloader(),
+      emit: e => events.push(e), scrollIntervalMs: 1,
+      getScrollParams: () => ({ scrollSpeed: 'slow' as const, scrollPageWaitMs: 8000 }),
+      onFilterLog: m => logs.push(m)
+    })
+    await s.run(taskId)
+    // busy 不消耗 filterApplied：下一轮重试调用了一次，最终按原逻辑自然停止（不是被 busy 误停）
+    expect(spy).toHaveBeenCalledTimes(2)
+    expect(events).not.toContainEqual(expect.objectContaining({ type: 'task:notice' }))
+    const all = logs.join('\n')
+    expect(all).toContain('筛选流程进行中（可能是手动测试在跑）')
+    expect(all).toContain('执行结果：成功')
+    expect(db.prepare('SELECT status, error FROM tasks WHERE id=?').get(taskId)).toEqual({ status: 'paused', error: 'stalled_verify' })
+  }, 10000)
+
+  it('一直 FILTER_BUSY → 任务不停：持续重试直到成功或条件变化（不误发 notice）', async () => {
+    const db = newDb()
+    const taskId = createTask(db, filterInput)
+    const browser = new FakeBrowser()
+    const busyErr = Object.assign(new Error('filter_busy'), { code: 'FILTER_BUSY' })
+    const spy = vi.spyOn(browser, 'applyDouyinFilter').mockRejectedValue(busyErr)
+    const logs: string[] = []
+    const events: unknown[] = []
+    const s = new Scheduler({
+      db, browser, analyzer: null, downloader: new FakeDownloader(),
+      emit: e => events.push(e), scrollIntervalMs: 1,
+      getScrollParams: () => ({ scrollSpeed: 'slow' as const, scrollPageWaitMs: 8000 }),
+      onFilterLog: m => logs.push(m)
+    })
+    // 一直 busy 时任务不会暂停也不会发 notice（等价于"等手动测试结束后再试"）；
+    // 为避免无限循环，手动中止（模拟用户暂停），验证期间无 notice、filterApplied 始终未被消耗
+    const p = s.run(taskId)
+    await new Promise(r => setTimeout(r, 200))
+    await s.pause()
+    await p
+    expect(spy.mock.calls.length).toBeGreaterThanOrEqual(2) // 每轮停滞都重试，没被一次性消耗
+    expect(events).not.toContainEqual(expect.objectContaining({ type: 'task:notice' }))
+    const all = logs.join('\n')
+    expect(all).toContain('筛选流程进行中（可能是手动测试在跑）')
+    expect(db.prepare('SELECT status, error FROM tasks WHERE id=?').get(taskId)).toEqual({ status: 'paused', error: null })
+  }, 10000)
 })
