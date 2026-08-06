@@ -8,7 +8,9 @@ function makeBrowser(): { b: VideoBrowser } {
 
 describe('验证码识别与长操作强制超时（R11-4）', () => {
   it('验证码匹配正则：常见文案命中', () => {
-    for (const t of ['请完成验证', '拖动滑块完成验证', '安全验证', '滑动验证', '请输入验证码', '验证码错误']) {
+    // R11-5 扩展词：机器人验证/完成拼图/点击完成/安全校验/verify/captcha（抖音实际文案漏词修复）
+    for (const t of ['请完成验证', '拖动滑块完成验证', '安全验证', '滑动验证', '请输入验证码', '验证码错误',
+      '机器人验证', '请完成拼图验证', '点击完成验证', '安全校验', 'verify you are human', 'captcha-required']) {
       expect(VERIFY_TEXT_PATTERN.test(t)).toBe(true)
     }
   })

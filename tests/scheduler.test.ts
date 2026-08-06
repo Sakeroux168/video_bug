@@ -931,6 +931,36 @@ describe('验证码识别与长操作兜底（R11-4）', () => {
     await p
   }, 10000)
 
+  it('停滞自救先查验证码 → 命中直接暂停 stalled_verify（不重搜、不查到底）', async () => {
+    const db = newDb()
+    const taskId = createTask(db, input)
+    const browser = new FakeBrowser()
+    browser.verifyText = '请完成机器人验证'
+    const loadSpy = vi.spyOn(browser, 'load')
+    const { s, events } = setup(db, new FakeDownloader(), browser)
+    await s.run(taskId)
+    expect(loadSpy).toHaveBeenCalledTimes(1) // 只有初始加载：自救先查验证码，绝不重搜
+    expect(db.prepare('SELECT status, error FROM tasks WHERE id=?').get(taskId)).toEqual({ status: 'paused', error: 'stalled_verify' })
+    expect(events).toContainEqual({ type: 'task:paused', taskId, reason: 'stalled_verify' })
+  }, 10000)
+
+  it('verifyFound 已置位（心跳命中）→ 停滞自救直接暂停，不重搜', async () => {
+    const db = newDb()
+    const taskId = createTask(db, input)
+    const browser = new FakeBrowser()
+    const loadSpy = vi.spyOn(browser, 'load')
+    const { s, events } = setup(db, new FakeDownloader(), browser)
+    browser.blockNextLoad()
+    const p = s.run(taskId)
+    await new Promise(r => setTimeout(r, 10))
+    ;(s as any).verifyFound = '请完成机器人验证' // 模拟心跳已检测到验证码
+    browser.releaseLoad()
+    await p
+    expect(loadSpy).toHaveBeenCalledTimes(1) // 未重搜
+    expect(db.prepare('SELECT status, error FROM tasks WHERE id=?').get(taskId)).toEqual({ status: 'paused', error: 'stalled_verify' })
+    expect(events).toContainEqual({ type: 'task:paused', taskId, reason: 'stalled_verify' })
+  }, 10000)
+
   it('重搜加载失败/超时 → 重搜计数已消耗并继续（任务不判失败，走重搜上限）', async () => {
     const db = newDb()
     const taskId = createTask(db, input)

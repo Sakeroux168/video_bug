@@ -3,8 +3,48 @@ import { join } from 'path'
 import type { PlatformAdapter } from './adapters/types'
 import { INJECT_SCRIPT } from './injector'
 
-/** R11-4：验证码识别正则（导出供测试与页面脚本共用）——验证码/滑动验证/安全验证/拖动滑块/请完成验证 */
-export const VERIFY_TEXT_PATTERN = /验证码|滑动验证|安全验证|拖动滑块|请完成验证/i
+/** R11-4/5：验证码识别正则（导出供测试与页面脚本共用）——R11-5 扩展：机器人验证/完成拼图/点击完成/安全校验/verify/captcha
+ *  （真机反馈「机器人验证」等抖音实际文案漏检，重搜烧掉 3 次机会） */
+export const VERIFY_TEXT_PATTERN = /验证码|滑动验证|安全验证|拖动滑块|请完成验证|机器人验证|完成拼图|点击完成|安全校验|verify|captcha/i
+
+/** R11-4/5：验证码检测脚本——结构检测（可见的 captcha/verify/modal-mask/dialog 类名弹窗）+ 全 DOM 文字匹配。
+ *  结构命中（文案未匹配）也返回「验证弹窗（结构命中）」——漏检比误报严重，宁可多暂停一次让用户确认。
+ *  导出供 jsdom 单测验证命中逻辑（与 findBottomText 同样的 inView 可见性+视口校验）。 */
+export function buildVerifyScript(re: RegExp = VERIFY_TEXT_PATTERN): string {
+  return `(() => {
+    const re = ${re.toString()};
+    // 可见 + 视口内：宽高 > 0（排除 display:none/visibility:hidden）且与视口相交
+    const inView = el => {
+      const r = el.getBoundingClientRect();
+      return r.width > 0 && r.height > 0 && r.bottom > 0 && r.top < window.innerHeight;
+    };
+    // 结构检测：验证弹窗/遮罩类名命中（captcha/verify/modal-mask/dialog 等）
+    const sel = '[class*="captcha" i], [class*="verify" i], [id*="captcha" i], [class*="modal-mask"], [class*="dialog"]';
+    try {
+      for (const el of document.querySelectorAll(sel)) {
+        if (!inView(el)) continue;
+        const t = (el.textContent || '').trim();
+        if (t && re.test(t)) return t.slice(0, 30);
+        return '验证弹窗（结构命中）';
+      }
+    } catch (e) {}
+    // 文字匹配：全 DOM 文本扫扩展正则（可见 + 视口内）
+    const body = document.body;
+    if (!body) return null;
+    const skip = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT']);
+    const walker = document.createTreeWalker(body, NodeFilter.SHOW_TEXT, {
+      acceptNode: (node) => {
+        const el = node.parentElement;
+        return el && !skip.has(el.tagName) && inView(el) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+      }
+    });
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      const t = (node.textContent || '').trim();
+      if (t && re.test(t)) return t.slice(0, 30);
+    }
+    return null;
+  })()`
+}
 
 /** R11-4：页面加载强制超时毫秒（loadURL 挂起/页面卡死时不永久卡任务） */
 export const LOAD_TIMEOUT_MS = 30000
@@ -201,36 +241,14 @@ export class VideoBrowser {
   }
 
   /**
-   * R11-4：验证码识别——扫 DOM 文本匹配 /验证码|滑动验证|安全验证|拖动滑块|请完成验证/i
-   * （可见性 + 视口校验，复用 findBottomText 的 inView 模式），命中返回匹配文本。
-   * 验证码可能在任何时刻弹出（不只停滞时），由 scheduler 心跳每 2s 查一次。
+   * R11-4/5：验证码识别——结构检测（可见验证弹窗/遮罩类名）+ 全 DOM 文字匹配扩展正则
+   * （可见性 + 视口校验，复用 findBottomText 的 inView 模式），命中返回匹配文本/「验证弹窗（结构命中）」。
+   * 验证码可能在任何时刻弹出（不只停滞时），由 scheduler 心跳每 2s 查一次 + 自救路径优先查。
    */
   async findVerifyIndicator(): Promise<string | null> {
     if (!this.win) return null
-    const script = `(() => {
-      const re = ${VERIFY_TEXT_PATTERN.toString()};
-      // 可见 + 视口内：宽高 > 0（排除 display:none/visibility:hidden）且与视口相交
-      const inView = el => {
-        const r = el.getBoundingClientRect();
-        return r.width > 0 && r.height > 0 && r.bottom > 0 && r.top < window.innerHeight;
-      };
-      const body = document.body;
-      if (!body) return null;
-      const skip = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT']);
-      const walker = document.createTreeWalker(body, NodeFilter.SHOW_TEXT, {
-        acceptNode: (node) => {
-          const el = node.parentElement;
-          return el && !skip.has(el.tagName) && inView(el) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
-        }
-      });
-      for (let node = walker.nextNode(); node; node = walker.nextNode()) {
-        const t = (node.textContent || '').trim();
-        if (t && re.test(t)) return t.slice(0, 30);
-      }
-      return null;
-    })()`
     try {
-      const r = await this.win.webContents.executeJavaScript(script)
+      const r = await this.win.webContents.executeJavaScript(buildVerifyScript())
       return typeof r === 'string' && r.length > 0 ? r : null
     } catch { return null }
   }

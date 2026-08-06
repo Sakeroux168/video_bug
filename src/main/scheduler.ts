@@ -222,6 +222,7 @@ export class Scheduler {
             const action = await this.rescueStall(adapter, target, stallSec)
             if (this.aborted) break
             if (action === 'paused') { stopReason = 'stalled'; break }
+            if (action === 'verify') { stopReason = 'verify'; break } // R11-5：验证码命中 → 暂停等人工验证
             if (action === 'continue') waited = 0 // 重搜成功后重新起算等待，继续爬（skip=冷却中，继续当前等待）
           }
         }
@@ -247,6 +248,7 @@ export class Scheduler {
           const action = await this.rescueStall(adapter, target, stallSec)
           if (this.aborted) break
           if (action === 'paused') { stopReason = 'stalled'; break }
+          if (action === 'verify') { stopReason = 'verify'; break } // R11-5：验证码命中 → 暂停等人工验证
           if (action === 'continue') continue // 重搜成功：重新进入等待阶段（不再跑 settle/轮末检查）
         }
         // 放慢节奏：滚动后多等一拍让当页结果加载完再进下一轮（默认约1.5s，随每页等待时长缩放；测试环境按间隔缩放保持快速）
@@ -269,6 +271,7 @@ export class Scheduler {
           const action = await this.rescueStall(adapter, target, stallSec)
           if (this.aborted) break
           if (action === 'paused') { stopReason = 'stalled'; break }
+          if (action === 'verify') { stopReason = 'verify'; break } // R11-5：验证码命中 → 暂停等人工验证
           if (action === 'continue') continue
         }
         if (this.pendingVideoIds.length > 30) { /* 下载堆积，放慢抓取 */ await this.sleep(2000) }
@@ -337,17 +340,27 @@ export class Scheduler {
   }
 
   /**
-   * R12：停滞自救 = 重新搜索关键词（删除抖音筛选后唯一自救）。主循环多个检查点调用（心跳等待每 1s 步、
+   * R12/R11-5：停滞自救 = 重新搜索关键词（删除抖音筛选后唯一自救）。主循环多个检查点调用（心跳等待每 1s 步、
    * 滚动返回后、轮末兜底）；rescuing 标志防心跳/并发重入。
-   * 规则：到底文案命中 → 忽略冷却立即重搜（页面已无更多内容可滚，等冷却无意义）；
+   * 规则：验证码优先——命中立即返回 'verify'（暂停等人工验证，绝不重搜）；
+   * 到底文案命中 → 忽略冷却立即重搜（页面已无更多内容可滚，等冷却无意义）；
    * 未命中且距上次重搜 < 冷却秒数（rescueCooldownSec 默认 10）→ 返回 'skip' 跳过本轮继续等；
    * 否则重搜（≤3 次，'continue' 继续循环）；重搜超限 → 'paused' 暂停。
    */
-  private async rescueStall(adapter: PlatformAdapter, target: number, stallSec: number): Promise<'continue' | 'paused' | 'skip'> {
+  private async rescueStall(adapter: PlatformAdapter, target: number, stallSec: number): Promise<'continue' | 'paused' | 'skip' | 'verify'> {
     if (this.rescuing || this.aborted) return 'continue'
     this.rescuing = true
     const log = (msg: string): void => { this.deps.onFilterLog?.(msg) }
     try {
+      // R11-5：自救前先查验证码（verifyFound 已由心跳置位则直接用）——验证弹窗挂着时绝不再重搜/查到底
+      //（重搜会烧掉 3 次机会；真机反馈「机器人验证」弹窗时 5 秒停滞直接重搜）
+      if (!this.verifyFound) {
+        this.verifyFound = await this.deps.browser.findVerifyIndicator().catch(() => null)
+      }
+      if (this.verifyFound) {
+        log(`验证码检测命中：「${this.verifyFound}」→ 暂停等人工验证（不再重搜）`)
+        return 'verify'
+      }
       const elapsed = Date.now() - this.lastFetchedAt
       log(`停滞检测（自救触发）：${(elapsed / 1000).toFixed(1)} 秒无新视频（阈值 ${stallSec} 秒）→ 已停滞（已重搜 ${this.reSearchCount}/3 次）`)
       const bottomText = await this.deps.browser.findBottomText().catch(() => null)
@@ -363,6 +376,15 @@ export class Scheduler {
           return 'skip'
         }
         log(`未找到到底文案（findBottomText 返回 null），已过重搜冷却（${cooldownSec} 秒），执行重搜`)
+      }
+
+      // R11-5 双保险：重搜分支前再查一次验证码（找到底/冷却判定期间可能新弹验证弹窗）
+      if (!this.verifyFound) {
+        this.verifyFound = await this.deps.browser.findVerifyIndicator().catch(() => null)
+      }
+      if (this.verifyFound) {
+        log(`验证码检测命中：「${this.verifyFound}」→ 暂停等人工验证（不重搜）`)
+        return 'verify'
       }
 
       // ③ 重搜（≤3 次）：重新加载任务首屏 URL（关键词=搜索页/作者=主页/话题=话题页）；冷却自本次起算
