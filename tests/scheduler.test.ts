@@ -56,6 +56,9 @@ class FakeBrowser {
     onLog?.('面板出现')
     return true
   }
+  /** R11-4：模拟验证码文案（findVerifyIndicator 命中）；null=未弹验证码 */
+  verifyText: string | null = null
+  async findVerifyIndicator(): Promise<string | null> { return this.verifyText }
   setVisible(_v: boolean): void {}
   dispose(): void {}
 }
@@ -1024,6 +1027,78 @@ describe('停滞检测秒级心跳（R11-3）', () => {
     browser.releaseLoad()
     await p
     expect(db.prepare('SELECT status, error FROM tasks WHERE id=?').get(taskId)).toEqual({ status: 'paused', error: 'stalled' })
+  }, 10000)
+})
+
+describe('验证码识别与长操作兜底（R11-4）', () => {
+  it('心跳检测到验证码（任意时刻）→ 自动暂停 stalled_verify（error=stalled_verify + task:paused reason=stalled_verify）', async () => {
+    const db = newDb()
+    const taskId = createTask(db, input)
+    const browser = new FakeBrowser()
+    browser.verifyText = '请完成安全验证'
+    const events: unknown[] = []
+    // 阈值 60s：停滞自救不干扰，验证码是唯一退出路径
+    const s = new Scheduler({
+      db, browser, analyzer: null, downloader: new FakeDownloader(),
+      emit: e => events.push(e), scrollIntervalMs: 1,
+      getScrollParams: () => ({ scrollSpeed: 'slow' as const, scrollPageWaitMs: 8000 }),
+      getStallThresholdSec: () => 60
+    })
+    const p = s.run(taskId)
+    // 心跳每 2s 查一次验证码：第 2 个 tick（~2s）命中 → 主循环检查点 break → 暂停
+    for (let i = 0; i < 400; i++) {
+      const row = db.prepare('SELECT status FROM tasks WHERE id=?').get(taskId) as { status: string }
+      if (row.status === 'paused') break
+      await new Promise(r => setTimeout(r, 20))
+    }
+    expect(db.prepare('SELECT status, error FROM tasks WHERE id=?').get(taskId)).toEqual({ status: 'paused', error: 'stalled_verify' })
+    expect(events).toContainEqual({ type: 'task:paused', taskId, reason: 'stalled_verify' })
+    await p
+  }, 10000)
+
+  it('重搜加载失败/超时 → 重搜计数已消耗并继续（任务不判失败，走重搜上限）', async () => {
+    const db = newDb()
+    const taskId = createTask(db, input)
+    const browser = new FakeBrowser()
+    // 初始加载成功；第 1 次重搜抛超时标记错误；后续重搜成功
+    const loadSpy = vi.spyOn(browser, 'load')
+      .mockResolvedValueOnce()
+      .mockRejectedValueOnce(Object.assign(new Error('页面加载超时（30000ms）'), { code: 'OP_TIMEOUT' }))
+      .mockResolvedValue()
+    const { s, events } = setup(db, new FakeDownloader(), browser)
+    await s.run(taskId)
+    expect(loadSpy).toHaveBeenCalledTimes(4) // 初始 + 3 次重搜（超时那次也算一次计数）
+    expect(events).toContainEqual({ type: 'task:notice', text: '已自动重新搜索关键词（第 1 次）' })
+    expect((s as any).reSearchCount).toBe(3)
+    expect(db.prepare('SELECT status, error FROM tasks WHERE id=?').get(taskId)).toEqual({ status: 'paused', error: 'stalled' })
+  }, 10000)
+
+  it('心跳等待阶段停滞 → 心跳直接触发自救（fake timers：轮末检查点未到已重搜）', async () => {
+    vi.useFakeTimers()
+    try {
+      const db = newDb()
+      const taskId = createTask(db, input)
+      const browser = new FakeBrowser()
+      const loadSpy = vi.spyOn(browser, 'load')
+      const events: unknown[] = []
+      // 滚动间隔 700ms（收尾 sleep=1400ms）+ 阈值 5s：轮末检查点落在 ~6.3s，
+      // 心跳 6s 先到 → 自救由心跳直接触发（停滞 6s > 5s 阈值，无需等轮末）
+      const s = new Scheduler({
+        db, browser, analyzer: null, downloader: new FakeDownloader(),
+        emit: e => events.push(e), scrollIntervalMs: 700,
+        getScrollParams: () => ({ scrollSpeed: 'slow' as const, scrollPageWaitMs: 8000 }),
+        getStallThresholdSec: () => 5
+      })
+      const p = s.run(taskId)
+      await vi.advanceTimersByTimeAsync(6200)
+      expect(loadSpy.mock.calls.length).toBeGreaterThanOrEqual(2) // 心跳已触发重搜（初始 + 重搜）
+      expect((s as any).reSearchCount).toBeGreaterThanOrEqual(1)
+      expect(events).toContainEqual({ type: 'task:notice', text: '已自动重新搜索关键词（第 1 次）' })
+      await s.pause()
+      await p
+    } finally {
+      vi.useRealTimers()
+    }
   }, 10000)
 })
 

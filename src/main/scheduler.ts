@@ -70,6 +70,10 @@ export class Scheduler {
   private scrolling = false
   /** R11-3：自救执行中标志（筛选/重搜期间置位，finally 复位）；心跳跳过避免并发重复触发 */
   private rescuing = false
+  /** R11-4：心跳检测到的验证码文案（null=未检测到）；主循环检查点据此 break 走 stalled_verify 暂停 */
+  private verifyFound: string | null = null
+  /** R11-4：心跳 tick 计数（每 2 tick=2s 查一次验证码） */
+  private verifyTick = 0
   private aiEnabled = false
   private autoDownload = true
   private pendingVideoIds: number[] = []
@@ -148,6 +152,8 @@ export class Scheduler {
       this.rawSinceLastRound = false
       this.filterApplied = false // 每次 run 重置：筛选续爬只应用一次，恢复任务后可再次尝试
       this.reSearchCount = 0 // R11：每次 run 重置重搜计数（恢复任务后可重新自救）
+      this.verifyFound = null // R11-4：每次 run 重置验证码检测（resume 后重新检测）
+      this.verifyTick = 0
       this.lastFetchedAt = Date.now() // T4/R11：X 秒无新视频计时的起点
       this.pendingVideoIds = []
       this.aiEnabled = !!(this.deps.analyzer) && !!this.filters.aiFilterEnabled
@@ -174,16 +180,28 @@ export class Scheduler {
       const p = this.deps.getScrollParams()
       const speedDefault = { slow: 8000, medium: 5000, fast: 3000 }[p.scrollSpeed] ?? 8000
       this.scrollWaitMs = p.scrollPageWaitMs > 0 ? p.scrollPageWaitMs : speedDefault
-      let stopReason: 'reached' | 'stalled' | null = null
+      let stopReason: 'reached' | 'stalled' | 'verify' | null = null
       // R11：停滞阈值秒数每次 run 现读（设置保存即生效，不构造时缓存）
       const stallSec = this.deps.getStallThresholdSec() ?? 5
-      // R11-3：秒级心跳——停滞检测粒度从"一轮(~15-20s)"降到 1s：每 1s 检查超时，
-      // 滚动中则中断在途滚动（~0.5s 返回）让主循环滚动返回后立即自救；等待阶段的停滞由主循环 1s 小步检查。
-      // rescuing 期间不触发（筛选/重搜执行中，避免并发重复自救）
+      // R11-3/4：秒级心跳——①验证码识别每 2s 查一次（验证码随时可能弹，不只在停滞时；executeJavaScript
+      // 开销可接受）；②停滞检测粒度从"一轮(~15-20s)"降到 1s：滚动中 → 中断在途滚动（~0.5s 返回）让主循环
+      // 滚动返回后立即自救；等待中 → 心跳直接触发自救（与主循环同逻辑，rescuing 防重入、与主循环互斥）。
       this.stallHeartbeat = setInterval(() => {
-        if (this.aborted || this.rescuing) return
-        if (Date.now() - this.lastFetchedAt <= stallSec * 1000) return
-        if (this.scrolling) this.deps.browser.abortScroll?.()
+        if (this.aborted) return
+        this.verifyTick++
+        if (this.verifyTick % 2 === 0 && !this.verifyFound) {
+          void this.deps.browser.findVerifyIndicator().then(m => {
+            if (m && !this.aborted) {
+              this.verifyFound = m
+              if (this.scrolling) this.deps.browser.abortScroll?.() // 让滚动返回，主循环尽快 break
+            }
+          }).catch(() => {})
+        }
+        if (this.rescuing) return
+        if (Date.now() - this.lastFetchedAt > stallSec * 1000) {
+          if (this.scrolling) this.deps.browser.abortScroll?.()
+          else if (this.adapter) void this.rescueStall(this.adapter, target, stallSec)
+        }
       }, 1000)
       // T3/T4：轮次计数器（触发检查点日志标注第几轮用）
       let roundCount = 0
@@ -197,6 +215,7 @@ export class Scheduler {
           await this.sleep(step)
           waited += step
           if (this.aborted) break
+          if (this.verifyFound) { stopReason = 'verify'; break } // R11-4：心跳检测到验证码 → 暂停等人工验证
           if (Date.now() - this.lastFetchedAt > stallSec * 1000) {
             if (this.fetched >= target) { stopReason = 'reached'; break }
             const action = await this.rescueStall(adapter, target, stallSec)
@@ -218,6 +237,7 @@ export class Scheduler {
         // 暂停即时：pause 可能落在 scrollToBottom 内（abortWait 为 null，收尾 sleep 无人唤醒）——
         // 滚动被 abortScroll 中断返回后立即检查 aborted，跳过收尾 sleep 直接进 finally（~1 秒内进暂停态）
         if (this.aborted) break
+        if (this.verifyFound) { stopReason = 'verify'; break } // R11-4：心跳检测到验证码 → 暂停等人工验证
         // R11-2：爬满即停——handleRaw 已通过 abortScroll 中断在途滚动，返回后立即收尾，
         // 不再经过收尾 sleep 白等一轮（此前整轮滚动+收尾 sleep 后才检查 reached，完成要拖 ~15-20s）
         if (this.fetched >= target) { stopReason = 'reached'; break }
@@ -245,6 +265,7 @@ export class Scheduler {
         const stalled = elapsed > stallSec * 1000
         const dfCfg = df ? (df.enabled ? 'enabled=true' : 'enabled=false') : '未配置'
         log(`停滞检测（第${roundCount}轮）：${(elapsed / 1000).toFixed(1)} 秒无新视频（阈值 ${stallSec} 秒）→ ${stalled ? '已停滞' : '未停滞'} 任务 douyinFilter 配置: ${dfCfg}（空轮=${this.emptyRounds} 静默轮=${this.silentRounds}）`)
+        if (this.verifyFound) { stopReason = 'verify'; break } // R11-4：心跳检测到验证码 → 暂停等人工验证
         if (this.fetched >= target) { stopReason = 'reached'; break }
         if (stalled) {
           const action = await this.rescueStall(adapter, target, stallSec)
@@ -258,6 +279,11 @@ export class Scheduler {
       if (this.aborted) {
         db.prepare("UPDATE tasks SET status='paused' WHERE id=?").run(taskId)
         this.deps.emit({ type: 'task:paused', taskId, reason: '用户暂停或风控' })
+      } else if (stopReason === 'verify') {
+        // R11-4：心跳检测到验证码 → 自动暂停（error=stalled_verify；index.ts push 会强制显示抖音窗口 +
+        // toast「任务可能触发验证…」，用户完成验证后点「继续」恢复——resume 重置计数重新 run）
+        db.prepare("UPDATE tasks SET status='paused', error='stalled_verify' WHERE id=?").run(taskId)
+        this.deps.emit({ type: 'task:paused', taskId, reason: 'stalled_verify' })
       } else if (stopReason === 'stalled' && this.fetched < target) {
         // R11：重搜 3 次超限 → 真正暂停（不再无限"进行中"）。reason=stalled 走普通 paused
         // 分支（不强制浏览器全屏——那是 stalled_verify 的行为）；用户点「继续」即恢复，计数随 run 重置
@@ -286,10 +312,12 @@ export class Scheduler {
       this.filters = null
       this.pendingVideoIds = []
       this.taskUrl = ''
-      // R11-3：清理心跳计时器与滚动/自救标志（任务结束/暂停后不再心跳）
+      // R11-3/4：清理心跳计时器与滚动/自救/验证码标志（任务结束/暂停后不再心跳）
       if (this.stallHeartbeat !== null) { clearInterval(this.stallHeartbeat); this.stallHeartbeat = null }
       this.scrolling = false
       this.rescuing = false
+      this.verifyFound = null
+      this.verifyTick = 0
       // A1：通知等 run 退出的 pause()，随后清空信号（下一次 run 会重新登记）
       const resolveExit = this.runExitResolve
       this.runExit = null
@@ -369,7 +397,13 @@ export class Scheduler {
         log(`第 ${this.reSearchCount} 次重搜：${this.task?.query ?? ''}（${this.taskUrl}）`)
         this.deps.emit({ type: 'task:notice', text: `已自动重新搜索关键词（第 ${this.reSearchCount} 次）` })
         this.deps.emit({ type: 'task:progress', taskId: this.taskId, fetched: this.fetched, status: 'running', reSearchCount: this.reSearchCount })
-        await this.deps.browser.load(adapter, this.taskUrl)
+        try {
+          await this.deps.browser.load(adapter, this.taskUrl)
+        } catch (err) {
+          // R11-4：重搜加载失败/超时（如 30s 强制超时）——重搜计数已消耗（reSearchCount++ 在上方），
+          // 按"加载失败"处理：重置停滞计数继续爬，给下轮自救机会（不把任务判失败）
+          log(`第 ${this.reSearchCount} 次重搜加载失败/超时：${err instanceof Error ? err.message : String(err)}（计数已消耗，继续）`)
+        }
         // 重置停滞计数继续爬：lastFetchedAt 从加载完成起算；seen 去重保证只收新条目
         this.lastFetchedAt = Date.now()
         this.emptyRounds = 0

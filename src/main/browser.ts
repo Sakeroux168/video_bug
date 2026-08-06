@@ -11,6 +11,24 @@ export interface ClickOptionsRetries {
   option?: number
 }
 
+/** R11-4：验证码识别正则（导出供测试与页面脚本共用）——验证码/滑动验证/安全验证/拖动滑块/请完成验证 */
+export const VERIFY_TEXT_PATTERN = /验证码|滑动验证|安全验证|拖动滑块|请完成验证/i
+
+/** R11-4：页面加载强制超时毫秒（loadURL 挂起/页面卡死时不永久卡任务） */
+export const LOAD_TIMEOUT_MS = 30000
+/** R11-4：滚动脚本强制超时毫秒（超时视为滚动结束返回，防循环永久卡死） */
+export const SCROLL_TIMEOUT_MS = 60000
+
+/** R11-4：长操作强制超时——Promise.race 竞速，超时侧 reject 带 code=OP_TIMEOUT 的标记错误（不引入依赖） */
+export function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  return Promise.race([
+    p,
+    new Promise<never>((_, reject) =>
+      setTimeout(() => reject(Object.assign(new Error(`${label}超时（${ms}ms）`), { code: 'OP_TIMEOUT' })), ms)
+    )
+  ])
+}
+
 /** 定位成功返回值：中心坐标 + 悬停前遮挡/视口检查结果（hitDesc/covered/inViewport 与取坐标同脚本得出——
  *  按钮元素引用无法跨 executeJavaScript 调用传递，elementFromPoint 检查必须与 rect 计算在同一脚本内完成）。
  *  inViewport=false：坐标在视口外（窗口过窄按钮被裁出，elementFromPoint 结果不可信）；
@@ -157,7 +175,9 @@ export class VideoBrowser {
 
   async load(adapter: PlatformAdapter, url: string): Promise<void> {
     if (!this.win) throw new Error('browser_not_initialized')
-    await this.win.loadURL(url)
+    // R11-4：页面加载 30s 强制超时——loadURL 永不 resolve（网络挂起/页面卡死）时不永久卡住；
+    // 超时抛 code=OP_TIMEOUT 标记错误，调度器按"加载失败"处理（重搜超时计数消耗后继续）
+    await withTimeout(this.win.loadURL(url), LOAD_TIMEOUT_MS, '页面加载')
   }
 
   /** 渐进滚动到底：滚 window + 所有可滚容器，多轮小步，并点击"加载更多"，尽力触发抖音加载更多。
@@ -242,7 +262,46 @@ export class VideoBrowser {
       if (!window.__scrollAborted) await sleep(1500); // 最后再等一拍，等网络/渲染落定；已中止则立即返回
       return targets.length;
     })()`
-    await this.win.webContents.executeJavaScript(script).catch(() => {})
+    // R11-4：整体 60s 强制超时——脚本异常挂起（页面 JS 死循环等）视为滚动结束返回，防循环永久卡死
+    await Promise.race([
+      this.win.webContents.executeJavaScript(script).catch(() => {}),
+      new Promise<void>(resolve => setTimeout(resolve, SCROLL_TIMEOUT_MS))
+    ])
+  }
+
+  /**
+   * R11-4：验证码识别——扫 DOM 文本匹配 /验证码|滑动验证|安全验证|拖动滑块|请完成验证/i
+   * （可见性 + 视口校验，复用 findBottomText 的 inView 模式），命中返回匹配文本。
+   * 验证码可能在任何时刻弹出（不只停滞时），由 scheduler 心跳每 2s 查一次。
+   */
+  async findVerifyIndicator(): Promise<string | null> {
+    if (!this.win) return null
+    const script = `(() => {
+      const re = ${VERIFY_TEXT_PATTERN.toString()};
+      // 可见 + 视口内：宽高 > 0（排除 display:none/visibility:hidden）且与视口相交
+      const inView = el => {
+        const r = el.getBoundingClientRect();
+        return r.width > 0 && r.height > 0 && r.bottom > 0 && r.top < window.innerHeight;
+      };
+      const body = document.body;
+      if (!body) return null;
+      const skip = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT']);
+      const walker = document.createTreeWalker(body, NodeFilter.SHOW_TEXT, {
+        acceptNode: (node) => {
+          const el = node.parentElement;
+          return el && !skip.has(el.tagName) && inView(el) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+        }
+      });
+      for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+        const t = (node.textContent || '').trim();
+        if (t && re.test(t)) return t.slice(0, 30);
+      }
+      return null;
+    })()`
+    try {
+      const r = await this.win.webContents.executeJavaScript(script)
+      return typeof r === 'string' && r.length > 0 ? r : null
+    } catch { return null }
   }
 
   /** 通知页面滚动脚本立即中止（fire-and-forget，不等待脚本返回）：
