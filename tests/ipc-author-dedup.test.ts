@@ -64,8 +64,7 @@ function setup(): {
     reloadOrganizer: () => {},
     getOrganizer: () => null,
     enqueueTask: id => enqueued.push(id),
-    setBrowserVisible: () => {},
-    pushFilterLog: () => {}
+    setBrowserVisible: () => {}
   })
   const create = mockIpc.handlers.get('task:create')!
   return {

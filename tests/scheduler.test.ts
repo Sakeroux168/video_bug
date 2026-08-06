@@ -6,6 +6,12 @@ import { douyinAdapter } from '../src/main/adapters/douyin'
 import type { PlatformAdapter } from '../src/main/adapters/types'
 import type { CreateTaskInput } from '../src/shared/types'
 
+// R12：scheduler 的停滞自救读 getSettings().rescueCooldownSec（默认 10），settings.ts 顶层用
+// electron app.getPath——mock electron 指向测试目录（无配置文件 → 回落 DEFAULTS，冷却=10s）
+vi.mock('electron', () => ({
+  app: { getPath: () => process.cwd() + '/.tmp-scheduler-test' }
+}))
+
 describe('buildStopDecision', () => {
   it('达到目标 → reached', () => expect(buildStopDecision(200, 200, 0)).toBe('reached'))
   it('连续5轮空 → stop', () => expect(buildStopDecision(100, 200, 5)).toBe('stop'))
@@ -50,12 +56,6 @@ class FakeBrowser {
   /** 滚动中止信号 spy：pause() 应触发 abortScroll（页面级即时停止，不等 scrollToBottom 跑完） */
   abortScroll = vi.fn()
   async findBottomText(): Promise<string | null> { return this.bottomText }
-  /** onLog：模拟 browser 的 CDP 步骤打点（供全链路日志测试走真实接线） */
-  async applyDouyinFilter(_sel: unknown, _f: unknown, onLog?: (m: string) => void): Promise<boolean> {
-    onLog?.('CDP attach 成功')
-    onLog?.('面板出现')
-    return true
-  }
   /** R11-4：模拟验证码文案（findVerifyIndicator 命中）；null=未弹验证码 */
   verifyText: string | null = null
   async findVerifyIndicator(): Promise<string | null> { return this.verifyText }
@@ -80,17 +80,8 @@ const input: CreateTaskInput = {
   autoDownload: true
 }
 
-/** 启用抖音筛选续爬的任务（T3 + R11 共用的模块级入参） */
-const filterInput: CreateTaskInput = {
-  ...input,
-  filters: {
-    ...input.filters,
-    douyinFilter: { enabled: true, publishTime: 0, duration: 1, searchScope: 0, contentType: 0 }
-  }
-}
-
 const rawUrl = 'https://www.douyin.com/aweme/v1/web/search/item/?device_platform=webapp'
-// 稀疏数据：到底后接口仍零星返回新视频（每轮 1-2 条，kept>0 → emptyRounds 归零、停滞分支永远到不了）
+// 稀疏数据：接口仍零星返回新视频（每轮 1-2 条，kept>0 → emptyRounds 归零、停滞分支永远到不了）
 function sparseJson(i: number): unknown {
   return {
     aweme_list: [{
@@ -219,7 +210,7 @@ describe('handleRaw 入库与作者（I4）+ pendingVideoIds 清理（I1）', ()
 })
 
 describe('resume（I2）', () => {
-  it('resume 重跑同一任务并正常结束（重搜/筛选计数随 run 重置）', async () => {
+  it('resume 重跑同一任务并正常结束（重搜计数随 run 重置）', async () => {
     const db = newDb()
     const taskId = createTask(db, input)
     const { s } = setup(db, new FakeDownloader(), new FakeBrowser())
@@ -550,311 +541,15 @@ describe('滚动参数传递（T2）', () => {
   }, 10000)
 })
 
-describe('抖音筛选续爬（T3）', () => {
-  it('搜索停滞 + 启用筛选 + keyword → applyDouyinFilter 被调且只一次；应用后停滞走重搜兜底，最终暂停', async () => {
+describe('停滞自救重搜（R12，删筛选后唯一自救）', () => {
+  it('停滞 → 直接重搜：load 被调、URL 含关键词、reSearchCount 递增、progress 事件带值', async () => {
     const db = newDb()
-    const taskId = createTask(db, filterInput)
-    const browser = new FakeBrowser()
-    const spy = vi.spyOn(browser, 'applyDouyinFilter').mockResolvedValue(true)
-    const { s } = setup(db, new FakeDownloader(), browser)
-    await s.run(taskId)
-    // 只应用一次：应用后继续跑了几轮，再停滞时不再调用（走重搜）
-    expect(spy).toHaveBeenCalledTimes(1)
-    expect(spy).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ duration: 1 }), expect.any(Function))
-    expect(db.prepare('SELECT status, error FROM tasks WHERE id=?').get(taskId)).toEqual({ status: 'paused', error: 'stalled' })
-  }, 10000)
-
-  it('底部文案触发（findBottomText 命中「暂时没有更多了」）+ 停滞 → 应用筛选', async () => {
-    const db = newDb()
-    const taskId = createTask(db, filterInput)
-    const browser = new FakeBrowser()
-    browser.bottomText = '暂时没有更多了'
-    const spy = vi.spyOn(browser, 'applyDouyinFilter').mockResolvedValue(true)
-    const bottomSpy = vi.spyOn(browser, 'findBottomText')
-    const { s } = setup(db, new FakeDownloader(), browser)
-    await s.run(taskId)
-    expect(bottomSpy).toHaveBeenCalled()
-    expect(spy).toHaveBeenCalledTimes(1)
-    expect(db.prepare('SELECT status, error FROM tasks WHERE id=?').get(taskId)).toEqual({ status: 'paused', error: 'stalled' })
-  }, 10000)
-
-  it('5 秒停滞（阈值注入 5s + fake 时钟 6s）→ 触发筛选（秒数制判定，旧 15s 规则不会触发）', async () => {
-    const db = newDb()
-    const taskId = createTask(db, filterInput)
-    const browser = new FakeBrowser()
-    // 递增时钟：lastFetchedAt 之后每次 Date.now() 都多走 6 秒 → 每轮必停滞（6s > 5s 阈值；< 旧 15s 规则）
-    let now = 1000000
-    vi.spyOn(Date, 'now').mockImplementation(() => (now += 6000))
-    const spy = vi.spyOn(browser, 'applyDouyinFilter').mockResolvedValue(true)
-    const events: unknown[] = []
-    const s = new Scheduler({
-      db, browser, analyzer: null, downloader: new FakeDownloader(),
-      emit: e => events.push(e), scrollIntervalMs: 1,
-      getScrollParams: () => ({ scrollSpeed: 'slow' as const, scrollPageWaitMs: 8000 }),
-      getStallThresholdSec: () => 5 // 注入 5s 阈值
-    })
-    await s.run(taskId)
-    expect(spy).toHaveBeenCalledTimes(1)
-    expect(spy).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({ duration: 1 }), expect.any(Function))
-    // 5s 停滞走完整自救循环后真正暂停（不是 stalled_verify）
-    expect(events).toContainEqual({ type: 'task:paused', taskId, reason: 'stalled' })
-    expect(db.prepare('SELECT status, error FROM tasks WHERE id=?').get(taskId)).toEqual({ status: 'paused', error: 'stalled' })
-  }, 10000)
-
-  it('未停滞（时钟恒定，elapsed 恒 0）→ 不触发筛选、不重搜、不暂停，直到手动暂停', async () => {
-    const db = newDb()
-    const taskId = createTask(db, filterInput)
-    const browser = new FakeBrowser()
-    browser.bottomText = null
-    vi.spyOn(Date, 'now').mockReturnValue(1000000) // 时钟恒定：elapsed 恒为 0，永远判不到停滞
-    const spy = vi.spyOn(browser, 'applyDouyinFilter').mockResolvedValue(true)
-    const loadSpy = vi.spyOn(browser, 'load')
-    const { s, events } = setup(db, new FakeDownloader(), browser)
-    const p = s.run(taskId)
-    await new Promise(r => setTimeout(r, 80)) // 跑几轮：未停滞则持续抓取
-    await s.pause()
-    await p
-    expect(spy).not.toHaveBeenCalled()
-    expect(loadSpy).toHaveBeenCalledTimes(1) // 只有初始加载，无重搜
-    expect(events).not.toContainEqual(expect.objectContaining({ type: 'task:notice' }))
-    expect(db.prepare('SELECT status, error FROM tasks WHERE id=?').get(taskId)).toEqual({ status: 'paused', error: null })
-  }, 10000)
-
-  it('筛选应用返回 false → 发 notice + 降级到重搜（不直接停）；重搜超限后暂停', async () => {
-    const db = newDb()
-    const taskId = createTask(db, filterInput)
-    const browser = new FakeBrowser()
-    const spy = vi.spyOn(browser, 'applyDouyinFilter').mockResolvedValue(false)
-    const loadSpy = vi.spyOn(browser, 'load')
-    const { s, events } = setup(db, new FakeDownloader(), browser)
-    await s.run(taskId)
-    expect(spy).toHaveBeenCalledTimes(1) // 只应用一次：无论成败都不再重试
-    expect(events).toContainEqual({ type: 'task:notice', text: '筛选续爬未生效（页面结构可能已变），将自动重新搜索关键词' })
-    expect(loadSpy).toHaveBeenCalledTimes(4) // 初始 + 重搜 3 次（失败也降级到重搜兜底）
-    expect(db.prepare('SELECT status, error FROM tasks WHERE id=?').get(taskId)).toEqual({ status: 'paused', error: 'stalled' })
-  }, 10000)
-
-  it('筛选脚本抛错 → 同样 notice + 降级到重搜（不直接停）', async () => {
-    const db = newDb()
-    const taskId = createTask(db, filterInput)
-    const browser = new FakeBrowser()
-    const spy = vi.spyOn(browser, 'applyDouyinFilter').mockRejectedValue(new Error('script_error'))
-    const { s, events } = setup(db, new FakeDownloader(), browser)
-    await s.run(taskId)
-    expect(spy).toHaveBeenCalledTimes(1)
-    expect(events).toContainEqual({ type: 'task:notice', text: '筛选续爬未生效（页面结构可能已变），将自动重新搜索关键词' })
-    expect(db.prepare('SELECT status, error FROM tasks WHERE id=?').get(taskId)).toEqual({ status: 'paused', error: 'stalled' })
-  }, 10000)
-
-  it('非 keyword 任务（作者）→ 不调 applyDouyinFilter（重搜兜底后暂停）', async () => {
-    const db = newDb()
-    const taskId = createTask(db, { ...filterInput, type: 'author', query: 'https://www.douyin.com/user/abc' })
-    const browser = new FakeBrowser()
-    const spy = vi.spyOn(browser, 'applyDouyinFilter').mockResolvedValue(true)
-    const { s } = setup(db, new FakeDownloader(), browser)
-    await s.run(taskId)
-    expect(spy).not.toHaveBeenCalled()
-    expect(db.prepare('SELECT status, error FROM tasks WHERE id=?').get(taskId)).toEqual({ status: 'paused', error: 'stalled' })
-  }, 10000)
-
-  it('未启用筛选（enabled=false）→ 不调 applyDouyinFilter；停滞走重搜自救', async () => {
-    const db = newDb()
-    const taskId = createTask(db, {
-      ...input,
-      filters: { ...input.filters, douyinFilter: { enabled: false, publishTime: 0, duration: 0, searchScope: 0, contentType: 0 } }
-    })
-    const browser = new FakeBrowser()
-    const spy = vi.spyOn(browser, 'applyDouyinFilter').mockResolvedValue(true)
-    const loadSpy = vi.spyOn(browser, 'load')
-    const { s } = setup(db, new FakeDownloader(), browser)
-    await s.run(taskId)
-    expect(spy).not.toHaveBeenCalled()
-    expect(loadSpy.mock.calls.length).toBe(4) // 初始 + 重搜 3 次（重搜不依赖筛选配置）
-    expect(db.prepare('SELECT status, error FROM tasks WHERE id=?').get(taskId)).toEqual({ status: 'paused', error: 'stalled' })
-  }, 10000)
-
-  it('停滞检测与 CDP 步骤逐条写入 onFilterLog（全链路日志，成功路径）', async () => {
-    const db = newDb()
-    const taskId = createTask(db, filterInput)
-    const logs: string[] = []
-    const s = new Scheduler({
-      db, browser: new FakeBrowser(), analyzer: null, downloader: new FakeDownloader(),
-      emit: () => {}, scrollIntervalMs: 1,
-      getScrollParams: () => ({ scrollSpeed: 'slow' as const, scrollPageWaitMs: 8000 }),
-      onFilterLog: m => logs.push(m),
-      getStallThresholdSec: () => 0.01
-    })
-    await s.run(taskId)
-    const all = logs.join('\n')
-    // 触发决策每步：停滞检测（秒数制）→ 到底文案 → 执行筛选
-    expect(all).toContain('停滞检测')
-    expect(all).toContain('秒无新视频')
-    expect(all).toContain('到底文案命中')
-    expect(all).toContain('开始执行筛选流程')
-    // browser CDP 步骤（经 onLog 回调汇入同一通道）
-    expect(all).toContain('CDP attach 成功')
-    expect(all).toContain('面板出现')
-    // scheduler 汇总执行结果 + 重置计数
-    expect(all).toContain('执行结果：成功')
-    expect(all).toContain('筛选已生效：重置停滞计数')
-  }, 10000)
-
-  it('未启用筛选时 onFilterLog 记录重搜自救（不再直接暂停）', async () => {
-    const db = newDb()
-    const taskId = createTask(db, {
-      ...input,
-      filters: { ...input.filters, douyinFilter: { enabled: false, publishTime: 0, duration: 0, searchScope: 0, contentType: 0 } }
-    })
-    const logs: string[] = []
-    const s = new Scheduler({
-      db, browser: new FakeBrowser(), analyzer: null, downloader: new FakeDownloader(),
-      emit: () => {}, scrollIntervalMs: 1,
-      getScrollParams: () => ({ scrollSpeed: 'slow' as const, scrollPageWaitMs: 8000 }),
-      onFilterLog: m => logs.push(m),
-      getStallThresholdSec: () => 0.01
-    })
-    await s.run(taskId)
-    const all = logs.join('\n')
-    expect(all).toContain('停滞检测')
-    expect(all).toContain('次重搜') // 未启用筛选也重搜
-    expect(all).toContain('已重搜 3 次仍爬不满')
-  }, 10000)
-
-  it('筛选执行失败时 onFilterLog 记录失败结果（含异常信息）+ 降级重搜日志', async () => {
-    const db = newDb()
-    const taskId = createTask(db, filterInput)
-    const browser = new FakeBrowser()
-    vi.spyOn(browser, 'applyDouyinFilter').mockRejectedValue(new Error('cdp_boom'))
-    const logs: string[] = []
-    const s = new Scheduler({
-      db, browser, analyzer: null, downloader: new FakeDownloader(),
-      emit: () => {}, scrollIntervalMs: 1,
-      getScrollParams: () => ({ scrollSpeed: 'slow' as const, scrollPageWaitMs: 8000 }),
-      onFilterLog: m => logs.push(m),
-      getStallThresholdSec: () => 0.01
-    })
-    await s.run(taskId)
-    const all = logs.join('\n')
-    expect(all).toContain('执行结果：失败')
-    expect(all).toContain('cdp_boom')
-    expect(all).toContain('降级到重新搜索关键词')
-  }, 10000)
-
-  it('并发拒绝（FILTER_BUSY）→ 不消耗 filterApplied、不停止、有重试日志；下轮重试成功后正常结束', async () => {
-    const db = newDb()
-    const taskId = createTask(db, filterInput)
-    const browser = new FakeBrowser()
-    // 第一次被互斥锁拒绝（如手动测试在跑），第二次重试成功
-    const busyErr = Object.assign(new Error('filter_busy'), { code: 'FILTER_BUSY' })
-    const spy = vi.spyOn(browser, 'applyDouyinFilter')
-      .mockRejectedValueOnce(busyErr)
-      .mockResolvedValue(true)
-    const logs: string[] = []
-    const events: unknown[] = []
-    const s = new Scheduler({
-      db, browser, analyzer: null, downloader: new FakeDownloader(),
-      emit: e => events.push(e), scrollIntervalMs: 1,
-      getScrollParams: () => ({ scrollSpeed: 'slow' as const, scrollPageWaitMs: 8000 }),
-      onFilterLog: m => logs.push(m),
-      getStallThresholdSec: () => 0.01
-    })
-    await s.run(taskId)
-    // busy 不消耗 filterApplied：下一轮重试调用了一次，成功后走重搜兜底最终暂停（不是被 busy 误停）
-    expect(spy).toHaveBeenCalledTimes(2)
-    // busy 不算失败：不误发「筛选未生效」notice（后续重搜 notice 属正常自救流程）
-    expect(events).not.toContainEqual({ type: 'task:notice', text: '筛选续爬未生效（页面结构可能已变），将自动重新搜索关键词' })
-    const all = logs.join('\n')
-    expect(all).toContain('筛选流程进行中（可能是手动测试在跑）')
-    expect(all).toContain('执行结果：成功')
-    expect(db.prepare('SELECT status, error FROM tasks WHERE id=?').get(taskId)).toEqual({ status: 'paused', error: 'stalled' })
-  }, 10000)
-
-  it('一直 FILTER_BUSY → 任务不停：持续重试直到成功或条件变化（不误发 notice）', async () => {
-    const db = newDb()
-    const taskId = createTask(db, filterInput)
-    const browser = new FakeBrowser()
-    const busyErr = Object.assign(new Error('filter_busy'), { code: 'FILTER_BUSY' })
-    const spy = vi.spyOn(browser, 'applyDouyinFilter').mockRejectedValue(busyErr)
-    const logs: string[] = []
-    const events: unknown[] = []
-    const s = new Scheduler({
-      db, browser, analyzer: null, downloader: new FakeDownloader(),
-      emit: e => events.push(e), scrollIntervalMs: 1,
-      getScrollParams: () => ({ scrollSpeed: 'slow' as const, scrollPageWaitMs: 8000 }),
-      onFilterLog: m => logs.push(m),
-      getStallThresholdSec: () => 0.01
-    })
-    // 一直 busy 时任务不会暂停也不会发 notice（等价于"等手动测试结束后再试"）；
-    // 为避免无限循环，手动中止（模拟用户暂停），验证期间无 notice、filterApplied 始终未被消耗
-    const p = s.run(taskId)
-    await new Promise(r => setTimeout(r, 200))
-    await s.pause()
-    await p
-    expect(spy.mock.calls.length).toBeGreaterThanOrEqual(2) // 每轮停滞都重试，没被一次性消耗
-    expect(events).not.toContainEqual(expect.objectContaining({ type: 'task:notice' }))
-    const all = logs.join('\n')
-    expect(all).toContain('筛选流程进行中（可能是手动测试在跑）')
-    expect(db.prepare('SELECT status, error FROM tasks WHERE id=?').get(taskId)).toEqual({ status: 'paused', error: null })
-  }, 10000)
-
-  it('零星数据持续流入（kept>0 → lastFetchedAt 持续刷新）→ 不误判停滞、不触发筛选（本次修复核心）', async () => {
-    const db = newDb()
-    const taskId = createTask(db, filterInput)
-    const browser = new FakeBrowser() // bottomText 默认「暂时没有更多了」
-    const spy = vi.spyOn(browser, 'applyDouyinFilter').mockResolvedValue(true)
-    const events: unknown[] = []
-    const s = new Scheduler({
-      db, browser, analyzer: null, downloader: new FakeDownloader(),
-      emit: e => events.push(e), scrollIntervalMs: 1,
-      getScrollParams: () => ({ scrollSpeed: 'slow' as const, scrollPageWaitMs: 8000 }),
-      getStallThresholdSec: () => 1 // 1 秒阈值：数据持续流入（<1s 间隔）则永不判停滞
-    })
-    const p = s.run(taskId)
-    // 持续喂零星数据（每轮 kept>0 → lastFetchedAt 刷新），到底文案命中也不触发筛选——触发前提是停滞
-    for (let i = 0; i < 60; i++) {
-      await new Promise(r => setTimeout(r, 4))
-      await s.handleRaw(douyinAdapter, rawUrl, sparseJson(i))
-    }
-    expect(spy).not.toHaveBeenCalled()
-    expect(events).not.toContainEqual(expect.objectContaining({ type: 'task:notice' }))
-    await s.pause()
-    await p
-  }, 10000)
-
-  it('已应用过筛选（filterApplied=true）→ 触发分支跳过，不再调用 applyDouyinFilter（走重搜兜底）', async () => {
-    const db = newDb()
-    const taskId = createTask(db, filterInput)
-    const browser = new FakeBrowser()
-    const spy = vi.spyOn(browser, 'applyDouyinFilter').mockResolvedValue(true)
-    const { s } = setup(db, new FakeDownloader(), browser)
-    browser.blockNextLoad()
-    const p = s.run(taskId)
-    await new Promise(r => setTimeout(r, 10)) // 挂起在 load：run 已重置 filterApplied，尚未进入循环
-    ;(s as any).filterApplied = true // 模拟本任务已应用过一次筛选
-    browser.releaseLoad()
-    await p
-    expect(spy).not.toHaveBeenCalled()
-    expect(db.prepare('SELECT status, error FROM tasks WHERE id=?').get(taskId)).toEqual({ status: 'paused', error: 'stalled' })
-  }, 10000)
-})
-
-/** 递增时钟：lastFetchedAt 之后每次 Date.now() 都多走 6 秒 → 每轮必停滞（6s > 默认 5s 阈值） */
-function advancingClock(): void {
-  let now = 1000000
-  vi.spyOn(Date, 'now').mockImplementation(() => (now += 6000))
-}
-
-describe('停滞自救循环（R11）', () => {
-  it('T2: 筛选生效后再停滞 → 重新搜索关键词（load 被调、URL 含关键词、reSearchCount 递增、progress 事件带值）', async () => {
-    const db = newDb()
-    const taskId = createTask(db, filterInput)
+    const taskId = createTask(db, input)
     const browser = new FakeBrowser()
     advancingClock()
-    const filterSpy = vi.spyOn(browser, 'applyDouyinFilter').mockResolvedValue(true)
     const loadSpy = vi.spyOn(browser, 'load')
     const { s, events } = setup(db, new FakeDownloader(), browser)
     await s.run(taskId)
-    expect(filterSpy).toHaveBeenCalledTimes(1) // 筛选每任务只一次
     // 第 2 次 load = 第 1 次重搜，URL 为关键词搜索页
     const searchUrl = douyinAdapter.buildSearchUrl('测试')
     expect(loadSpy).toHaveBeenNthCalledWith(2, douyinAdapter, searchUrl)
@@ -867,36 +562,74 @@ describe('停滞自救循环（R11）', () => {
     expect((s as any).reSearchCount).toBe(3)
   }, 10000)
 
-  it('T3: 重搜 3 次仍爬不满 → paused error=stalled + notice「已重搜 3 次仍爬不满」', async () => {
+  it('重搜 3 次仍爬不满 → paused error=stalled + notice「已重搜 3 次仍爬不满」', async () => {
     const db = newDb()
-    const taskId = createTask(db, filterInput)
+    const taskId = createTask(db, input)
     const browser = new FakeBrowser()
     advancingClock()
     const { s, events } = setup(db, new FakeDownloader(), browser)
     await s.run(taskId)
-    expect(events).toContainEqual({ type: 'task:notice', text: '已重搜 3 次仍爬不满，请调整关键词或筛选条件' })
+    expect(events).toContainEqual({ type: 'task:notice', text: '已重搜 3 次仍爬不满，请调整关键词' })
     expect(events).toContainEqual({ type: 'task:paused', taskId, reason: 'stalled' })
     expect(db.prepare('SELECT status, error FROM tasks WHERE id=?').get(taskId)).toEqual({ status: 'paused', error: 'stalled' })
   }, 10000)
 
-  it('T4: 未启用筛选续爬 → 停滞同样重搜（重搜不依赖筛选配置）；重搜 3 次超限后暂停', async () => {
+  it('5 秒停滞（阈值注入 5s + fake 时钟 6s）→ 秒数制判定触发重搜', async () => {
     const db = newDb()
-    const taskId = createTask(db, input) // 无 douyinFilter
+    const taskId = createTask(db, input)
     const browser = new FakeBrowser()
-    advancingClock()
+    // 递增时钟：lastFetchedAt 之后每次 Date.now() 都多走 6 秒 → 每轮必停滞（6s > 5s 阈值）
+    let now = 1000000
+    vi.spyOn(Date, 'now').mockImplementation(() => (now += 6000))
     const loadSpy = vi.spyOn(browser, 'load')
-    const { s, events } = setup(db, new FakeDownloader(), browser)
+    const events: unknown[] = []
+    const s = new Scheduler({
+      db, browser, analyzer: null, downloader: new FakeDownloader(),
+      emit: e => events.push(e), scrollIntervalMs: 1,
+      getScrollParams: () => ({ scrollSpeed: 'slow' as const, scrollPageWaitMs: 8000 }),
+      getStallThresholdSec: () => 5 // 注入 5s 阈值
+    })
     await s.run(taskId)
-    expect(loadSpy).toHaveBeenCalledTimes(4) // 初始 + 重搜 3 次（未启用筛选也重搜）
-    expect(events).toContainEqual({ type: 'task:notice', text: '已自动重新搜索关键词（第 1 次）' })
-    expect(events).not.toContainEqual({ type: 'task:notice', text: '爬取停滞已自动暂停' })
-    expect(events).toContainEqual({ type: 'task:notice', text: '已重搜 3 次仍爬不满，请调整关键词或筛选条件' })
+    // 5s 停滞走完整自救循环（重搜 ×3）后真正暂停（不是 stalled_verify）
+    expect(loadSpy.mock.calls.length).toBe(4)
+    expect(events).toContainEqual({ type: 'task:paused', taskId, reason: 'stalled' })
     expect(db.prepare('SELECT status, error FROM tasks WHERE id=?').get(taskId)).toEqual({ status: 'paused', error: 'stalled' })
   }, 10000)
 
-  it('T5: 爬满目标 → done 不变（自救循环不干扰正常完成）', async () => {
+  it('未停滞（时钟恒定，elapsed 恒 0）→ 不重搜、不暂停，直到手动暂停', async () => {
     const db = newDb()
-    const taskId = createTask(db, filterInput)
+    const taskId = createTask(db, input)
+    const browser = new FakeBrowser()
+    browser.bottomText = null
+    vi.spyOn(Date, 'now').mockReturnValue(1000000) // 时钟恒定：elapsed 恒为 0，永远判不到停滞
+    const loadSpy = vi.spyOn(browser, 'load')
+    const { s, events } = setup(db, new FakeDownloader(), browser)
+    const p = s.run(taskId)
+    await new Promise(r => setTimeout(r, 80)) // 跑几轮：未停滞则持续抓取
+    await s.pause()
+    await p
+    expect(loadSpy).toHaveBeenCalledTimes(1) // 只有初始加载，无重搜
+    expect(events).not.toContainEqual(expect.objectContaining({ type: 'task:notice' }))
+    expect(db.prepare('SELECT status, error FROM tasks WHERE id=?').get(taskId)).toEqual({ status: 'paused', error: null })
+  }, 10000)
+
+  it('作者任务停滞 → 同样重搜（重搜与任务类型无关，作者=主页/关键词=搜索页）', async () => {
+    const db = newDb()
+    const taskId = createTask(db, { ...input, type: 'author', query: 'MS4wLjABAAAA1' })
+    const browser = new FakeBrowser()
+    advancingClock()
+    const loadSpy = vi.spyOn(browser, 'load')
+    const { s } = setup(db, new FakeDownloader(), browser)
+    await s.run(taskId)
+    // 重搜复用任务首屏 URL（作者=主页），不依赖任务类型判断
+    expect(loadSpy.mock.calls.length).toBe(4) // 初始 + 重搜 3 次
+    expect(loadSpy).toHaveBeenNthCalledWith(2, douyinAdapter, douyinAdapter.buildAuthorUrl('MS4wLjABAAAA1'))
+    expect(db.prepare('SELECT status, error FROM tasks WHERE id=?').get(taskId)).toEqual({ status: 'paused', error: 'stalled' })
+  }, 10000)
+
+  it('爬满目标 → done 不变（自救循环不干扰正常完成）', async () => {
+    const db = newDb()
+    const taskId = createTask(db, input)
     db.prepare('UPDATE tasks SET fetched_count=200 WHERE id=?').run(taskId) // 模拟已爬满
     const browser = new FakeBrowser()
     const loadSpy = vi.spyOn(browser, 'load')
@@ -907,9 +640,9 @@ describe('停滞自救循环（R11）', () => {
     expect(db.prepare('SELECT status FROM tasks WHERE id=?').get(taskId)).toEqual({ status: 'done' })
   }, 10000)
 
-  it('T6: 非到底停滞 → 立即重搜（去掉"连续 2 轮观察"延迟）；重搜 3 次超限后暂停', async () => {
+  it('非到底停滞 → 首轮即重搜（无观察延迟）；重搜 3 次超限后暂停', async () => {
     const db = newDb()
-    const taskId = createTask(db, filterInput)
+    const taskId = createTask(db, input)
     const browser = new FakeBrowser()
     browser.bottomText = null
     advancingClock()
@@ -929,7 +662,149 @@ describe('停滞自救循环（R11）', () => {
     await p
     expect(loadSpy.mock.calls.length).toBe(4) // 初始 + 重搜 3 次
     expect((s as any).reSearchCount).toBe(3)
-    expect(events).toContainEqual({ type: 'task:notice', text: '已重搜 3 次仍爬不满，请调整关键词或筛选条件' })
+    expect(events).toContainEqual({ type: 'task:notice', text: '已重搜 3 次仍爬不满，请调整关键词' })
+    expect(db.prepare('SELECT status, error FROM tasks WHERE id=?').get(taskId)).toEqual({ status: 'paused', error: 'stalled' })
+  }, 10000)
+
+  it('零星数据持续流入（kept>0 → lastFetchedAt 持续刷新）→ 不误判停滞、不重搜', async () => {
+    const db = newDb()
+    const taskId = createTask(db, input)
+    const browser = new FakeBrowser() // bottomText 默认「暂时没有更多了」
+    const loadSpy = vi.spyOn(browser, 'load')
+    const events: unknown[] = []
+    const s = new Scheduler({
+      db, browser, analyzer: null, downloader: new FakeDownloader(),
+      emit: e => events.push(e), scrollIntervalMs: 1,
+      getScrollParams: () => ({ scrollSpeed: 'slow' as const, scrollPageWaitMs: 8000 }),
+      getStallThresholdSec: () => 1 // 1 秒阈值：数据持续流入（<1s 间隔）则永不判停滞
+    })
+    const p = s.run(taskId)
+    // 持续喂零星数据（每轮 kept>0 → lastFetchedAt 刷新），到底文案命中也不重搜——触发前提是停滞
+    for (let i = 0; i < 60; i++) {
+      await new Promise(r => setTimeout(r, 4))
+      await s.handleRaw(douyinAdapter, rawUrl, sparseJson(i))
+    }
+    expect(loadSpy).toHaveBeenCalledTimes(1)
+    expect(events).not.toContainEqual(expect.objectContaining({ type: 'task:notice' }))
+    await s.pause()
+    await p
+  }, 10000)
+
+  it('停滞自救全链路日志（onFilterLog）：停滞检测 → 到底命中 → 每次重搜 → 重搜超限', async () => {
+    const db = newDb()
+    const taskId = createTask(db, input)
+    const logs: string[] = []
+    const s = new Scheduler({
+      db, browser: new FakeBrowser(), analyzer: null, downloader: new FakeDownloader(),
+      emit: () => {}, scrollIntervalMs: 1,
+      getScrollParams: () => ({ scrollSpeed: 'slow' as const, scrollPageWaitMs: 8000 }),
+      onFilterLog: m => logs.push(m),
+      getStallThresholdSec: () => 0.01
+    })
+    await s.run(taskId)
+    const all = logs.join('\n')
+    // 触发决策每步：停滞检测（秒数制）→ 到底文案命中 → 立即重搜
+    expect(all).toContain('停滞检测')
+    expect(all).toContain('秒无新视频')
+    expect(all).toContain('到底文案命中')
+    expect(all).toContain('立即重搜')
+    expect(all).toContain('第 1 次重搜')
+    expect(all).toContain('第 3 次重搜')
+    expect(all).toContain('已重搜 3 次仍爬不满')
+  }, 10000)
+})
+
+/** 递增时钟：lastFetchedAt 之后每次 Date.now() 都多走 6 秒 → 每轮必停滞（6s > 默认 5s 阈值） */
+function advancingClock(): void {
+  let now = 1000000
+  vi.spyOn(Date, 'now').mockImplementation(() => (now += 6000))
+}
+
+describe('重搜冷却与到底立即重搜（R12）', () => {
+  /** 受控时钟：now 由测试手动推进（停滞阈值用 0.01s，推进即判停滞） */
+  function controlledClock(): (ms: number) => void {
+    let t = 1000000
+    vi.spyOn(Date, 'now').mockImplementation(() => t)
+    return (ms: number) => { t += ms }
+  }
+
+  it('冷却期内再次停滞 → 跳过本轮不重搜（日志「重搜冷却中」）；冷却过后才重搜', async () => {
+    const db = newDb()
+    const taskId = createTask(db, input)
+    const browser = new FakeBrowser()
+    browser.bottomText = null // 不走"到底立即重搜"，专测冷却分支
+    const advance = controlledClock()
+    const loadSpy = vi.spyOn(browser, 'load')
+    const logs: string[] = []
+    const s = new Scheduler({
+      db, browser, analyzer: null, downloader: new FakeDownloader(),
+      emit: () => {}, scrollIntervalMs: 1,
+      getScrollParams: () => ({ scrollSpeed: 'slow' as const, scrollPageWaitMs: 8000 }),
+      onFilterLog: m => logs.push(m),
+      getStallThresholdSec: () => 0.01
+    })
+    browser.blockNextLoad() // 初始加载
+    const p = s.run(taskId)
+    advance(5000) // 停滞（5s >> 0.01s 阈值）
+    browser.releaseLoad() // 放行初始加载 → 第 1 次重搜（lastRescueAt 从此刻起算）
+    for (let i = 0; i < 500 && loadSpy.mock.calls.length < 2; i++) await new Promise(r => setTimeout(r, 2))
+    expect(loadSpy.mock.calls.length).toBe(2) // 第 1 次重搜已发生
+    expect((s as any).reSearchCount).toBe(1)
+    // 冷却期内：距上次重搜 5s（< 10s 默认冷却）→ 再次停滞也跳过，不重搜
+    advance(5000)
+    for (let i = 0; i < 500 && !logs.some(l => l.includes('重搜冷却中')); i++) await new Promise(r => setTimeout(r, 2))
+    expect(logs.some(l => l.includes('重搜冷却中'))).toBe(true)
+    expect(loadSpy.mock.calls.length).toBe(2) // 冷却中：本轮跳过，无新重搜
+    expect((s as any).reSearchCount).toBe(1)
+    expect((s as any).lastRescueAt).toBeGreaterThan(1000000) // 冷却计时已起算
+    // 冷却过后（距上次 >10s）→ 重搜
+    advance(6000)
+    for (let i = 0; i < 500 && loadSpy.mock.calls.length < 3; i++) await new Promise(r => setTimeout(r, 2))
+    expect(loadSpy.mock.calls.length).toBe(3) // 第 2 次重搜：冷却已过
+    expect((s as any).reSearchCount).toBe(2)
+    await s.pause()
+    await p
+    expect(db.prepare('SELECT status, error FROM tasks WHERE id=?').get(taskId)).toEqual({ status: 'paused', error: null })
+  }, 10000)
+
+  it('到底文案命中 → 忽略冷却立即重搜（冷却窗口内也不等）', async () => {
+    const db = newDb()
+    const taskId = createTask(db, input)
+    const browser = new FakeBrowser()
+    browser.bottomText = '暂时没有更多了' // 到底命中：冷却不生效
+    const advance = controlledClock()
+    const loadSpy = vi.spyOn(browser, 'load')
+    const logs: string[] = []
+    const s = new Scheduler({
+      db, browser, analyzer: null, downloader: new FakeDownloader(),
+      emit: () => {}, scrollIntervalMs: 1,
+      getScrollParams: () => ({ scrollSpeed: 'slow' as const, scrollPageWaitMs: 8000 }),
+      onFilterLog: m => logs.push(m),
+      getStallThresholdSec: () => 0.01
+    })
+    browser.blockNextLoad() // 初始加载
+    const p = s.run(taskId)
+    advance(5000) // 停滞
+    browser.releaseLoad() // → 第 1 次重搜（到底命中，lastRescueAt 起算）
+    for (let i = 0; i < 500 && loadSpy.mock.calls.length < 2; i++) await new Promise(r => setTimeout(r, 2))
+    expect(loadSpy.mock.calls.length).toBe(2)
+    expect((s as any).reSearchCount).toBe(1)
+    // 冷却窗口内（距上次 5s < 10s）再次停滞 → 到底命中 → 立即第 2 次重搜，不等冷却
+    advance(5000)
+    for (let i = 0; i < 500 && loadSpy.mock.calls.length < 3; i++) await new Promise(r => setTimeout(r, 2))
+    expect(loadSpy.mock.calls.length).toBe(3) // 冷却被忽略
+    expect((s as any).reSearchCount).toBe(2)
+    expect(logs.some(l => l.includes('重搜冷却中'))).toBe(false) // 冷却分支从未走
+    expect(logs.some(l => l.includes('到底文案命中') && l.includes('立即重搜'))).toBe(true)
+    // 继续 → 第 3 次重搜（冷却同样被忽略）
+    advance(5000)
+    for (let i = 0; i < 500 && loadSpy.mock.calls.length < 4; i++) await new Promise(r => setTimeout(r, 2))
+    expect(loadSpy.mock.calls.length).toBe(4)
+    expect((s as any).reSearchCount).toBe(3)
+    // 再停滞 → 重搜超限 → 暂停（受控时钟需再推进一步触发本轮停滞判定）
+    advance(5000)
+    await p
+    expect((s as any).reSearchCount).toBe(3)
     expect(db.prepare('SELECT status, error FROM tasks WHERE id=?').get(taskId)).toEqual({ status: 'paused', error: 'stalled' })
   }, 10000)
 })
@@ -960,7 +835,7 @@ describe('停滞检测秒级心跳（R11-3）', () => {
 
   it('滚动中停滞 → 滚动返回后立即自救（重搜；不进整轮等待）', async () => {
     const db = newDb()
-    const taskId = createTask(db, filterInput)
+    const taskId = createTask(db, input)
     const browser = new FakeBrowser()
     const loadSpy = vi.spyOn(browser, 'load')
     const events: unknown[] = []
@@ -988,9 +863,9 @@ describe('停滞检测秒级心跳（R11-3）', () => {
 
   it('心跳等待阶段停滞 → 直接自救（未进滚动即重搜）', async () => {
     const db = newDb()
-    const taskId = createTask(db, filterInput)
+    const taskId = createTask(db, input)
     const browser = new FakeBrowser()
-    browser.bottomText = null // 不走筛选分支，直接重搜
+    browser.bottomText = null
     advancingClock()
     const loadSpy = vi.spyOn(browser, 'load')
     const { s, events } = setup(db, new FakeDownloader(), browser)
@@ -1010,7 +885,7 @@ describe('停滞检测秒级心跳（R11-3）', () => {
 
   it('rescuing 期间心跳不重复触发（重搜挂起时即使滚动标志置位也不 abortScroll）', async () => {
     const db = newDb()
-    const taskId = createTask(db, filterInput)
+    const taskId = createTask(db, input)
     const browser = new FakeBrowser()
     advancingClock()
     const loadSpy = vi.spyOn(browser, 'load')
@@ -1171,7 +1046,7 @@ describe('爬满即停与启动即时进度（R11-2）', () => {
     const { s, events } = setup(db, new FakeDownloader(), new FakeBrowser())
     await s.run(taskId)
     expect(events[0]).toEqual({ type: 'task:progress', taskId, fetched: 0, status: 'running' }) // 启动即进行中
-    // run 对 pending 无阻碍：正常跑完自救循环（未启用筛选 → 停滞自动暂停）
+    // run 对 pending 无阻碍：正常跑完自救循环（停滞自动暂停）
     expect(db.prepare('SELECT status, error FROM tasks WHERE id=?').get(taskId)).toEqual({ status: 'paused', error: 'stalled' })
   }, 10000)
 })

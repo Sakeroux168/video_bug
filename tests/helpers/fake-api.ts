@@ -66,7 +66,7 @@ function makeSettings(): AppSettings {
     downloadDir: '', aiBaseUrl: '', aiApiKey: '', aiModel: '', downloadConcurrency: 3,
     scrollIntervalMs: 3000, scrollSpeed: 'medium', scrollPageWaitMs: 8000,
     addressTtlMin: 10, allowDuplicateAuthor: false, organizeDebounceMs: 5000, asrMaxSec: 90,
-    stallThresholdSec: 5
+    stallThresholdSec: 5, rescueCooldownSec: 10
   }
 }
 

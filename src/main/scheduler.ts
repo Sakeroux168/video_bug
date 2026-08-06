@@ -10,7 +10,7 @@ import type { Downloader } from './downloader'
 import type { VideoBrowser } from './browser'
 import type { Organizer } from './organizer'
 import { getAdapter } from './adapters'
-import { FILTER_SELECTORS } from './adapters/douyin'
+import { getSettings } from './settings'
 
 /** R11：遗留的空轮数停滞判定（保留导出与测试；调度循环已改用秒数制停滞检测，不再依赖空轮数） */
 export function buildStopDecision(fetched: number, target: number, emptyRounds: number): 'continue' | 'reached' | 'stop' {
@@ -40,7 +40,7 @@ interface SchedulerDeps {
   organizer?: Organizer | null
   /** Task5：下载完成→按作者归档去抖毫秒；<=0 表示立即归档 */
   organizeDebounceMs?: number
-  /** 筛选续爬全链路日志回调（触发决策/browser CDP 步骤），主进程汇入界面「查看拦截日志」面板 */
+  /** R12：停滞自救全链路日志回调（停滞检测/到底命中/重搜冷却/重搜计数），主进程汇入界面「查看拦截日志」面板 */
   onFilterLog?: (msg: string) => void
 }
 
@@ -56,12 +56,13 @@ export class Scheduler {
   private rawSinceLastRound = false
   /** T2：当前任务的每页最大等待毫秒（每次 run 从设置现读） */
   private scrollWaitMs = 8000
-  /** T3：本任务是否已应用过抖音筛选续爬（只应用一次，无论成败） */
-  private filterApplied = false
   /** T4：最近一次有新视频入库的时刻（handleRaw fetched++ 时更新）；停滞判定用它算"X 秒无新视频" */
   private lastFetchedAt = 0
   /** R11：本任务已自动重搜关键词的次数（每次 run 重置；>=3 后不再重搜，直接暂停） */
   private reSearchCount = 0
+  /** R12：最近一次自动重搜的时刻（重搜冷却判定：距上次重搜 < 冷却秒数则跳过本轮；
+   *  0=从未重搜（首轮不受冷却）；到底文案命中可忽略冷却立即重搜） */
+  private lastRescueAt = 0
   /** R11：当前任务初始 URL（run 开头计算，重搜时复用——关键词=搜索页/作者=主页/话题=话题页） */
   private taskUrl = ''
   /** R11-3：秒级心跳计时器（run 启动 setInterval(1000)，finally 清理）：1s 粒度检测停滞，中断在途滚动 */
@@ -150,8 +151,8 @@ export class Scheduler {
       this.emptyRounds = 0
       this.silentRounds = 0
       this.rawSinceLastRound = false
-      this.filterApplied = false // 每次 run 重置：筛选续爬只应用一次，恢复任务后可再次尝试
       this.reSearchCount = 0 // R11：每次 run 重置重搜计数（恢复任务后可重新自救）
+      this.lastRescueAt = 0 // R12：每次 run 重置重搜冷却（恢复任务后可立即自救）
       this.verifyFound = null // R11-4：每次 run 重置验证码检测（resume 后重新检测）
       this.verifyTick = 0
       this.lastFetchedAt = Date.now() // T4/R11：X 秒无新视频计时的起点
@@ -221,7 +222,7 @@ export class Scheduler {
             const action = await this.rescueStall(adapter, target, stallSec)
             if (this.aborted) break
             if (action === 'paused') { stopReason = 'stalled'; break }
-            if (action === 'continue') waited = 0 // 自救（筛选成功/重搜）后重新起算等待，继续爬
+            if (action === 'continue') waited = 0 // 重搜成功后重新起算等待，继续爬（skip=冷却中，继续当前等待）
           }
         }
         // A1：暂停时不跑滚动（滚动是长任务且不可中断，提前检查避免多滚一轮）
@@ -246,7 +247,7 @@ export class Scheduler {
           const action = await this.rescueStall(adapter, target, stallSec)
           if (this.aborted) break
           if (action === 'paused') { stopReason = 'stalled'; break }
-          if (action === 'continue') continue // 自救成功：重新进入等待阶段（不再跑 settle/轮末检查）
+          if (action === 'continue') continue // 重搜成功：重新进入等待阶段（不再跑 settle/轮末检查）
         }
         // 放慢节奏：滚动后多等一拍让当页结果加载完再进下一轮（默认约1.5s，随每页等待时长缩放；测试环境按间隔缩放保持快速）
         await this.sleep(Math.min(1500, this.scrollWaitMs / 4, this.deps.scrollIntervalMs * 2))
@@ -257,14 +258,11 @@ export class Scheduler {
 
         // R11-2/3：轮末停滞检查点（兜底——等待阶段/滚动返回后均未命中时才到这里；正常轮记录日志）。
         // 停滞判定秒数制，不再依赖空轮数（emptyRounds/silentRounds 仅作日志）。
-        // 诊断增强：日志带上任务筛选配置状态，区分"配置触发"与"手动测试触发"。
         roundCount++
-        const df = this.filters?.douyinFilter
         const log = (msg: string): void => { this.deps.onFilterLog?.(msg) }
         const elapsed = Date.now() - this.lastFetchedAt
         const stalled = elapsed > stallSec * 1000
-        const dfCfg = df ? (df.enabled ? 'enabled=true' : 'enabled=false') : '未配置'
-        log(`停滞检测（第${roundCount}轮）：${(elapsed / 1000).toFixed(1)} 秒无新视频（阈值 ${stallSec} 秒）→ ${stalled ? '已停滞' : '未停滞'} 任务 douyinFilter 配置: ${dfCfg}（空轮=${this.emptyRounds} 静默轮=${this.silentRounds}）`)
+        log(`停滞检测（第${roundCount}轮）：${(elapsed / 1000).toFixed(1)} 秒无新视频（阈值 ${stallSec} 秒）→ ${stalled ? '已停滞' : '未停滞'}（空轮=${this.emptyRounds} 静默轮=${this.silentRounds}）`)
         if (this.verifyFound) { stopReason = 'verify'; break } // R11-4：心跳检测到验证码 → 暂停等人工验证
         if (this.fetched >= target) { stopReason = 'reached'; break }
         if (stalled) {
@@ -339,60 +337,37 @@ export class Scheduler {
   }
 
   /**
-   * R11-3：停滞自救（筛选 → 重搜 → 暂停）。主循环多个检查点调用（心跳等待每 1s 步、滚动返回后、
-   * 轮末兜底）；rescuing 标志防心跳/并发重入。返回 'continue' 继续循环，'paused' 表示已暂停退出。
-   * 诊断增强：触发日志带上任务 douyinFilter 配置状态，区分"配置触发筛选"与"手动测试触发"。
+   * R12：停滞自救 = 重新搜索关键词（删除抖音筛选后唯一自救）。主循环多个检查点调用（心跳等待每 1s 步、
+   * 滚动返回后、轮末兜底）；rescuing 标志防心跳/并发重入。
+   * 规则：到底文案命中 → 忽略冷却立即重搜（页面已无更多内容可滚，等冷却无意义）；
+   * 未命中且距上次重搜 < 冷却秒数（rescueCooldownSec 默认 10）→ 返回 'skip' 跳过本轮继续等；
+   * 否则重搜（≤3 次，'continue' 继续循环）；重搜超限 → 'paused' 暂停。
    */
-  private async rescueStall(adapter: PlatformAdapter, target: number, stallSec: number): Promise<'continue' | 'paused'> {
+  private async rescueStall(adapter: PlatformAdapter, target: number, stallSec: number): Promise<'continue' | 'paused' | 'skip'> {
     if (this.rescuing || this.aborted) return 'continue'
     this.rescuing = true
     const log = (msg: string): void => { this.deps.onFilterLog?.(msg) }
     try {
-      const df = this.filters?.douyinFilter
-      const dfCfg = df ? (df.enabled ? 'enabled=true' : 'enabled=false') : '未配置'
       const elapsed = Date.now() - this.lastFetchedAt
-      log(`停滞检测（自救触发）：${(elapsed / 1000).toFixed(1)} 秒无新视频（阈值 ${stallSec} 秒）→ 已停滞 任务 douyinFilter 配置: ${dfCfg}（已重搜 ${this.reSearchCount}/3 次）`)
+      log(`停滞检测（自救触发）：${(elapsed / 1000).toFixed(1)} 秒无新视频（阈值 ${stallSec} 秒）→ 已停滞（已重搜 ${this.reSearchCount}/3 次）`)
       const bottomText = await this.deps.browser.findBottomText().catch(() => null)
-      log(bottomText !== null ? `到底文案命中：「${bottomText}」` : '未找到到底文案（findBottomText 返回 null）')
-      const atBottom = bottomText !== null
-
-      // ① 到底 + 启用 + 未筛过（keyword 才有筛选面板）→ 应用抖音筛选（每任务只一次）
-      if (atBottom && df?.enabled && this.task?.type === 'keyword' && !this.filterApplied) {
-        log('条件满足，开始执行筛选流程（任务配置了筛选续爬）')
-        let applied = false
-        let errMsg: string | null = null
-        let busy = false
-        try {
-          applied = await this.deps.browser.applyDouyinFilter(FILTER_SELECTORS, df, log)
-        } catch (err) {
-          const code = (err as { code?: string } | null)?.code
-          if (code === 'FILTER_BUSY') {
-            // 并发拒绝（如手动测试在跑）：不算失败——不消耗 filterApplied、不停止，下一轮再试
-            busy = true
-            log('筛选流程进行中（可能是手动测试在跑），本次跳过：不消耗 filterApplied、不停止，下一轮重试')
-          } else {
-            errMsg = err instanceof Error ? err.message : String(err)
-          }
+      const cooldownSec = getSettings().rescueCooldownSec ?? 10
+      if (bottomText !== null) {
+        // ① 到底文案命中：搜索已到底，忽略冷却立即重搜（页面没有更多内容可滚，等冷却无意义）
+        log(`到底文案命中：「${bottomText}」→ 立即重搜（忽略重搜冷却）`)
+      } else {
+        const since = Date.now() - this.lastRescueAt
+        if (since < cooldownSec * 1000) {
+          // ② 重搜冷却中：跳过本轮继续等（10 秒间隔防刷屏/降风控，notice 不频繁打扰用户）
+          log(`未找到到底文案；重搜冷却中（距上次重搜 ${(since / 1000).toFixed(1)} 秒 < ${cooldownSec} 秒），本轮跳过继续等`)
+          return 'skip'
         }
-        if (busy) return 'continue'
-        this.filterApplied = true // 只应用一次：无论成败都不再重试
-        log(`执行结果：${applied ? '成功' : '失败'}${errMsg ? `（异常：${errMsg}）` : ''}`)
-        if (applied) {
-          // 筛选已生效：重置停滞计数继续抓（去重靠 seen 自然跳过已爬过的，只收新内容）
-          this.emptyRounds = 0
-          this.silentRounds = 0
-          this.lastFetchedAt = Date.now()
-          log('筛选已生效：重置停滞计数（空轮/静默轮归 0），继续抓取')
-          return 'continue'
-        }
-        // 失败也降级到重搜：别一失败就停，给重搜兜底（重搜也超限时 ③ 再停）
-        log('筛选未生效：降级到重新搜索关键词（给重搜兜底）')
-        this.deps.emit({ type: 'task:notice', text: '筛选续爬未生效（页面结构可能已变），将自动重新搜索关键词' })
+        log(`未找到到底文案（findBottomText 返回 null），已过重搜冷却（${cooldownSec} 秒），执行重搜`)
       }
 
-      // ② 重搜（≤3 次）：基本自救——不依赖筛选配置（未启用筛选也重搜）、非到底也立即重搜；
-      // 重新加载任务首屏 URL（关键词=搜索页/作者=主页/话题=话题页）
+      // ③ 重搜（≤3 次）：重新加载任务首屏 URL（关键词=搜索页/作者=主页/话题=话题页）；冷却自本次起算
       if (this.reSearchCount < 3) {
+        this.lastRescueAt = Date.now() // R12：重搜冷却计时起点（间隔内不再重搜，notice 不刷屏）
         this.reSearchCount++
         log(`第 ${this.reSearchCount} 次重搜：${this.task?.query ?? ''}（${this.taskUrl}）`)
         this.deps.emit({ type: 'task:notice', text: `已自动重新搜索关键词（第 ${this.reSearchCount} 次）` })
@@ -412,9 +387,9 @@ export class Scheduler {
         return 'continue'
       }
 
-      // ③ 重搜超限：暂停（提示用户调整关键词或筛选条件）
-      log('已重搜 3 次仍爬不满：自动暂停（请调整关键词或筛选条件）')
-      this.deps.emit({ type: 'task:notice', text: '已重搜 3 次仍爬不满，请调整关键词或筛选条件' })
+      // ④ 重搜超限：暂停（提示用户调整关键词）
+      log('已重搜 3 次仍爬不满：自动暂停（请调整关键词）')
+      this.deps.emit({ type: 'task:notice', text: '已重搜 3 次仍爬不满，请调整关键词' })
       return 'paused'
     } finally {
       this.rescuing = false
@@ -510,7 +485,7 @@ export class Scheduler {
         }
       }
     }
-    // R11-2：爬满 → 中断在途滚动（复用暂停信号：滚动脚本下个检查点即退，~450ms 内停；
+    // R11-2：爬满 → 中断在途滚动（复用暂停信号：滚动脚本下个检查点即退，~550ms 内停；
     // 滚动未在跑时 send 无害——下次脚本开头会清标志），循环轮末立即进 reached，不再白等整轮
     if (this.fetched >= target) this.deps.browser.abortScroll?.()
     db.prepare('UPDATE tasks SET fetched_count=? WHERE id=?').run(this.fetched, this.taskId)

@@ -33,6 +33,7 @@ function fullSettings(over: Partial<AppSettings> = {}): AppSettings {
     organizeDebounceMs: 1000,
     asrMaxSec: 120,
     stallThresholdSec: 10,
+    rescueCooldownSec: 10,
     ...over
   }
 }
@@ -51,6 +52,8 @@ describe('settings', () => {
     expect(s.organizeDebounceMs).toBe(5000)
     expect(s.asrMaxSec).toBe(90)
     expect(s.stallThresholdSec).toBe(5)
+    expect(s.rescueCooldownSec).toBe(10)
+    expect(s.scrollIntervalMs).toBe(3500) // R12：默认滚动间隔放慢降风控
   })
 
   it('部分字段已保存 → 读回合并默认值（不丢失未存字段）', () => {

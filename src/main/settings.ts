@@ -9,14 +9,15 @@ const DEFAULTS: AppSettings = {
   aiApiKey: '',
   aiModel: 'gpt-4o-mini',
   downloadConcurrency: 3,
-  scrollIntervalMs: 2000,
+  scrollIntervalMs: 3500, // R12：默认滚动间隔放慢（2000→3500）降风控
   scrollSpeed: 'slow',
   scrollPageWaitMs: 8000,
   addressTtlMin: 30,
   allowDuplicateAuthor: false,
   organizeDebounceMs: 5000,
   asrMaxSec: 90,
-  stallThresholdSec: 5
+  stallThresholdSec: 5,
+  rescueCooldownSec: 10 // R12：重搜冷却秒数（停滞自救两次重搜最小间隔）
 }
 
 export function settingsFile(): string {

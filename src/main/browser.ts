@@ -1,15 +1,7 @@
-import { BrowserWindow, screen, type WebContents } from 'electron'
+import { BrowserWindow, screen } from 'electron'
 import { join } from 'path'
 import type { PlatformAdapter } from './adapters/types'
-import { FILTER_SELECTORS, resolveSelector, describeCandidate, optionLabel, type FilterCandidate } from './adapters/douyin'
-import type { DouyinFilter } from '../shared/types'
 import { INJECT_SCRIPT } from './injector'
-
-/** 选项点击脚本重试配置（默认面板/选项各 200ms×10 = 最多 2s 等渲染；测试可调小） */
-export interface ClickOptionsRetries {
-  panel?: number
-  option?: number
-}
 
 /** R11-4：验证码识别正则（导出供测试与页面脚本共用）——验证码/滑动验证/安全验证/拖动滑块/请完成验证 */
 export const VERIFY_TEXT_PATTERN = /验证码|滑动验证|安全验证|拖动滑块|请完成验证/i
@@ -29,76 +21,6 @@ export function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promis
   ])
 }
 
-/** 定位成功返回值：中心坐标 + 悬停前遮挡/视口检查结果（hitDesc/covered/inViewport 与取坐标同脚本得出——
- *  按钮元素引用无法跨 executeJavaScript 调用传递，elementFromPoint 检查必须与 rect 计算在同一脚本内完成）。
- *  inViewport=false：坐标在视口外（窗口过窄按钮被裁出，elementFromPoint 结果不可信）；
- *  hitDesc：elementFromPoint 命中元素的 tag.class 摘要（视口外或未命中时为 null）；
- *  covered：命中元素非按钮本体/其子孙（可能被其它元素遮挡）。 */
-export interface LocatedEl {
-  ok: true
-  x: number
-  y: number
-  index: number
-  hitDesc: string | null
-  covered: boolean
-  inViewport: boolean
-}
-
-/** 选项点击脚本（单次 executeJavaScript 完成「面板重找 + 逐选项查找 + el.click」）：
- *  hover 弹层在两次 executeJavaScript 调用间隙（sleep + IPC 往返）会关闭——「面板出现」与「点选项」分两次调用
- *  会报「面板未找到」，合并为一次脚本执行杜绝间隙丢面板；面板/选项各带 200ms×N 重试等待渲染；
- *  命中后 el.click()（React 响应程序化 click，选项无需真实鼠标）。
- *  返回 { ok, panelFound, panelLost, clicked: 选项下标[], missing: 选项下标[] }：
- *  panelFound=false = 面板自始未找到；panelLost=true = 首次找到但脚本执行期间关闭（调用方据此重新悬停按钮重试整批）。
- *  find 即 resolveSelector 的 toString 嵌入（与单测同一份逻辑），rectOf 做可见性校验（隐藏面板不算出现）。 */
-export function buildClickOptionsScript(
-  sel: typeof FILTER_SELECTORS,
-  options: Array<{ label: string; cands: readonly FilterCandidate[] }>,
-  retries: ClickOptionsRetries = {}
-): string {
-  const panelRetries = retries.panel ?? 10
-  const optionRetries = retries.option ?? 10
-  const panelCands = JSON.stringify(sel.panel)
-  const opts = JSON.stringify(options.map(o => o.cands))
-  return `(async () => {
-    const sleep = ms => new Promise(r => setTimeout(r, ms));
-    const find = ${resolveSelector.toString()};
-    const textOf = el => (el.textContent || '').trim();
-    const rectOf = el => { const r = el.getBoundingClientRect(); return { width: r.width, height: r.height }; };
-    const panelCands = ${panelCands};
-    const opts = ${opts};
-    // 面板：200ms×${panelRetries} 重试等出现（脚本启动时弹层可能在间隙中关闭，短暂重试即可复得）
-    let panel = null;
-    for (let i = 0; i < ${panelRetries} && !panel; i++) {
-      const p = find(panelCands, document, textOf, null, rectOf);
-      if (p.el) { panel = p.el; break; }
-      await sleep(200);
-    }
-    if (!panel) return { ok: false, panelFound: false, panelLost: false, clicked: [], missing: opts.map((_, i) => i) };
-    let ok = true;
-    const clicked = [];
-    const missing = [];
-    // 逐选项：面板内候选查找（200ms×${optionRetries} 重试等渲染）+ el.click（React 响应程序化 click）
-    for (let i = 0; i < opts.length; i++) {
-      let el = null;
-      for (let j = 0; j < ${optionRetries} && !el; j++) {
-        const r = find(opts[i], document, textOf, panel, rectOf);
-        if (r.el) { el = r.el; break; }
-        await sleep(200);
-      }
-      if (el) {
-        try { el.click(); clicked.push(i); } catch (e) { missing.push(i); ok = false; }
-      } else {
-        missing.push(i); ok = false;
-      }
-      await sleep(150); // 让 React 处理点击/下拉状态更新再点下一个
-    }
-    // panelLost：首次面板找到但脚本执行期间关闭（hover 弹层收起）
-    const still = find(panelCands, document, textOf, null, rectOf);
-    return { ok, panelFound: true, panelLost: !still.el, clicked, missing };
-  })()`
-}
-
 export class VideoBrowser {
   private win: BrowserWindow | null = null
   // 首次显示前定位到主窗口右侧；之后尊重用户拖拽/缩放后的位置，不再重置
@@ -107,9 +29,6 @@ export class VideoBrowser {
   private everShown = false
   // 主动销毁开关：dispose 时置 true，避免 close 拦截把销毁变成隐藏
   private forceClose = false
-  /** 筛选流程互斥锁：同一 webContents 的 CDP attach 排他，自动触发（scheduler）与手动测试（debug:testFilter）
-   *  并发时后到者直接失败，避免真实鼠标事件互相干扰导致诊断失真/任务误停 */
-  private filterInFlight = false
 
   constructor(
     private host: BrowserWindow,
@@ -122,8 +41,7 @@ export class VideoBrowser {
   async init(): Promise<void> {
     // 独立普通窗口（不带 parent：Windows 上带 parent 的 owned window 永远盖在父窗口上层，
     // 用户抱怨抖音窗口一直挡在程序上方；去 parent 后点谁谁在上）。初始隐藏，由 setVisible/focus 唤起。
-    // 最小尺寸 = 抖音搜索页布局下限（实测窗口缩小时页面不缩放、右侧布局被裁出窗外，筛选键跑到窗外）；
-    // 900 为防布局溢出裁剪的下限，如仍偏小可微调，勿低于 860。
+    // 最小尺寸 = 抖音搜索页布局下限（实测窗口缩小时页面不缩放、右侧布局被裁出窗外）。
     const win = new BrowserWindow({
       show: false,
       width: 1024,
@@ -247,7 +165,7 @@ export class VideoBrowser {
             if (window.__scrollAborted) break; // 每步顶部检查中止
             targets.forEach(t => { try { t.scrollTop += 500; } catch (e) {} });
             wheel(500);
-            await sleep(450);
+            await sleep(550); // R12：步间延迟 450→550ms 放慢降风控
           }
           if (window.__scrollAborted) break;
           targets.forEach(t => { try { t.scrollTop = t.scrollHeight; } catch (e) {} });
@@ -306,7 +224,7 @@ export class VideoBrowser {
 
   /** 通知页面滚动脚本立即中止（fire-and-forget，不等待脚本返回）：
    *  webContents.send('dy:scroll-abort') → preload（隔离世界）→ window.postMessage → 主世界滚动脚本置 __scrollAborted，
-   *  滚动循环在下个检查点退出（步间隔 ≤450ms，暂停 1 秒内生效） */
+   *  滚动循环在下个检查点退出（步间隔 ≤550ms，暂停 1 秒内生效） */
   abortScroll(): void {
     if (!this.win || this.win.isDestroyed()) return
     this.win.webContents.send('dy:scroll-abort')
@@ -366,9 +284,9 @@ export class VideoBrowser {
   }
 
   /** 扫描全 DOM 找"到底"文案（如抖音「暂时没有更多了」），命中返回截断 30 字的文本，否则 null。
-   *  与"15 秒无新视频"先到先触发：命中说明搜索已到底，应触发筛选续爬。
+   *  与"X 秒无新视频"先到先触发：命中说明搜索已到底，应触发重搜自救（忽略重搜冷却立即重搜）。
    *  可见性 + 视口校验：抖音把提示常驻 DOM 但隐藏（display:none/visibility:hidden，rect 宽高 0），
-   *  且未滚到底时提示在视口外——隐藏/视口外文本不算命中，避免「还没到底就触发筛选续爬」。
+   *  且未滚到底时提示在视口外——隐藏/视口外文本不算命中，避免「还没到底就触发重搜」。
    *  快速路径：先查真实元素 div.nU717OFZ（含同样校验，命中直接返回），再走文字正则扫描。 */
   async findBottomText(): Promise<string | null> {
     if (!this.win) return null
@@ -406,349 +324,6 @@ export class VideoBrowser {
       const r = await this.win.webContents.executeJavaScript(script)
       return typeof r === 'string' && r.length > 0 ? r : null
     } catch { return null }
-  }
-
-  /**
-   * 注入脚本操作抖音搜索筛选面板（T3/T4 筛选续爬，CDP 真实鼠标优先）：
-   * 筛选面板是 CSS :hover 驱动，合成 mouseover/mouseenter/mousemove 事件不触发真实 hover（面板不出现）→
-   * 改走 CDP Input.dispatchMouseEvent 发真实鼠标输入：attach('1.3') → executeJavaScript 取按钮中心（viewport 坐标）
-   * → mouseMoved 悬停 → 轮询面板出现（250ms×20）→ 逐选项（index>0）取中心 → mouseMoved + mousePressed/mouseReleased
-   * 真实点击 → 等 2.5s 页面刷新 → finally detach。
-   * debugger attach 失败（如已开调试控制台）→ 回退旧合成事件方案；仍失败返回 false，由调度侧 notice 兜底。
-   * 返回 false：按钮找不到/面板 5s 内不出现/任一需要点的选项缺失（页面结构可能已变），调用方按原逻辑停止。
-   * 互斥锁被拒（上一次筛选未结束）时抛 code='FILTER_BUSY' 的错误（与真实失败区分），调用方应稍后重试。
-   * onLog：全链路诊断日志回调（每步 CDP 交互都打点，调度侧汇入界面「查看拦截日志」面板）
-   */
-  async applyDouyinFilter(sel: typeof FILTER_SELECTORS, f: DouyinFilter, onLog?: (msg: string) => void): Promise<boolean> {
-    const log = (msg: string): void => { onLog?.(msg) }
-    // 互斥锁：一次只允许一个筛选流程在跑（自动触发与手动测试共用入口，天然互斥）。
-    // CDP attach 对同一 webContents 排他，并发会让后到者静默回退 legacy、真实鼠标事件互相干扰。
-    // 被拒时抛带 code=FILTER_BUSY 的错误（与"真实失败"区分）：调度侧据此不消耗 filterApplied、不停止，下一轮重试
-    if (this.filterInFlight) {
-      log('筛选流程进行中（上一次未结束），本次跳过（FILTER_BUSY）')
-      const err = new Error('filter_busy') as Error & { code: string }
-      err.code = 'FILTER_BUSY'
-      throw err
-    }
-    this.filterInFlight = true
-    try {
-      return await this.applyDouyinFilterLocked(sel, f, log)
-    } finally {
-      this.filterInFlight = false
-    }
-  }
-
-  /** 互斥锁已持有后的实际筛选流程（含 CDP 优先 / 合成事件回退） */
-  private async applyDouyinFilterLocked(sel: typeof FILTER_SELECTORS, f: DouyinFilter, log: (msg: string) => void): Promise<boolean> {
-    if (!this.win) { log('浏览器窗口不存在，无法执行筛选'); return false }
-    // 组号：1发布时间/2时长/3搜索范围/4内容形式（组 0=排序不操作）；选项 data-index2 即配置索引
-    const pairs: Array<[number, number]> = []
-    if (f.publishTime > 0) pairs.push([1, f.publishTime])
-    if (f.duration > 0) pairs.push([2, f.duration])
-    if (f.searchScope > 0) pairs.push([3, f.searchScope])
-    if (f.contentType > 0) pairs.push([4, f.contentType])
-    if (pairs.length === 0) { log('筛选配置全为不限（各维度 0），无需操作，直接视为成功'); return true }
-    // 每个选项是候选数组：语义属性优先，找不到时按选项名映射在面板内文字匹配
-    const options = pairs.map(([g, o]) => ({ label: optionLabel(g, o), cands: sel.option(g, o) }))
-    log(`开始执行筛选流程，待点选项 ${options.length} 个：${options.map(o => o.label).join('，')}`)
-    const wc = this.win.webContents
-    // CDP 优先：真实鼠标输入才触发 :hover 面板；attach 失败（如已开调试控制台）→ 回退合成事件方案
-    let attached = false
-    try {
-      wc.debugger.attach('1.3')
-      attached = true
-      log('CDP attach 成功（协议 1.3）')
-      const r = await this.cdpFilterPath(wc, sel, options, log)
-      log(`CDP 路径执行完成 → ${r ? '成功' : '失败'}`)
-      return r
-    } catch (err) {
-      // 仅 attach 失败回退合成事件；CDP 已跑起来后的异常（sendCommand/取坐标失败）直接算失败
-      if (attached) {
-        log(`CDP 路径执行异常 → 失败（${String(err)}）`)
-        return false
-      }
-      log(`CDP attach 失败（${String(err)}），回退合成事件方案`)
-      const r = await this.legacyFilterPath(wc, sel, options, log)
-      log(`合成事件回退路径执行完成 → ${r ? '成功' : '失败'}`)
-      return r
-    } finally {
-      if (attached) {
-        try { wc.debugger.detach() } catch { /* detach 失败忽略 */ }
-        log('CDP detach 完成')
-      }
-    }
-  }
-
-  /** 页面内依次尝试候选找元素并返回中心坐标（CDP 真实鼠标用）。
-   *  cands：目标候选（css 哈希类 → 文字/语义属性兜底）；scopeCands：非空时先找 scope 容器（面板）再在其内找目标（文字选项限定面板内）。
-   *  scrollFirst：先 scrollIntoView 居中再取坐标（仅按钮用——触发场景恰是"搜索到底"（页面停在底部），
-   *  筛选栏非 sticky 时按钮在视口外，CDP 真实鼠标打到视口外坐标悬停不到；sticky 场景是 no-op 无害。
-   *  选项不滚动：面板已悬停弹出，滚动页面会把按钮移出鼠标位置导致面板收起）。
-   *  页面脚本里的 find 即 resolveSelector 的 toString 嵌入（与单测同一份逻辑），并注入 rectOf 做可见性校验：
-   *  CSS :hover 驱动的筛选面板大概率常驻 DOM 但隐藏（display:none/visibility:hidden，rect 宽高为 0），
-   *  命中但不可见视为未命中，防止轮询假命中 → 坐标全 0 → realClick 打到 (0,0) 的静默假成功。
-   *  返回：ok=true 带中心坐标/命中下标，并带悬停前遮挡/视口检查结果（hitDesc/covered/inViewport——
-   *  elementFromPoint 命中元素是否为按钮本体/其子孙；坐标在视口外则 inViewport=false，供调用方打点诊断）；
-   *  ok=false 时 scopeFound 区分容器未命中/目标未命中，hitIndex >= 0 = 目标候选「命中但不可见」（打点用），-1 = 完全未命中。 */
-  private async locateElement(
-    wc: WebContents,
-    cands: readonly FilterCandidate[],
-    opts: { scopeCands?: readonly FilterCandidate[]; scrollFirst?: boolean } = {}
-  ): Promise<LocatedEl | { ok: false; scopeFound: boolean; hitIndex: number }> {
-    // scope 先找面板再在其内找目标；scope 未命中即返回（打点区分「面板未找到」与「选项候选未命中」）
-    const scopePart = opts.scopeCands
-      ? `const sc = find(${JSON.stringify(opts.scopeCands)}, document, textOf, null, rectOf); if (!sc.el) return { found: false, scopeFound: false, hitIndex: -1 };`
-      : 'const sc = null;'
-    const scrollPart = opts.scrollFirst ? "el.scrollIntoView({ block: 'center' });" : ''
-    const script = `(() => {
-      const find = ${resolveSelector.toString()};
-      const textOf = el => (el.textContent || '').trim();
-      // 可见性校验：display:none/visibility:hidden 的常驻 DOM 元素 rect 宽高为 0，视为未命中
-      const rectOf = el => { const r = el.getBoundingClientRect(); return { width: r.width, height: r.height }; };
-      ${scopePart}
-      const r = find(${JSON.stringify(cands)}, document, textOf, sc, rectOf);
-      if (!r.el) return { found: false, scopeFound: true, hitIndex: r.index };
-      const el = r.el;
-      ${scrollPart}
-      const c = el.getBoundingClientRect();
-      const x = c.left + c.width / 2, y = c.top + c.height / 2;
-      // 悬停前遮挡/视口检查（与取坐标同脚本完成：按钮元素引用无法跨 executeJavaScript 调用传递）：
-      // 坐标在视口外（窗口过窄按钮被裁出，elementFromPoint 结果不可信）→ inViewport=false；
-      // 否则 elementFromPoint 命中元素：非按钮本体/其子孙（contains 判定）→ covered=true（可能被遮挡）
-      let inViewport = x >= 0 && y >= 0 && x <= window.innerWidth && y <= window.innerHeight;
-      let hitDesc = null;
-      let covered = false;
-      if (inViewport) {
-        const hit = document.elementFromPoint(x, y);
-        if (hit) {
-          const cls = hit.className && String(hit.className).trim() ? '.' + String(hit.className).trim().split(/\\s+/).join('.') : '';
-          hitDesc = hit.tagName.toLowerCase() + cls;
-          covered = hit !== el && !el.contains(hit);
-        }
-      }
-      return { found: true, x: x, y: y, index: r.index, hitDesc: hitDesc, covered: covered, inViewport: inViewport };
-    })()`
-    const r = (await wc.executeJavaScript(script).catch(() => null)) as
-      | { found: true; x: number; y: number; index: number; hitDesc: string | null; covered: boolean; inViewport: boolean }
-      | { found: false; scopeFound: boolean; hitIndex: number }
-      | null
-    if (!r) return { ok: false, scopeFound: false, hitIndex: -1 }
-    if (!r.found) return { ok: false, scopeFound: r.scopeFound, hitIndex: r.hitIndex }
-    // 兜底默认：旧形状/异常缺失字段按「视口内、未遮挡」处理，避免误报窗口过窄
-    return {
-      ok: true,
-      x: r.x,
-      y: r.y,
-      index: r.index,
-      hitDesc: r.hitDesc ?? null,
-      covered: r.covered ?? false,
-      inViewport: r.inViewport ?? true
-    }
-  }
-
-  /** 候选依次尝试打点：候选1 css("span.bR4uhU1W")未命中 → 候选2 文字"筛选"命中；hitIndex=-1 表示全部未命中 */
-  private candidateHitText(cands: readonly FilterCandidate[], hitIndex: number): string {
-    return cands.map((c, i) => `候选${i + 1} ${describeCandidate(c)}${i === hitIndex ? '命中' : '未命中'}`).join(' → ')
-  }
-
-  /** 定位失败打点：hitIndex>=0 = 候选命中但不可见（rect 宽高 0，疑似 display:none 的常驻隐藏元素）；
-   *  否则候选均未命中 */
-  private failHitText(cands: readonly FilterCandidate[], hitIndex: number): string {
-    if (hitIndex >= 0) {
-      return `候选${hitIndex + 1} 命中但不可见（rect 宽高为 0，疑似 display:none/visibility:hidden 的常驻 DOM 元素）`
-    }
-    return this.candidateHitText(cands, -1)
-  }
-
-  /** 悬停前检查打点（真机诊断用，不改变悬停行为）：
-   *  坐标在视口外 → 窗口过窄按钮被裁出视口，提示拉宽抖音窗口；
-   *  命中按钮本体/其子孙 → 正常；
-   *  命中其它元素 → 可能被遮挡（仍尝试悬停，防 elementFromPoint 因滚动/渲染时机误判） */
-  private logPreHoverCheck(btn: LocatedEl, log: (msg: string) => void): void {
-    const rx = Math.round(btn.x)
-    const ry = Math.round(btn.y)
-    if (!btn.inViewport) {
-      log(`[筛选] 悬停前检查：窗口过窄，筛选按钮在视口外（坐标 (${rx}, ${ry}) 超出 innerWidth/innerHeight），请拉宽抖音窗口`)
-    } else if (btn.hitDesc && !btn.covered) {
-      log(`[筛选] 悬停前检查：坐标 (${rx}, ${ry}) 命中 ${btn.hitDesc}（按钮本体/子元素）→ 正常`)
-    } else if (btn.hitDesc) {
-      log(`[筛选] 悬停前检查：坐标 (${rx}, ${ry}) 命中 ${btn.hitDesc}，可能被遮挡，仍尝试悬停`)
-    } else {
-      log(`[筛选] 悬停前检查：坐标 (${rx}, ${ry}) 未命中任何元素（elementFromPoint 返回 null），仍尝试悬停`)
-    }
-  }
-
-  /** 执行选项点击脚本并返回明细（脚本异常/未返回 → null） */
-  private async runClickOptionsScript(
-    wc: WebContents,
-    sel: typeof FILTER_SELECTORS,
-    options: Array<{ label: string; cands: readonly FilterCandidate[] }>
-  ): Promise<{ ok: boolean; panelFound: boolean; panelLost: boolean; clicked: number[]; missing: number[] } | null> {
-    const r = (await wc.executeJavaScript(buildClickOptionsScript(sel, options)).catch(() => null)) as
-      | { ok: boolean; panelFound: boolean; panelLost: boolean; clicked: number[]; missing: number[] }
-      | null
-    return r
-  }
-
-  /** 选项点击 + 面板丢失重试（CDP 路径用）：
-   *  选项由单次脚本完成（面板重找 + 逐选项 el.click，杜绝两次调用间隙 hover 弹层关闭导致「面板未找到」）；
-   *  panelLost（首次面板找到但脚本执行期间弹层关闭）→ 重新 CDP 悬停按钮 → 面板轮询 → 重跑整批，最多 3 次；
-   *  面板在但选项缺失（页面结构问题）或面板自始未找到 → 重试无益，直接失败。
-   *  hover：真实鼠标悬停回调（cdpFilterPath 传 mouseMoved sendCommand；合成事件路径不重试） */
-  private async clickOptionsWithRetry(
-    wc: WebContents,
-    sel: typeof FILTER_SELECTORS,
-    options: Array<{ label: string; cands: readonly FilterCandidate[] }>,
-    hover: (x: number, y: number) => Promise<void>,
-    log: (msg: string) => void
-  ): Promise<boolean> {
-    const sleep = (ms: number): Promise<void> => new Promise(r => setTimeout(r, ms))
-    for (let attempt = 0; attempt < 3; attempt++) {
-      const r = await this.runClickOptionsScript(wc, sel, options)
-      if (!r) { log('选项点击脚本未返回结果（页面无响应）→ 失败'); return false }
-      const clickedText = r.clicked.map(i => options[i].label).join('，') || '无'
-      const missingText = r.missing.map(i => options[i].label).join('，') || '无'
-      log(`选项点击脚本（第 ${attempt + 1} 次）：面板找到=${r.panelFound}，点击=${clickedText}，缺失=${missingText}${r.panelLost ? '，面板在脚本执行期间关闭（panelLost）' : ''} → ${r.ok ? '成功' : '失败'}`)
-      if (r.ok) return true
-      // 面板在但选项缺失 = 结构性问题，重试无益；面板自始未找到同样直接失败
-      if (!r.panelLost || !r.panelFound) return false
-      if (attempt >= 2) break
-      log(`面板在选项脚本执行期间关闭（panelLost），重新悬停按钮并重试整批（第 ${attempt + 1} 次失败，上限 3 次）...`)
-      const btn = await this.locateElement(wc, sel.button, { scrollFirst: true })
-      if (!btn.ok) { log(`重新悬停前筛选按钮未找到（${this.failHitText(sel.button, btn.hitIndex)}）→ 放弃重试`); return false }
-      this.logPreHoverCheck(btn, log)
-      await hover(btn.x, btn.y)
-      log(`已重新发送真实鼠标悬停（${Math.round(btn.x)}, ${Math.round(btn.y)}）`)
-      let shown = false
-      for (let i = 0; i < 20; i++) {
-        await sleep(250)
-        const p = await this.locateElement(wc, sel.panel)
-        if (p.ok) { shown = true; break }
-      }
-      if (!shown) { log('重新悬停后面板未出现 → 放弃重试'); return false }
-      await sleep(100) // 面板布局落定一拍
-    }
-    log('选项点击 3 次整批重试仍失败 → 判定失败')
-    return false
-  }
-
-  /** CDP 真实鼠标流程（attach 已成功）：取按钮中心 → mouseMoved 悬停 → 轮询面板出现 → 逐选项真实点击 → 等刷新。
-   *  按钮/面板/选项均按多候选依次尝试（哈希类名 → 文字/语义属性兜底），每步打点候选命中情况。
-   *  坐标取 getBoundingClientRect() 中心：CSS 像素即 viewport 坐标，与 Input.dispatchMouseEvent 一致（页面缩放不影响）。
-   *  log：全链路诊断打点（按钮坐标/面板轮询/每选项点击），供「查看拦截日志」面板展示 */
-  private async cdpFilterPath(
-    wc: WebContents,
-    sel: typeof FILTER_SELECTORS,
-    options: Array<{ label: string; cands: readonly FilterCandidate[] }>,
-    log: (msg: string) => void
-  ): Promise<boolean> {
-    const d = wc.debugger
-    const sleep = (ms: number): Promise<void> => new Promise(r => setTimeout(r, ms))
-    // 悬停筛选按钮（候选依次尝试 + scrollIntoView 防"搜索到底"时按钮在视口外）→ 轮询面板出现（250ms×20 = 5s，面板只认真实 hover）
-    const btn = await this.locateElement(wc, sel.button, { scrollFirst: true })
-    if (!btn.ok) { log(`筛选按钮未找到（${this.failHitText(sel.button, btn.hitIndex)}）`); return false }
-    log(`筛选按钮 ${this.candidateHitText(sel.button, btn.index)}；中心坐标 x=${Math.round(btn.x)} y=${Math.round(btn.y)}（已 scrollIntoView 居中）`)
-    // 悬停前遮挡/视口检查（与取坐标同脚本的 elementFromPoint 打点）：命中按钮本体/子元素 → 正常；
-    // 命中其它元素 → 可能被遮挡（仍尝试悬停）；坐标在视口外 → 窗口过窄按钮被裁出，提示拉宽窗口。真机诊断用
-    this.logPreHoverCheck(btn, log)
-    await d.sendCommand('Input.dispatchMouseEvent', { type: 'mouseMoved', x: btn.x, y: btn.y })
-    log(`已发送真实鼠标悬停 mouseMoved（${Math.round(btn.x)}, ${Math.round(btn.y)}）`)
-    // 面板轮询 = 等到真正可见：候选命中但不可见（常驻 DOM 隐藏）不视为出现，继续等；
-    // 首次出现隐藏命中打一条（防每轮刷屏），供真机诊断 CSS :hover 是否触发
-    let panelIndex = -1
-    let panelHidden = false
-    for (let i = 0; i < 20; i++) {
-      await sleep(250)
-      const p = await this.locateElement(wc, sel.panel)
-      if (p.ok) { panelIndex = p.index; log(`筛选面板出现（第 ${i + 1} 次轮询命中，约 ${(i + 1) * 250}ms，${this.candidateHitText(sel.panel, p.index)}）`); break }
-      if (p.hitIndex >= 0) {
-        if (!panelHidden) log(`筛选面板候选命中但不可见（rect 宽高为 0，疑似常驻 DOM 但隐藏，CSS :hover 未触发），继续等待...`)
-        panelHidden = true
-      }
-    }
-    if (panelIndex < 0) {
-      log(panelHidden
-        ? '筛选面板 5s 内未出现（候选一直命中但不可见，疑似面板常驻 DOM 但隐藏，CSS :hover 未触发）'
-        : `筛选面板 5s 内未出现（CSS :hover 未触发或候选均未命中：${this.candidateHitText(sel.panel, -1)}）`)
-      return false
-    }
-    // 选项：单次脚本完成面板重找 + 逐选项查找/el.click——「面板出现」与「点选项」分两次 executeJavaScript 调用时，
-    // 间隙（sleep + IPC 往返）里 hover 弹层会关闭导致「面板未找到」，合并为一次脚本执行杜绝间隙丢面板；
-    // 面板在脚本执行期间关闭（panelLost）→ 重新悬停按钮重试整批（最多 3 次）
-    const ok = await this.clickOptionsWithRetry(wc, sel, options, async (x, y) => {
-      await d.sendCommand('Input.dispatchMouseEvent', { type: 'mouseMoved', x, y })
-    }, log)
-    if (!ok) return false
-    // 等筛选条件生效、fetch 触发页面刷新（约 2.5s）
-    log('全部选项点击完成，等待 2.5s 让筛选条件生效并刷新页面...')
-    await sleep(2500)
-    return true
-  }
-
-  /** 旧方案兜底（debugger attach 失败时）：合成 mouseover/mouseenter/mousemove 弹面板；选项点击
-   *  与 CDP 路径一致复用单脚本 buildClickOptionsScript（面板重找 + 逐选项 el.click，减少对合成事件的依赖）。
-   *  非 :hover 驱动的场景下仍可用；仍失败返回 false 由调度侧 notice 兜底。
-   *  脚本只负责按钮候选 + hover 合成事件 + 面板等待（可见性校验），返回 { ok, buttonFound, panelShown, buttonIndex, panelIndex }。 */
-  private async legacyFilterPath(
-    wc: WebContents,
-    sel: typeof FILTER_SELECTORS,
-    options: Array<{ label: string; cands: readonly FilterCandidate[] }>,
-    log: (msg: string) => void
-  ): Promise<boolean> {
-    const script = `(async () => {
-      const sleep = ms => new Promise(r => setTimeout(r, ms));
-      const find = ${resolveSelector.toString()};
-      const textOf = el => (el.textContent || '').trim();
-      // 可见性校验：display:none/visibility:hidden 的常驻 DOM 元素 rect 宽高为 0，视为未命中（防隐藏面板假命中）
-      const rectOf = el => { const r = el.getBoundingClientRect(); return { width: r.width, height: r.height }; };
-      // 按钮：候选依次尝试（哈希类过期时文字"筛选"兜底）
-      const buttonR = find(${JSON.stringify(sel.button)}, document, textOf, null, rectOf);
-      if (!buttonR.el) return { ok: false, buttonFound: false, panelShown: false, buttonIndex: -1, panelIndex: -1 };
-      // hover 弹出：事件坐标取元素中心，模拟真实鼠标悬停（部分面板由 mouseover/enter/move 触发）
-      const c = buttonR.el.getBoundingClientRect();
-      const evt = { bubbles: true, cancelable: true, clientX: c.left + c.width / 2, clientY: c.top + c.height / 2 };
-      buttonR.el.dispatchEvent(new MouseEvent('mouseover', evt));
-      buttonR.el.dispatchEvent(new MouseEvent('mouseenter', evt));
-      buttonR.el.dispatchEvent(new MouseEvent('mousemove', evt));
-      // 等筛选面板真正出现（最多 3s），面板同样候选依次尝试 + 可见性校验（隐藏面板不算出现）
-      const waitPanel = async () => {
-        for (let i = 0; i < 20; i++) {
-          const p = find(${JSON.stringify(sel.panel)}, document, textOf, null, rectOf);
-          if (p.el) return p;
-          await sleep(150);
-        }
-        return null;
-      };
-      let panelR = await waitPanel();
-      // click 兼容：hover 未弹出则退回 click 再等一次
-      if (!panelR) { buttonR.el.click(); panelR = await waitPanel(); }
-      if (!panelR) return { ok: false, buttonFound: true, panelShown: false, buttonIndex: buttonR.index, panelIndex: -1 };
-      return { ok: true, buttonFound: true, panelShown: true, buttonIndex: buttonR.index, panelIndex: panelR.index };
-    })()`
-    try {
-      const r = (await wc.executeJavaScript(script)) as {
-        ok: boolean; buttonFound: boolean; panelShown: boolean
-        buttonIndex: number; panelIndex: number
-      } | null
-      if (!r) { log('合成事件脚本未返回结果 → 失败'); return false }
-      const detail = `按钮${this.candidateHitText(sel.button, r.buttonIndex)}，面板${this.candidateHitText(sel.panel, r.panelIndex)}`
-      if (!r.ok || !r.panelShown) {
-        log(`合成事件路径明细：${detail} → 失败`)
-        return false
-      }
-      log(`合成事件路径明细：${detail} → 面板已出现，执行选项点击脚本`)
-      // 选项：复用与 CDP 路径相同的单脚本点击（面板重找 + el.click + panelLost 检测）；
-      // 合成事件路径无 CDP 悬停可重试，panelLost 时单次尝试即失败
-      const click = await this.runClickOptionsScript(wc, sel, options)
-      if (!click) { log('合成事件选项点击脚本未返回结果 → 失败'); return false }
-      const clickedText = click.clicked.map(i => options[i].label).join('，') || '无'
-      const missingText = click.missing.map(i => options[i].label).join('，') || '无'
-      log(`合成事件选项脚本：面板找到=${click.panelFound}，点击=${clickedText}，缺失=${missingText}${click.panelLost ? '，面板在脚本执行期间关闭（panelLost）' : ''} → ${click.ok ? '成功' : '失败'}`)
-      return click.ok
-    } catch (err) {
-      log(`合成事件脚本执行异常 → 失败（${String(err)}）`)
-      return false
-    }
   }
 
   /** 打开抖音页面的开发者工具（调试用） */

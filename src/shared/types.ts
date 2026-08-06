@@ -109,6 +109,8 @@ export interface AppSettings {
   asrMaxSec: number
   /** R11：停滞判定阈值秒数（默认 5；Date.now()-lastFetchedAt > 秒数*1000 即判爬不动，进入自救循环） */
   stallThresholdSec: number
+  /** R12：重搜冷却秒数（停滞自救两次重搜的最小间隔，默认 10；到底文案命中可忽略冷却立即重搜） */
+  rescueCooldownSec: number
 }
 
 /** ASR 单个模型文件的状态（models.status() 的结果形状，跨进程用） */
