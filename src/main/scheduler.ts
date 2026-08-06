@@ -69,7 +69,7 @@ export class Scheduler {
   private stallHeartbeat: ReturnType<typeof setInterval> | null = null
   /** R11-3：滚动进行中标志（scrollToBottom 前置位/返回后复位）；心跳据此决定是否 abortScroll */
   private scrolling = false
-  /** R11-3：自救执行中标志（筛选/重搜期间置位，finally 复位）；心跳跳过避免并发重复触发 */
+  /** R11-3：自救执行中标志（重搜期间置位，finally 复位）；心跳跳过避免并发重复触发 */
   private rescuing = false
   /** R11-4：心跳检测到的验证码文案（null=未检测到）；主循环检查点据此 break 走 stalled_verify 暂停 */
   private verifyFound: string | null = null
