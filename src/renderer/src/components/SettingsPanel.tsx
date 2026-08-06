@@ -130,11 +130,17 @@ export default function SettingsPanel() {
             <input type="number" min={1} className={inputCls} value={s.scrollPageWaitMs / 1000}
               onChange={e => set('scrollPageWaitMs', Number(e.target.value) * 1000)} />
           </label>
-          {/* R11 Task2：停滞检测阈值（默认 5 秒；爬取 5 秒无新视频即判爬不动，进入筛选/重搜自救循环） */}
+          {/* R11 Task2：停滞检测阈值（默认 5 秒；爬取 5 秒无新视频即判爬不动，进入重搜自救循环） */}
           <label className="flex flex-col gap-1">
             停滞检测(秒)
             <input type="number" min={1} max={60} className={inputCls} value={s.stallThresholdSec}
               onChange={e => set('stallThresholdSec', Number(e.target.value))} />
+          </label>
+          {/* R12：重搜冷却(秒)——两次自动重搜的最小间隔（默认 10；停滞自救节流，机制在 scheduler 现读设置） */}
+          <label className="flex flex-col gap-1">
+            重搜冷却(秒)
+            <input type="number" min={1} max={60} className={inputCls} value={s.rescueCooldownSec}
+              onChange={e => set('rescueCooldownSec', Number(e.target.value))} />
           </label>
           <label className="flex flex-col gap-1">
             滚动间隔(ms)
