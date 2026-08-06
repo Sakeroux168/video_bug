@@ -61,8 +61,21 @@ export class VideoBrowser {
     const wc = win.webContents
     // 关键：隐藏/切后台时不被 Chromium 节流，否则切到管理面板后页面停止发请求，爬取到一页就停
     wc.setBackgroundThrottling(false)
-    // 拦截自定义协议（bytedance:// 等）：不走 Windows 协议处理，避免弹微软商店
+    // 拦截自定义协议（bytedance:// 等）：不走 Windows 协议处理，避免弹微软商店。
+    // 三层防护：
+    //  1. 主框架导航 will-navigate —— 主页跳转自定义协议；
+    //  2. 子框架导航 will-frame-navigate —— iframe（抖音内嵌广告/跳转）触发自定义协议；
+    //  3. 服务端重定向 will-redirect —— 302/301 重定向到自定义协议。
     wc.on('will-navigate', (e, url) => {
+      if (!/^https?:/.test(url)) e.preventDefault()
+    })
+    // 子框架（iframe）导航到自定义协议时同样拦死（Electron 32+；用户实测主框架 will-navigate 拦不到的漏网路径之一）
+    // 注意 Electron 32+ 该事件只带一个 details 事件对象，URL 在 e.url（与 will-navigate 的 (e, url) 不同）
+    wc.on('will-frame-navigate', (e) => {
+      if (!/^https?:/.test(e.url)) e.preventDefault()
+    })
+    // 服务端重定向到自定义协议时拦死（如抖音 302 跳 bytedance://）
+    wc.on('will-redirect', (e, url) => {
       if (!/^https?:/.test(url)) e.preventDefault()
     })
     // 一律不允许页面开新窗口/新标签（也拦截协议型 window.open）
