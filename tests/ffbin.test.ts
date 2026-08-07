@@ -4,7 +4,7 @@
 // 中文 locale 的 Windows 上 where.exe 按 GBK(936) 输出，按 utf8 解码得到乱码路径 → ENOENT。
 // 现改为直接扫 process.env.PATH（Node 已正确解码），不再 shell out。
 import { describe, it, expect } from 'vitest'
-import { findInRoots, findInPathEnv, resolveBin, type FfBinDeps } from '../src/main/ffbin'
+import { findInRoots, findInPathEnv, resolveBin, defaultRoots, DEFAULT_ROOTS, type FfBinDeps } from '../src/main/ffbin'
 
 /** 用一组存在的路径造 deps 桩；readdir 只对显式给出的目录有响应，其余抛（模拟盘符不存在） */
 function makeDeps(files: string[], dirs: Record<string, string[]> = {}): FfBinDeps {
@@ -73,6 +73,33 @@ describe('findInRoots', () => {
     const deps = makeDeps([`${bin}/ffmpeg.exe`, `${bin}/ffprobe.exe`], { 'F:/123': ['ffmpeg-8.0.1'] })
     expect(findInRoots('ffmpeg', ['F:/123'], deps)).toBe(`${bin}/ffmpeg.exe`)
     expect(findInRoots('ffprobe', ['F:/123'], deps)).toBe(`${bin}/ffprobe.exe`)
+  })
+})
+
+describe('defaultRoots（打包后优先找包内 ffmpeg）', () => {
+  it('有 resourcesPath 时排在最前——包内 ffmpeg 优先于机器上任何一份', () => {
+    expect(defaultRoots('C:/app/resources')[0]).toBe('C:/app/resources')
+  })
+
+  it('无 resourcesPath（开发态/普通 Node）时不插入 undefined 条目', () => {
+    const roots = defaultRoots(undefined)
+    expect(roots).toEqual(DEFAULT_ROOTS)
+    expect(roots.every(r => typeof r === 'string' && r.length > 0)).toBe(true)
+  })
+
+  it('包内布局 resources/ffmpeg/bin/ 能被 findInRoots 命中', () => {
+    const rp = 'C:/app/resources'
+    const deps = makeDeps([`${rp}/ffmpeg/bin/ffprobe.exe`], { [rp]: ['ffmpeg'] })
+    expect(findInRoots('ffprobe', defaultRoots(rp), deps)).toBe(`${rp}/ffmpeg/bin/ffprobe.exe`)
+  })
+
+  it('包内没有时仍回落到机器上的 /123 目录', () => {
+    const rp = 'C:/app/resources'
+    const deps = makeDeps(
+      ['E:/123/ffmpeg-8.0.1/bin/ffmpeg.exe'],
+      { [rp]: [], 'E:/123': ['ffmpeg-8.0.1'] }
+    )
+    expect(findInRoots('ffmpeg', defaultRoots(rp), deps)).toBe('E:/123/ffmpeg-8.0.1/bin/ffmpeg.exe')
   })
 })
 

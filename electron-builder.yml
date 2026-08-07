@@ -1,0 +1,42 @@
+appId: com.local.video-scraper
+# 不设 productName：Electron 的 app.getName() 会取它，进而决定 userData 目录名。
+# 保持包名 video-scraper，userData 才仍是 %APPDATA%\video-scraper（与开发态、
+# 与已有的登录态/数据库目录一致）。友好中文名只体现在产物文件名上（见 portable.artifactName）。
+
+directories:
+  output: dist
+
+# 只打运行时真正需要的：out/ 产物 + package.json + 唯一的外部运行时依赖 sherpa。
+# react/react-dom 已被 vite 打进 renderer bundle，不必随包（实测 out/ 里只有
+# asr-worker.js require('sherpa-onnx-node')，其余全是 node: 内置模块与 electron）。
+files:
+  - out/**/*
+  - package.json
+  - node_modules/sherpa-onnx-node/**/*
+  - node_modules/sherpa-onnx-win-x64/**/*
+
+# 原生模块（.node / .dll）在 asar 里无法 dlopen，必须解包到 app.asar.unpacked
+asarUnpack:
+  - node_modules/sherpa-onnx-node/**
+  - node_modules/sherpa-onnx-win-x64/**
+
+# ffmpeg 随包，落到 <resourcesPath>/ffmpeg/bin/。
+# 该布局正好命中 src/main/ffbin.ts 里 findInRoots 的 <root>/ffmpeg<版本>/bin/ 规则，
+# 且 defaultRoots() 把 resourcesPath 排在最前 —— 包内这份优先于员工机器上的任意版本。
+# 不带 ffplay.exe（用不到，省 97MB）。
+# 注意：源路径是本构建机上的绝对路径，换构建机需要同步调整。
+extraResources:
+  - from: E:/123/ffmpeg-8.0.1-essentials_build/bin/ffmpeg.exe
+    to: ffmpeg/bin/ffmpeg.exe
+  - from: E:/123/ffmpeg-8.0.1-essentials_build/bin/ffprobe.exe
+    to: ffmpeg/bin/ffprobe.exe
+
+win:
+  target:
+    - target: portable
+      arch:
+        - x64
+
+portable:
+  # 用 ASCII 文件名产出，避免打包链路上的编码问题；交付前再改成中文名即可
+  artifactName: video-scraper-${version}-portable.exe

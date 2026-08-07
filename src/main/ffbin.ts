@@ -25,6 +25,16 @@ const realDeps: FfBinDeps = {
 /** 按本项目约定扫的根目录：老机在 F:/123，新机没有 F: 盘，顺带扫其它盘 */
 export const DEFAULT_ROOTS = ['F:/123', 'E:/123', 'D:/123', 'C:/123']
 
+/**
+ * 实际使用的根目录列表。打包后 ffmpeg/ffprobe 随包放在
+ * `<process.resourcesPath>/ffmpeg/bin/`，正好符合 findInRoots 的 `<root>/ffmpeg<版本>/bin/` 约定，
+ * 把 resourcesPath 排在最前 —— 包内那份优先于员工机器上可能存在的任意版本，行为可预期。
+ * 开发态（普通 Node / 未打包）没有 resourcesPath，返回原列表，不插入空条目。
+ */
+export function defaultRoots(resourcesPath: string | undefined = process.resourcesPath): string[] {
+  return resourcesPath ? [resourcesPath, ...DEFAULT_ROOTS] : [...DEFAULT_ROOTS]
+}
+
 /** Windows 下可执行文件带 .exe；其它平台裸名 */
 function exeNames(name: string): string[] {
   return process.platform === 'win32' ? [`${name}.exe`] : [name, `${name}.exe`]
@@ -78,7 +88,7 @@ export interface ResolveOpts {
 /** 完整查找：先 roots 后 PATH，找不到返回 null（调用方各自兜底放行） */
 export function resolveBin(name: string, opts: ResolveOpts = {}): string | null {
   const deps = opts.deps ?? realDeps
-  const roots = opts.roots ?? DEFAULT_ROOTS
+  const roots = opts.roots ?? defaultRoots()
   const pathEnv = opts.pathEnv ?? process.env.PATH
   return findInRoots(name, roots, deps) ?? findInPathEnv(name, pathEnv, deps.exists)
 }
