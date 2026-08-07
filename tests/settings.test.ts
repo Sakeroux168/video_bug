@@ -51,7 +51,10 @@ describe('settings', () => {
     expect(s.allowDuplicateAuthor).toBe(false)
     expect(s.organizeDebounceMs).toBe(5000)
     expect(s.asrMaxSec).toBe(90)
-    expect(s.stallThresholdSec).toBe(5)
+    // R15：默认改 5 → 25。5 会被 scheduler 的动态下限抬到 15.5（勉强及格线），
+    // 25 才是真机实测跑通的值；且内置「使用说明」页明确告诉员工这里应为 25，
+    // 全新安装若仍是 5，设置页显示值与说明页自相矛盾。
+    expect(s.stallThresholdSec).toBe(25)
     expect(s.rescueCooldownSec).toBe(10)
     expect(s.scrollIntervalMs).toBe(3500) // R12：默认滚动间隔放慢降风控
   })

@@ -194,7 +194,7 @@ app.whenReady().then(() => {
       return { scrollSpeed: s.scrollSpeed, scrollPageWaitMs: s.scrollPageWaitMs, scrollIntervalMs: s.scrollIntervalMs }
     },
     // R11：停滞阈值由 scheduler 每次 run 现读（设置保存即生效，无需重启）
-    getStallThresholdSec: () => getSettings().stallThresholdSec ?? 5,
+    getStallThresholdSec: () => getSettings().stallThresholdSec ?? 25,
     organizer,
     organizeDebounceMs: settings.organizeDebounceMs ?? 5000,
     // R12：停滞自救全链路日志（停滞检测/到底命中/重搜冷却/重搜计数）：汇入 rawLog 面板（与 dy:raw 拦截日志同列展示）
