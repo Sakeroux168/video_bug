@@ -12,6 +12,15 @@ import type { Organizer } from './organizer'
 import { getAdapter } from './adapters'
 import { getSettings } from './settings'
 
+/** Task4：滚动脚本单步延迟毫秒（与 browser.ts scrollToBottom 首轮单步 550ms 保持一致，仅用于估算停滞阈值动态下限） */
+const SCROLL_STEP_MS = 550
+/** Task4：滚动脚本首轮步数（browser.ts scrollToBottom round 0 循环 10 步，见 browser.ts:217） */
+const SCROLL_FIRST_ROUND_STEPS = 10
+/** Task4：停滞阈值动态下限缓冲秒数（覆盖调度/事件循环等误差，避免刚好卡在临界值） */
+const STALL_MIN_BUFFER_SEC = 5
+/** Task4：等待阶段随机抖动上限毫秒（与主循环 waitTotal 抖动、动态下限估算保持一致） */
+const SCROLL_WAIT_JITTER_MS = 1500
+
 /** R11：遗留的空轮数停滞判定（保留导出与测试；调度循环已改用秒数制停滞检测，不再依赖空轮数） */
 export function buildStopDecision(fetched: number, target: number, emptyRounds: number): 'continue' | 'reached' | 'stop' {
   if (fetched >= target) return 'reached'
@@ -31,9 +40,8 @@ interface SchedulerDeps {
   analyzer: Analyzer | null
   downloader: Downloader
   emit: (e: SchedulerEvent) => void
-  scrollIntervalMs: number
-  /** T2：每次 run 现读滚动参数（设置保存即生效，无需重启） */
-  getScrollParams: () => Pick<AppSettings, 'scrollSpeed' | 'scrollPageWaitMs'>
+  /** T2/Task4：每次 run 现读滚动参数（含 scrollIntervalMs；设置保存即生效，无需重启，不再在构造时缓存） */
+  getScrollParams: () => Pick<AppSettings, 'scrollSpeed' | 'scrollPageWaitMs' | 'scrollIntervalMs'>
   /** R11：停滞判定阈值秒数（每次 run 现读，不构造时缓存；Date.now()-lastFetchedAt > 秒数*1000 即判爬不动） */
   getStallThresholdSec: () => number
   /** Task5：按作者整理器（可选；未注入则下载完成不触发整理） */
@@ -56,6 +64,10 @@ export class Scheduler {
   private rawSinceLastRound = false
   /** T2：当前任务的每页最大等待毫秒（每次 run 从设置现读） */
   private scrollWaitMs = 8000
+  /** Task4：当前任务的滚动间隔毫秒（每次 run 从设置现读，设置保存不重启也生效；替代旧的构造期缓存） */
+  private scrollIntervalMs = 0
+  /** Task4：当前任务实际生效的停滞阈值秒数（= Math.max(用户设置, 动态下限)；供测试与日志读取） */
+  private stallSec = 0
   /** T4：最近一次有新视频入库的时刻（handleRaw fetched++ 时更新）；停滞判定用它算"X 秒无新视频" */
   private lastFetchedAt = 0
   /** R11：本任务已自动重搜关键词的次数（每次 run 重置；>=3 后不再重搜，直接暂停） */
@@ -177,13 +189,27 @@ export class Scheduler {
       this.rawSinceLastRound = true
 
       const target = this.filters.targetCount ?? 200
-      // T2：滚动参数每次 run 现读（设置保存即生效）；scrollSpeed 提供默认（慢8s/中5s/快3s），数字微调优先
+      // T2/Task4：滚动参数每次 run 现读（设置保存即生效，含 scrollIntervalMs）；scrollSpeed 提供默认（慢8s/中5s/快3s），数字微调优先
       const p = this.deps.getScrollParams()
       const speedDefault = { slow: 8000, medium: 5000, fast: 3000 }[p.scrollSpeed] ?? 8000
       this.scrollWaitMs = p.scrollPageWaitMs > 0 ? p.scrollPageWaitMs : speedDefault
+      this.scrollIntervalMs = p.scrollIntervalMs
       let stopReason: 'reached' | 'stalled' | 'verify' | null = null
       // R11：停滞阈值秒数每次 run 现读（设置保存即生效，不构造时缓存）
-      const stallSec = this.deps.getStallThresholdSec() ?? 5
+      const userStallSec = this.deps.getStallThresholdSec() ?? 5
+      // Task4：动态下限——一个正常周期至少需要「等待阶段（滚动间隔+抖动）+ 首轮滚动到首批数据回来」，
+      // 阈值低于该周期会绞杀正常滚动（滚动刚起步就被心跳判停滞、abortScroll 掐断，抖音因未滚到底不触发懒加载，
+      // 无新数据→重搜重载回顶部→死循环，真机验收实测复现）。不允许静默覆盖用户配置，抬高时必须打日志。
+      const minStallSec = (this.scrollIntervalMs + SCROLL_WAIT_JITTER_MS) / 1000
+        + (SCROLL_FIRST_ROUND_STEPS * SCROLL_STEP_MS) / 1000
+        + STALL_MIN_BUFFER_SEC
+      const stallSec = Math.max(userStallSec, minStallSec)
+      this.stallSec = stallSec
+      if (stallSec > userStallSec) {
+        this.deps.onFilterLog?.(
+          `停滞阈值：用户设 ${userStallSec} 秒 < 滚动周期需要 ${minStallSec.toFixed(1)} 秒 → 实际按 ${minStallSec.toFixed(1)} 秒执行`
+        )
+      }
       // R11-3/4：秒级心跳——①验证码识别每 2s 查一次（验证码随时可能弹，不只在停滞时；executeJavaScript
       // 开销可接受）；②停滞检测粒度从"一轮(~15-20s)"降到 1s：滚动中 → 中断在途滚动（~0.5s 返回）让主循环
       // 滚动返回后立即自救；等待中 → 心跳直接触发自救（与主循环同逻辑，rescuing 防重入、与主循环互斥）。
@@ -209,7 +235,7 @@ export class Scheduler {
       while (!this.aborted) {
         // R11-3：心跳式等待——sleep 拆成 1s 小步（累计到滚动间隔才触发滚动，滚动频率不变）；
         // 每步检查停滞：命中即走自救（不等整轮结束）
-        const waitTotal = this.deps.scrollIntervalMs + Math.random() * 1500
+        const waitTotal = this.scrollIntervalMs + Math.random() * SCROLL_WAIT_JITTER_MS
         let waited = 0
         while (!this.aborted && waited < waitTotal) {
           const step = Math.min(1000, waitTotal - waited)
@@ -252,7 +278,7 @@ export class Scheduler {
           if (action === 'continue') continue // 重搜成功：重新进入等待阶段（不再跑 settle/轮末检查）
         }
         // 放慢节奏：滚动后多等一拍让当页结果加载完再进下一轮（默认约1.5s，随每页等待时长缩放；测试环境按间隔缩放保持快速）
-        await this.sleep(Math.min(1500, this.scrollWaitMs / 4, this.deps.scrollIntervalMs * 2))
+        await this.sleep(Math.min(1500, this.scrollWaitMs / 4, this.scrollIntervalMs * 2))
         // 按轮次计静默：本轮收到 raw 则重置，否则累加；与空解析轮合并判断停止
         if (this.rawSinceLastRound) this.silentRounds = 0
         else this.silentRounds++
@@ -365,17 +391,14 @@ export class Scheduler {
       log(`停滞检测（自救触发）：${(elapsed / 1000).toFixed(1)} 秒无新视频（阈值 ${stallSec} 秒）→ 已停滞（已重搜 ${this.reSearchCount}/3 次）`)
       const bottomText = await this.deps.browser.findBottomText().catch(() => null)
       const cooldownSec = getSettings().rescueCooldownSec ?? 10
-      if (bottomText !== null) {
-        // ① 到底文案命中：搜索已到底，忽略冷却立即重搜（页面没有更多内容可滚，等冷却无意义）
-        log(`到底文案命中：「${bottomText}」→ 立即重搜（忽略重搜冷却）`)
-      } else {
+      const bottomHit = bottomText !== null
+      if (!bottomHit) {
         const since = Date.now() - this.lastRescueAt
         if (since < cooldownSec * 1000) {
           // ② 重搜冷却中：跳过本轮继续等（10 秒间隔防刷屏/降风控，notice 不频繁打扰用户）
           log(`未找到到底文案；重搜冷却中（距上次重搜 ${(since / 1000).toFixed(1)} 秒 < ${cooldownSec} 秒），本轮跳过继续等`)
           return 'skip'
         }
-        log(`未找到到底文案（findBottomText 返回 null），已过重搜冷却（${cooldownSec} 秒），执行重搜`)
       }
 
       // R11-5 双保险：重搜分支前再查一次验证码（找到底/冷却判定期间可能新弹验证弹窗）
@@ -387,32 +410,42 @@ export class Scheduler {
         return 'verify'
       }
 
-      // ③ 重搜（≤3 次）：重新加载任务首屏 URL（关键词=搜索页/作者=主页/话题=话题页）；冷却自本次起算
-      if (this.reSearchCount < 3) {
-        this.lastRescueAt = Date.now() // R12：重搜冷却计时起点（间隔内不再重搜，notice 不刷屏）
-        this.reSearchCount++
-        log(`第 ${this.reSearchCount} 次重搜：${this.task?.query ?? ''}（${this.taskUrl}）`)
-        this.deps.emit({ type: 'task:notice', text: `已自动重新搜索关键词（第 ${this.reSearchCount} 次）` })
-        this.deps.emit({ type: 'task:progress', taskId: this.taskId, fetched: this.fetched, status: 'running', reSearchCount: this.reSearchCount })
-        try {
-          await this.deps.browser.load(adapter, this.taskUrl)
-        } catch (err) {
-          // R11-4：重搜加载失败/超时（如 30s 强制超时）——重搜计数已消耗（reSearchCount++ 在上方），
-          // 按"加载失败"处理：重置停滞计数继续爬，给下轮自救机会（不把任务判失败）
-          log(`第 ${this.reSearchCount} 次重搜加载失败/超时：${err instanceof Error ? err.message : String(err)}（计数已消耗，继续）`)
-        }
-        // 重置停滞计数继续爬：lastFetchedAt 从加载完成起算；seen 去重保证只收新条目
-        this.lastFetchedAt = Date.now()
-        this.emptyRounds = 0
-        this.silentRounds = 0
-        this.rawSinceLastRound = true // 重搜后首轮不计静默（新页面加载需要时间）
-        return 'continue'
+      // Task4：「≥3 次上限」检查挪到「执行重搜/立即重搜」日志之前——旧版先打印"执行重搜"再判上限，
+      // 上限已到时会打出撒谎的"执行重搜"日志（实际直接走④暂停）。现在先判上限，判定即走④，
+      // 不再经过下面的①/②日志分支，日志与实际行为一致；暂停语义本身不变。
+      if (this.reSearchCount >= 3) {
+        // ④ 重搜超限：暂停（提示用户调整关键词）
+        log('已重搜 3 次仍爬不满：自动暂停（请调整关键词）')
+        this.deps.emit({ type: 'task:notice', text: '已重搜 3 次仍爬不满，请调整关键词' })
+        return 'paused'
       }
 
-      // ④ 重搜超限：暂停（提示用户调整关键词）
-      log('已重搜 3 次仍爬不满：自动暂停（请调整关键词）')
-      this.deps.emit({ type: 'task:notice', text: '已重搜 3 次仍爬不满，请调整关键词' })
-      return 'paused'
+      if (bottomHit) {
+        // ① 到底文案命中：搜索已到底，忽略冷却立即重搜（页面没有更多内容可滚，等冷却无意义）
+        log(`到底文案命中：「${bottomText}」→ 立即重搜（忽略重搜冷却）`)
+      } else {
+        log(`未找到到底文案（findBottomText 返回 null），已过重搜冷却（${cooldownSec} 秒），执行重搜`)
+      }
+
+      // ③ 重搜（≤3 次）：重新加载任务首屏 URL（关键词=搜索页/作者=主页/话题=话题页）；冷却自本次起算
+      this.lastRescueAt = Date.now() // R12：重搜冷却计时起点（间隔内不再重搜，notice 不刷屏）
+      this.reSearchCount++
+      log(`第 ${this.reSearchCount} 次重搜：${this.task?.query ?? ''}（${this.taskUrl}）`)
+      this.deps.emit({ type: 'task:notice', text: `已自动重新搜索关键词（第 ${this.reSearchCount} 次）` })
+      this.deps.emit({ type: 'task:progress', taskId: this.taskId, fetched: this.fetched, status: 'running', reSearchCount: this.reSearchCount })
+      try {
+        await this.deps.browser.load(adapter, this.taskUrl)
+      } catch (err) {
+        // R11-4：重搜加载失败/超时（如 30s 强制超时）——重搜计数已消耗（reSearchCount++ 在上方），
+        // 按"加载失败"处理：重置停滞计数继续爬，给下轮自救机会（不把任务判失败）
+        log(`第 ${this.reSearchCount} 次重搜加载失败/超时：${err instanceof Error ? err.message : String(err)}（计数已消耗，继续）`)
+      }
+      // 重置停滞计数继续爬：lastFetchedAt 从加载完成起算；seen 去重保证只收新条目
+      this.lastFetchedAt = Date.now()
+      this.emptyRounds = 0
+      this.silentRounds = 0
+      this.rawSinceLastRound = true // 重搜后首轮不计静默（新页面加载需要时间）
+      return 'continue'
     } finally {
       this.rescuing = false
     }

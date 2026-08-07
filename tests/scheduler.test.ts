@@ -117,9 +117,11 @@ function newDb(): DatabaseSync {
 function setup(db: DatabaseSync, dl: FakeDownloader, browser: FakeBrowser, scrollIntervalMs = 1) {
   const events: unknown[] = []
   const s = new Scheduler({
-    db, browser, analyzer: null, downloader: dl, emit: e => events.push(e), scrollIntervalMs,
-    getScrollParams: () => ({ scrollSpeed: 'slow' as const, scrollPageWaitMs: 8000 }),
-    // R11：默认测试阈值 0.01 秒（10ms）——跑完的用例几毫秒内即判停滞，不拖慢套件；专门测 5s 语义的用例单独注入
+    db, browser, analyzer: null, downloader: dl, emit: e => events.push(e),
+    getScrollParams: () => ({ scrollSpeed: 'slow' as const, scrollPageWaitMs: 8000, scrollIntervalMs }),
+    // R11：默认测试阈值 0.01 秒（10ms）——Task4 加了动态下限后，实际生效阈值会被抬高到 ≥12s
+    // （(scrollIntervalMs+1500)/1000+5.5+5）。依赖"自然停滞"收尾的用例改用 advancingClock() 让虚拟时钟
+    // 快进，不再单靠这个 0.01s raw 值拖快；只关心其它行为、不关心停滞原因的用例改用 s.pause() 收尾。
     getStallThresholdSec: () => 0.01
   })
   return { s, events }
@@ -133,6 +135,7 @@ describe('Scheduler 滚动循环终止（C1）', () => {
   it('页面静默（无任何 raw 响应）且未达目标 → 停滞后自动暂停（error=stalled，不再无限"进行中"）', async () => {
     const db = newDb()
     const taskId = createTask(db, input)
+    advancingClock() // Task4：动态下限后自然停滞阈值 ≥12s，用虚拟时钟快进代替真实等待
     const { s } = setup(db, new FakeDownloader(), new FakeBrowser())
     await s.run(taskId)
     expect(db.prepare('SELECT status, error FROM tasks WHERE id=?').get(taskId)).toEqual({ status: 'paused', error: 'stalled' })
@@ -159,6 +162,7 @@ describe('Scheduler 异常兜底与串行（I3）', () => {
     const taskId = createTask(db, input)
     const browser = new FakeBrowser()
     browser.blockNextLoad()
+    advancingClock() // Task4：动态下限后自然停滞阈值 ≥12s，用虚拟时钟快进代替真实等待
     const { s } = setup(db, new FakeDownloader(), browser)
     const p1 = s.run(taskId)
     await new Promise(r => setTimeout(r, 20))
@@ -178,6 +182,7 @@ describe('handleRaw 入库与作者（I4）+ pendingVideoIds 清理（I1）', ()
     const taskId = createTask(db, input)
     const dl = new FakeDownloader()
     const browser = new FakeBrowser()
+    advancingClock() // Task4：动态下限后自然停滞阈值 ≥12s，用虚拟时钟快进代替真实等待
     const { s } = setup(db, dl, browser)
     browser.blockNextLoad() // 任务挂起在 load：保持 taskId/adapter 就绪且任务仍在运行（I5 后任务结束即清理上下文）
     const p = s.run(taskId)
@@ -213,6 +218,7 @@ describe('resume（I2）', () => {
   it('resume 重跑同一任务并正常结束（重搜计数随 run 重置）', async () => {
     const db = newDb()
     const taskId = createTask(db, input)
+    advancingClock() // Task4：动态下限后自然停滞阈值 ≥12s，用虚拟时钟快进代替真实等待
     const { s } = setup(db, new FakeDownloader(), new FakeBrowser())
     await s.run(taskId)
     expect(db.prepare('SELECT status, error FROM tasks WHERE id=?').get(taskId)).toEqual({ status: 'paused', error: 'stalled' })
@@ -227,6 +233,7 @@ describe('任务结束清理上下文（I5）', () => {
     const db = newDb()
     const taskId = createTask(db, input)
     const dl = new FakeDownloader()
+    advancingClock() // Task4：动态下限后自然停滞阈值 ≥12s，用虚拟时钟快进代替真实等待
     const { s } = setup(db, dl, new FakeBrowser())
     await s.run(taskId)
     expect(db.prepare('SELECT status, error FROM tasks WHERE id=?').get(taskId)).toEqual({ status: 'paused', error: 'stalled' })
@@ -254,7 +261,9 @@ describe('下载方式：手动 / 自动（Task5）', () => {
     expect(dl.enqueued).toHaveLength(0)
     expect((s as any).pendingVideoIds).toEqual([])
 
+    // Task4：不再依赖自然停滞收尾（动态下限后需要 ≥12s）——本用例只关心下载状态，显式 pause 收尾即可
     browser.releaseLoad()
+    await s.pause()
     await p
   }, 10000)
 
@@ -276,6 +285,7 @@ describe('下载方式：手动 / 自动（Task5）', () => {
     expect((s as any).pendingVideoIds).toEqual([videos[0].id])
 
     browser.releaseLoad()
+    await s.pause()
     await p
   }, 10000)
 })
@@ -296,9 +306,9 @@ describe('下载完成触发作者整理（Task5 替代 I7 逐视频整理）', 
     const events: unknown[] = []
     const s = new Scheduler({
       db, browser, analyzer: null, downloader: dl,
-      emit: e => events.push(e), scrollIntervalMs: 1,
+      emit: e => events.push(e),
       organizer, organizeDebounceMs: 0,
-      getScrollParams: () => ({ scrollSpeed: 'slow' as const, scrollPageWaitMs: 8000 }),
+      getScrollParams: () => ({ scrollSpeed: 'slow' as const, scrollPageWaitMs: 8000, scrollIntervalMs: 1 }),
       getStallThresholdSec: () => 0.01
     })
     browser.blockNextLoad()
@@ -315,6 +325,7 @@ describe('下载完成触发作者整理（Task5 替代 I7 逐视频整理）', 
     expect(organizer.organizePending).toHaveBeenCalled()
 
     browser.releaseLoad()
+    await s.pause()
     await p
   }, 10000)
 
@@ -330,9 +341,9 @@ describe('下载完成触发作者整理（Task5 替代 I7 逐视频整理）', 
     const events: unknown[] = []
     const s = new Scheduler({
       db, browser, analyzer: null, downloader: dl,
-      emit: e => events.push(e), scrollIntervalMs: 1,
+      emit: e => events.push(e),
       organizer, organizeDebounceMs: 0,
-      getScrollParams: () => ({ scrollSpeed: 'slow' as const, scrollPageWaitMs: 8000 }),
+      getScrollParams: () => ({ scrollSpeed: 'slow' as const, scrollPageWaitMs: 8000, scrollIntervalMs: 1 }),
       getStallThresholdSec: () => 0.01
     })
     browser.blockNextLoad()
@@ -349,6 +360,7 @@ describe('下载完成触发作者整理（Task5 替代 I7 逐视频整理）', 
     expect(organizer.organizePending).toHaveBeenCalled()
 
     browser.releaseLoad()
+    await s.pause()
     await p
   }, 10000)
 })
@@ -389,11 +401,11 @@ describe('暂停即时打断（A1）', () => {
     const browser = new FakeBrowser()
     browser.blockNextScroll()
     const events: unknown[] = []
-    // 收尾 sleep=min(1500,2000,1000)=1000ms；阈值 2s：等待 500ms 不判停滞（R11-3 等待阶段会检查停滞）
+    // 收尾 sleep=min(1500,2000,1000)=1000ms；本用例用显式 pause 触发，不依赖停滞阈值大小
     const s = new Scheduler({
       db, browser, analyzer: null, downloader: new FakeDownloader(),
-      emit: e => events.push(e), scrollIntervalMs: 500,
-      getScrollParams: () => ({ scrollSpeed: 'slow' as const, scrollPageWaitMs: 8000 }),
+      emit: e => events.push(e),
+      getScrollParams: () => ({ scrollSpeed: 'slow' as const, scrollPageWaitMs: 8000, scrollIntervalMs: 500 }),
       getStallThresholdSec: () => 2
     })
     const pRun = s.run(taskId)
@@ -413,6 +425,7 @@ describe('暂停即时打断（A1）', () => {
     const db = newDb()
     const taskId = createTask(db, input)
     const browser = new FakeBrowser()
+    advancingClock() // Task4：动态下限后 resume 出的第二个 run 需自然停滞（≥12s）才会终止，用虚拟时钟快进
     const { s } = setup(db, new FakeDownloader(), browser, 50)
     const pRun = s.run(taskId)
     await new Promise(r => setTimeout(r, 10))
@@ -471,6 +484,7 @@ describe('抓取硬截断到目标（A2）', () => {
       '7330000000000000004', '7330000000000000005'
     ]) // 只插前 5 条，第 6 条起被截断
 
+    // 199→200 已通过 handleRaw 内的 fetched>=target 分支中止在途滚动，走 reached 收尾，无需等停滞
     browser.releaseLoad()
     await p
   }, 10000)
@@ -489,8 +503,8 @@ describe('抓取硬截断到目标（A2）', () => {
     const events: unknown[] = []
     const s = new Scheduler({
       db, browser, analyzer, downloader: new FakeDownloader(),
-      emit: e => events.push(e), scrollIntervalMs: 1,
-      getScrollParams: () => ({ scrollSpeed: 'slow' as const, scrollPageWaitMs: 8000 }),
+      emit: e => events.push(e),
+      getScrollParams: () => ({ scrollSpeed: 'slow' as const, scrollPageWaitMs: 8000, scrollIntervalMs: 1 }),
       getStallThresholdSec: () => 0.01
     })
     const pRun = s.run(taskId)
@@ -531,8 +545,8 @@ describe('滚动参数传递（T2）', () => {
     const events: unknown[] = []
     const s = new Scheduler({
       db, browser, analyzer: null, downloader: new FakeDownloader(),
-      emit: e => events.push(e), scrollIntervalMs: 1,
-      getScrollParams: () => ({ scrollSpeed: 'slow' as const, scrollPageWaitMs: 8000 }),
+      emit: e => events.push(e),
+      getScrollParams: () => ({ scrollSpeed: 'slow' as const, scrollPageWaitMs: 8000, scrollIntervalMs: 1 }),
       // 阈值 1s：首轮等待(1ms)不可能判停滞，确保滚动先发生（R11-3 心跳等待小步检查会提前截胡微阈值）
       getStallThresholdSec: () => 1
     })
@@ -585,8 +599,8 @@ describe('停滞自救重搜（R12，删筛选后唯一自救）', () => {
     const events: unknown[] = []
     const s = new Scheduler({
       db, browser, analyzer: null, downloader: new FakeDownloader(),
-      emit: e => events.push(e), scrollIntervalMs: 1,
-      getScrollParams: () => ({ scrollSpeed: 'slow' as const, scrollPageWaitMs: 8000 }),
+      emit: e => events.push(e),
+      getScrollParams: () => ({ scrollSpeed: 'slow' as const, scrollPageWaitMs: 8000, scrollIntervalMs: 1 }),
       getStallThresholdSec: () => 5 // 注入 5s 阈值
     })
     await s.run(taskId)
@@ -674,8 +688,8 @@ describe('停滞自救重搜（R12，删筛选后唯一自救）', () => {
     const events: unknown[] = []
     const s = new Scheduler({
       db, browser, analyzer: null, downloader: new FakeDownloader(),
-      emit: e => events.push(e), scrollIntervalMs: 1,
-      getScrollParams: () => ({ scrollSpeed: 'slow' as const, scrollPageWaitMs: 8000 }),
+      emit: e => events.push(e),
+      getScrollParams: () => ({ scrollSpeed: 'slow' as const, scrollPageWaitMs: 8000, scrollIntervalMs: 1 }),
       getStallThresholdSec: () => 1 // 1 秒阈值：数据持续流入（<1s 间隔）则永不判停滞
     })
     const p = s.run(taskId)
@@ -694,10 +708,11 @@ describe('停滞自救重搜（R12，删筛选后唯一自救）', () => {
     const db = newDb()
     const taskId = createTask(db, input)
     const logs: string[] = []
+    advancingClock() // Task4：动态下限后自然停滞阈值 ≥12s，用虚拟时钟快进代替真实等待
     const s = new Scheduler({
       db, browser: new FakeBrowser(), analyzer: null, downloader: new FakeDownloader(),
-      emit: () => {}, scrollIntervalMs: 1,
-      getScrollParams: () => ({ scrollSpeed: 'slow' as const, scrollPageWaitMs: 8000 }),
+      emit: () => {},
+      getScrollParams: () => ({ scrollSpeed: 'slow' as const, scrollPageWaitMs: 8000, scrollIntervalMs: 1 }),
       onFilterLog: m => logs.push(m),
       getStallThresholdSec: () => 0.01
     })
@@ -714,7 +729,8 @@ describe('停滞自救重搜（R12，删筛选后唯一自救）', () => {
   }, 10000)
 })
 
-/** 递增时钟：lastFetchedAt 之后每次 Date.now() 都多走 6 秒 → 每轮必停滞（6s > 默认 5s 阈值） */
+/** 递增时钟：lastFetchedAt 之后每次 Date.now() 都多走 6 秒 → 每轮必停滞（6s > 默认 5s 阈值，
+ *  Task4 动态下限后 minStall 也远小于 6 秒的累计增量，几次调用即可越过任意合理下限） */
 function advancingClock(): void {
   let now = 1000000
   vi.spyOn(Date, 'now').mockImplementation(() => (now += 6000))
@@ -728,7 +744,13 @@ describe('重搜冷却与到底立即重搜（R12）', () => {
     return (ms: number) => { t += ms }
   }
 
-  it('冷却期内再次停滞 → 跳过本轮不重搜（日志「重搜冷却中」）；冷却过后才重搜', async () => {
+  it('冷却期内再次自救 → 跳过本轮不重搜（日志「重搜冷却中」）；冷却过后才重搜', async () => {
+    // Task4 说明：动态下限后，自然停滞阈值恒 ≥12s（(scrollIntervalMs+1500)/1000+5.5+5），
+    // 而默认重搜冷却仅 10s——一旦触发外层"停滞"，reSearch 后 lastFetchedAt 与 lastRescueAt 会在
+    // 同一时刻重置，下一次"停滞"必然已经过了 10s 冷却窗口，无法再用同一组时间戳自然构造出
+    // "停滞已再次触发、但仍在重搜冷却内"的场景。改为直接调用被测的私有方法 rescueStall
+    // （测试文件本就大量以 (s as any) 反射私有状态），绕开外层"停滞"触发门槛，只聚焦 rescueStall
+    // 自身的冷却分支——冷却机制代码本身未改动，仍是真实调用真实实现。
     const db = newDb()
     const taskId = createTask(db, input)
     const browser = new FakeBrowser()
@@ -738,33 +760,42 @@ describe('重搜冷却与到底立即重搜（R12）', () => {
     const logs: string[] = []
     const s = new Scheduler({
       db, browser, analyzer: null, downloader: new FakeDownloader(),
-      emit: () => {}, scrollIntervalMs: 1,
-      getScrollParams: () => ({ scrollSpeed: 'slow' as const, scrollPageWaitMs: 8000 }),
+      emit: () => {},
+      getScrollParams: () => ({ scrollSpeed: 'slow' as const, scrollPageWaitMs: 8000, scrollIntervalMs: 1 }),
       onFilterLog: m => logs.push(m),
-      getStallThresholdSec: () => 0.01
+      getStallThresholdSec: () => 999 // 阈值足够大：本用例不依赖外层"停滞"自然触发
     })
-    browser.blockNextLoad() // 初始加载
+    browser.blockNextLoad() // 阻塞在初始 load：run 处于运行中（taskId/adapter/taskUrl 就绪），但不进入主循环
     const p = s.run(taskId)
-    advance(5000) // 停滞（5s >> 0.01s 阈值）
-    browser.releaseLoad() // 放行初始加载 → 第 1 次重搜（lastRescueAt 从此刻起算）
-    for (let i = 0; i < 500 && loadSpy.mock.calls.length < 2; i++) await new Promise(r => setTimeout(r, 2))
-    expect(loadSpy.mock.calls.length).toBe(2) // 第 1 次重搜已发生
+    await new Promise(r => setTimeout(r, 10))
+
+    // 注：run() 自身卡在初始 load（被 blockNextLoad 阻塞、悬而未决）已经算 loadSpy 的第 1 次调用；
+    // rescueStall 自己的重搜 load 另计一次，所以第 1 次重搜后 loadSpy 是 2 次，不是 1 次。
+    const r1 = await (s as any).rescueStall(douyinAdapter, 200, 999)
+    expect(r1).toBe('continue')
+    expect(loadSpy.mock.calls.length).toBe(2) // 初始 load（悬而未决）+ 第 1 次重搜的 load
     expect((s as any).reSearchCount).toBe(1)
-    // 冷却期内：距上次重搜 5s（< 10s 默认冷却）→ 再次停滞也跳过，不重搜
-    advance(5000)
-    for (let i = 0; i < 500 && !logs.some(l => l.includes('重搜冷却中')); i++) await new Promise(r => setTimeout(r, 2))
+
+    advance(5000) // 冷却期内：距上次重搜仅 5s（< 10s 默认冷却）
+    const r2 = await (s as any).rescueStall(douyinAdapter, 200, 999)
+    expect(r2).toBe('skip')
     expect(logs.some(l => l.includes('重搜冷却中'))).toBe(true)
-    expect(loadSpy.mock.calls.length).toBe(2) // 冷却中：本轮跳过，无新重搜
+    expect(loadSpy.mock.calls.length).toBe(2) // 冷却中：未新增重搜
     expect((s as any).reSearchCount).toBe(1)
-    expect((s as any).lastRescueAt).toBeGreaterThan(1000000) // 冷却计时已起算
-    // 冷却过后（距上次 >10s）→ 重搜
-    advance(6000)
-    for (let i = 0; i < 500 && loadSpy.mock.calls.length < 3; i++) await new Promise(r => setTimeout(r, 2))
-    expect(loadSpy.mock.calls.length).toBe(3) // 第 2 次重搜：冷却已过
+
+    advance(6000) // 冷却已过（累计 11s > 10s 默认冷却）
+    const r3 = await (s as any).rescueStall(douyinAdapter, 200, 999)
+    expect(r3).toBe('continue')
+    expect(loadSpy.mock.calls.length).toBe(3) // 第 2 次重搜
     expect((s as any).reSearchCount).toBe(2)
+
+    browser.releaseLoad()
     await s.pause()
     await p
-    expect(db.prepare('SELECT status, error FROM tasks WHERE id=?').get(taskId)).toEqual({ status: 'paused', error: null })
+    // 收尾落盘断言（审查补回）：暂停后 DB 必须是 paused/error=null——
+    // 确认走的是用户暂停路径，没有被自然停滞误判成 stalled
+    expect(db.prepare('SELECT status, error FROM tasks WHERE id=?').get(taskId))
+      .toEqual({ status: 'paused', error: null })
   }, 10000)
 
   it('到底文案命中 → 忽略冷却立即重搜（冷却窗口内也不等）', async () => {
@@ -777,32 +808,33 @@ describe('重搜冷却与到底立即重搜（R12）', () => {
     const logs: string[] = []
     const s = new Scheduler({
       db, browser, analyzer: null, downloader: new FakeDownloader(),
-      emit: () => {}, scrollIntervalMs: 1,
-      getScrollParams: () => ({ scrollSpeed: 'slow' as const, scrollPageWaitMs: 8000 }),
+      emit: () => {},
+      getScrollParams: () => ({ scrollSpeed: 'slow' as const, scrollPageWaitMs: 8000, scrollIntervalMs: 1 }),
       onFilterLog: m => logs.push(m),
       getStallThresholdSec: () => 0.01
     })
     browser.blockNextLoad() // 初始加载
     const p = s.run(taskId)
-    advance(5000) // 停滞
+    // Task4：动态下限后自然停滞阈值 ≥12.001s（scrollIntervalMs=1）；每步推进需越过该下限
+    advance(13000) // 停滞
     browser.releaseLoad() // → 第 1 次重搜（到底命中，lastRescueAt 起算）
     for (let i = 0; i < 500 && loadSpy.mock.calls.length < 2; i++) await new Promise(r => setTimeout(r, 2))
     expect(loadSpy.mock.calls.length).toBe(2)
     expect((s as any).reSearchCount).toBe(1)
-    // 冷却窗口内（距上次 5s < 10s）再次停滞 → 到底命中 → 立即第 2 次重搜，不等冷却
-    advance(5000)
+    // 冷却窗口内（距上次重搜远小于 10s 默认冷却）再次停滞 → 到底命中 → 立即第 2 次重搜，不等冷却
+    advance(13000)
     for (let i = 0; i < 500 && loadSpy.mock.calls.length < 3; i++) await new Promise(r => setTimeout(r, 2))
     expect(loadSpy.mock.calls.length).toBe(3) // 冷却被忽略
     expect((s as any).reSearchCount).toBe(2)
     expect(logs.some(l => l.includes('重搜冷却中'))).toBe(false) // 冷却分支从未走
     expect(logs.some(l => l.includes('到底文案命中') && l.includes('立即重搜'))).toBe(true)
     // 继续 → 第 3 次重搜（冷却同样被忽略）
-    advance(5000)
+    advance(13000)
     for (let i = 0; i < 500 && loadSpy.mock.calls.length < 4; i++) await new Promise(r => setTimeout(r, 2))
     expect(loadSpy.mock.calls.length).toBe(4)
     expect((s as any).reSearchCount).toBe(3)
     // 再停滞 → 重搜超限 → 暂停（受控时钟需再推进一步触发本轮停滞判定）
-    advance(5000)
+    advance(13000)
     await p
     expect((s as any).reSearchCount).toBe(3)
     expect(db.prepare('SELECT status, error FROM tasks WHERE id=?').get(taskId)).toEqual({ status: 'paused', error: 'stalled' })
@@ -815,18 +847,19 @@ describe('停滞检测秒级心跳（R11-3）', () => {
     const taskId = createTask(db, input)
     const browser = new FakeBrowser()
     const events: unknown[] = []
-    // 阈值 0.1s：首轮等待(1ms)不判停滞，run 先进入滚动；心跳 1s 后看到停滞+滚动中 → 中断
+    advancingClock() // Task4：动态下限后自然停滞阈值 ≥12.001s，用虚拟时钟快进代替真实等待
     const s = new Scheduler({
       db, browser, analyzer: null, downloader: new FakeDownloader(),
-      emit: e => events.push(e), scrollIntervalMs: 1,
-      getScrollParams: () => ({ scrollSpeed: 'slow' as const, scrollPageWaitMs: 8000 }),
+      emit: e => events.push(e),
+      getScrollParams: () => ({ scrollSpeed: 'slow' as const, scrollPageWaitMs: 8000, scrollIntervalMs: 1 }),
       getStallThresholdSec: () => 0.1
     })
     browser.blockNextScroll()
     const p = s.run(taskId)
     for (let i = 0; i < 200 && !browser.scrollEntered; i++) await new Promise(r => setTimeout(r, 10))
     expect(browser.scrollEntered).toBe(true)
-    for (let i = 0; i < 300 && browser.abortScroll.mock.calls.length === 0; i++) await new Promise(r => setTimeout(r, 10))
+    // 心跳每 1s 真实一次 tick，虚拟时钟每次 Date.now() 调用快进 6s，几个 tick 内即可越过 ≥12.001s 下限
+    for (let i = 0; i < 600 && browser.abortScroll.mock.calls.length === 0; i++) await new Promise(r => setTimeout(r, 10))
     expect(browser.abortScroll).toHaveBeenCalledTimes(1) // 心跳触发：停滞 && 滚动中 → 中断在途滚动
     browser.releaseScroll()
     await p
@@ -839,24 +872,25 @@ describe('停滞检测秒级心跳（R11-3）', () => {
     const browser = new FakeBrowser()
     const loadSpy = vi.spyOn(browser, 'load')
     const events: unknown[] = []
-    // 阈值 0.1s：run 先进入滚动；心跳 1s 后中断
+    advancingClock() // Task4：动态下限后自然停滞阈值 ≥12.001s，用虚拟时钟快进代替真实等待
     const s = new Scheduler({
       db, browser, analyzer: null, downloader: new FakeDownloader(),
-      emit: e => events.push(e), scrollIntervalMs: 1,
-      getScrollParams: () => ({ scrollSpeed: 'slow' as const, scrollPageWaitMs: 8000 }),
+      emit: e => events.push(e),
+      getScrollParams: () => ({ scrollSpeed: 'slow' as const, scrollPageWaitMs: 8000, scrollIntervalMs: 1 }),
       getStallThresholdSec: () => 0.1
     })
     browser.blockNextScroll()
     const p = s.run(taskId)
     for (let i = 0; i < 200 && !browser.scrollEntered; i++) await new Promise(r => setTimeout(r, 10))
     expect(browser.scrollEntered).toBe(true)
-    for (let i = 0; i < 300 && browser.abortScroll.mock.calls.length === 0; i++) await new Promise(r => setTimeout(r, 10))
+    for (let i = 0; i < 600 && browser.abortScroll.mock.calls.length === 0; i++) await new Promise(r => setTimeout(r, 10))
     expect(browser.abortScroll).toHaveBeenCalled() // 心跳已中断在途滚动
-    const t0 = Date.now()
+    // Date.now 已被 advancingClock 接管，这里改用 performance.now()（不受该 mock 影响）量真实反应耗时
+    const t0 = performance.now()
     browser.releaseScroll()
     for (let i = 0; i < 100 && loadSpy.mock.calls.length < 2; i++) await new Promise(r => setTimeout(r, 10))
     expect(loadSpy.mock.calls.length).toBeGreaterThanOrEqual(2) // 滚动返回后立即自救（重搜）
-    expect(Date.now() - t0).toBeLessThan(500)
+    expect(performance.now() - t0).toBeLessThan(500)
     await p
     expect(db.prepare('SELECT status, error FROM tasks WHERE id=?').get(taskId)).toEqual({ status: 'paused', error: 'stalled' })
   }, 10000)
@@ -866,11 +900,18 @@ describe('停滞检测秒级心跳（R11-3）', () => {
     const taskId = createTask(db, input)
     const browser = new FakeBrowser()
     browser.bottomText = null
-    advancingClock()
+    // Task4：动态下限后单次 advancingClock 增量（6s）不足以在等待阶段的第一次检查就越过 ≥12.001s 下限
+    // （等待阶段 waitTotal 极小、只检查一次就会进入滚动）。用「自动递增 + 一次性额外推远」的混合时钟：
+    // load 被阻塞期间先额外推远一大步，确保 load 放行后等待阶段的第一次停滞检查就直接命中、不先进入滚动；
+    // 之后仍按 advancingClock 的节奏持续递增，保证后续仍能自然走完 3 次重搜耗尽的收尾。
+    let now = 1000000
+    vi.spyOn(Date, 'now').mockImplementation(() => (now += 6000))
     const loadSpy = vi.spyOn(browser, 'load')
     const { s, events } = setup(db, new FakeDownloader(), browser)
     browser.blockNextLoad() // 初始加载
     const p = s.run(taskId)
+    await new Promise(r => setTimeout(r, 10)) // run 卡在 load，lastFetchedAt 已用首次 Date.now() 捕获
+    now += 20000 // 一次性额外推远，越过动态下限（scrollIntervalMs=1 时约 12.001s）
     browser.releaseLoad()
     browser.blockNextLoad() // block 第 1 次重搜（等待阶段触发）
     for (let i = 0; i < 300 && loadSpy.mock.calls.length < 2; i++) await new Promise(r => setTimeout(r, 2))
@@ -912,11 +953,11 @@ describe('验证码识别与长操作兜底（R11-4）', () => {
     const browser = new FakeBrowser()
     browser.verifyText = '请完成安全验证'
     const events: unknown[] = []
-    // 阈值 60s：停滞自救不干扰，验证码是唯一退出路径
+    // 阈值 60s：远高于 Task4 动态下限（scrollIntervalMs=1 时约 12.001s），原样使用，不干扰自救；验证码是唯一退出路径
     const s = new Scheduler({
       db, browser, analyzer: null, downloader: new FakeDownloader(),
-      emit: e => events.push(e), scrollIntervalMs: 1,
-      getScrollParams: () => ({ scrollSpeed: 'slow' as const, scrollPageWaitMs: 8000 }),
+      emit: e => events.push(e),
+      getScrollParams: () => ({ scrollSpeed: 'slow' as const, scrollPageWaitMs: 8000, scrollIntervalMs: 1 }),
       getStallThresholdSec: () => 60
     })
     const p = s.run(taskId)
@@ -965,6 +1006,7 @@ describe('验证码识别与长操作兜底（R11-4）', () => {
     const db = newDb()
     const taskId = createTask(db, input)
     const browser = new FakeBrowser()
+    advancingClock() // Task4：动态下限后自然停滞阈值 ≥12.001s，需多次自然停滞（4 轮），用虚拟时钟快进
     // 初始加载成功；第 1 次重搜抛超时标记错误；后续重搜成功
     const loadSpy = vi.spyOn(browser, 'load')
       .mockResolvedValueOnce()
@@ -986,16 +1028,16 @@ describe('验证码识别与长操作兜底（R11-4）', () => {
       const browser = new FakeBrowser()
       const loadSpy = vi.spyOn(browser, 'load')
       const events: unknown[] = []
-      // 滚动间隔 700ms（收尾 sleep=1400ms）+ 阈值 5s：轮末检查点落在 ~6.3s，
-      // 心跳 6s 先到 → 自救由心跳直接触发（停滞 6s > 5s 阈值，无需等轮末）
+      // 滚动间隔 700ms + Task4 动态下限：minStall=(700+1500)/1000+5.5+5=12.7s，
+      // 阈值注入 5s 远低于下限，实际按 12.7s 执行；推进虚拟时钟到 13.5s 确保跨过下限触发心跳自救
       const s = new Scheduler({
         db, browser, analyzer: null, downloader: new FakeDownloader(),
-        emit: e => events.push(e), scrollIntervalMs: 700,
-        getScrollParams: () => ({ scrollSpeed: 'slow' as const, scrollPageWaitMs: 8000 }),
+        emit: e => events.push(e),
+        getScrollParams: () => ({ scrollSpeed: 'slow' as const, scrollPageWaitMs: 8000, scrollIntervalMs: 700 }),
         getStallThresholdSec: () => 5
       })
       const p = s.run(taskId)
-      await vi.advanceTimersByTimeAsync(6200)
+      await vi.advanceTimersByTimeAsync(13500)
       expect(loadSpy.mock.calls.length).toBeGreaterThanOrEqual(2) // 心跳已触发重搜（初始 + 重搜）
       expect((s as any).reSearchCount).toBeGreaterThanOrEqual(1)
       expect(events).toContainEqual({ type: 'task:notice', text: '已自动重新搜索关键词（第 1 次）' })
@@ -1034,11 +1076,11 @@ describe('爬满即停与启动即时进度（R11-2）', () => {
     const browser = new FakeBrowser()
     const dl = new FakeDownloader()
     const events: unknown[] = []
-    // 收尾 sleep = min(1500, 8000/4, 1000) = 1000ms；阈值 2s：等待 500ms 不判停滞，先进入滚动
+    // 收尾 sleep = min(1500, 8000/4, 1000) = 1000ms；fetched>=target 检查在滚动返回后无条件执行，不依赖停滞阈值
     const s = new Scheduler({
       db, browser, analyzer: null, downloader: dl,
-      emit: e => events.push(e), scrollIntervalMs: 500,
-      getScrollParams: () => ({ scrollSpeed: 'slow' as const, scrollPageWaitMs: 8000 }),
+      emit: e => events.push(e),
+      getScrollParams: () => ({ scrollSpeed: 'slow' as const, scrollPageWaitMs: 8000, scrollIntervalMs: 500 }),
       getStallThresholdSec: () => 2
     })
     browser.blockNextScroll()
@@ -1049,10 +1091,10 @@ describe('爬满即停与启动即时进度（R11-2）', () => {
     await s.handleRaw(douyinAdapter, rawUrl, rawJson) // 199→200 填满（滚动进行中）
     expect(browser.abortScroll).toHaveBeenCalledTimes(1)
 
-    const t0 = Date.now()
+    const t0 = performance.now()
     browser.releaseScroll()
     await p
-    expect(Date.now() - t0).toBeLessThan(500) // 未经 1000ms 收尾 sleep，立即进 reached
+    expect(performance.now() - t0).toBeLessThan(500) // 未经 1000ms 收尾 sleep，立即进 reached
     expect(db.prepare('SELECT status FROM tasks WHERE id=?').get(taskId)).toEqual({ status: 'done' })
   }, 10000)
 
@@ -1065,7 +1107,9 @@ describe('爬满即停与启动即时进度（R11-2）', () => {
     const p = s.run(taskId)
     await new Promise(r => setTimeout(r, 10))
     expect(events[0]).toEqual({ type: 'task:progress', taskId, fetched: 0, status: 'running' })
+    // Task4：不依赖自然停滞收尾——本用例只关心启动即发的首个事件，显式 pause 即可
     browser.releaseLoad()
+    await s.pause()
     await p
   }, 10000)
 
@@ -1073,10 +1117,109 @@ describe('爬满即停与启动即时进度（R11-2）', () => {
     const db = newDb()
     const taskId = createTask(db, input)
     expect(db.prepare('SELECT status FROM tasks WHERE id=?').get(taskId)).toEqual({ status: 'pending' }) // 创建即 pending
+    advancingClock() // Task4：动态下限后自然停滞阈值 ≥12.001s，用虚拟时钟快进代替真实等待
     const { s, events } = setup(db, new FakeDownloader(), new FakeBrowser())
     await s.run(taskId)
     expect(events[0]).toEqual({ type: 'task:progress', taskId, fetched: 0, status: 'running' }) // 启动即进行中
     // run 对 pending 无阻碍：正常跑完自救循环（停滞自动暂停）
+    expect(db.prepare('SELECT status, error FROM tasks WHERE id=?').get(taskId)).toEqual({ status: 'paused', error: 'stalled' })
+  }, 10000)
+})
+
+describe('停滞阈值动态下限（Task4：真机验收实测——阈值小于正常周期需要值时自救循环绞杀正常滚动）', () => {
+  it('用户阈值低于「滚动周期」需要值 → 按下限执行（阈值内不该触发自救），且打印抬高说明日志（不静默覆盖用户配置）', async () => {
+    const db = newDb()
+    const taskId = createTask(db, input)
+    const browser = new FakeBrowser()
+    const loadSpy = vi.spyOn(browser, 'load')
+    const logs: string[] = []
+    // scrollIntervalMs=3500（默认档位）→ minStall=(3500+1500)/1000+5.5+5=15.5s；用户设 1s，远低于下限
+    const s = new Scheduler({
+      db, browser, analyzer: null, downloader: new FakeDownloader(),
+      emit: () => {},
+      getScrollParams: () => ({ scrollSpeed: 'slow' as const, scrollPageWaitMs: 8000, scrollIntervalMs: 3500 }),
+      onFilterLog: m => logs.push(m),
+      getStallThresholdSec: () => 1
+    })
+    const p = s.run(taskId)
+    await new Promise(r => setTimeout(r, 10)) // 等 run 跑过首个 await（load），this.stallSec 才被赋值
+    expect((s as any).stallSec).toBeCloseTo(15.5, 5)
+    expect(logs.some(l => l.includes('停滞阈值：用户设 1 秒 < 滚动周期需要 15.5 秒 → 实际按 15.5 秒执行'))).toBe(true)
+    // 等待时长远超用户设的 1 秒阈值（若未加下限，此时早已判停滞并触发过重搜），但仍在 15.5s 下限内，不该触发自救
+    await new Promise(r => setTimeout(r, 3000))
+    expect(loadSpy).toHaveBeenCalledTimes(1) // 只有初始加载：阈值内不该触发自救重搜
+    await s.pause()
+    await p
+  }, 10000)
+
+  it('用户阈值高于「滚动周期」需要值 → 原样使用用户设置，不打印抬高日志', async () => {
+    const db = newDb()
+    const taskId = createTask(db, input)
+    const browser = new FakeBrowser()
+    const logs: string[] = []
+    const s = new Scheduler({
+      db, browser, analyzer: null, downloader: new FakeDownloader(),
+      emit: () => {},
+      getScrollParams: () => ({ scrollSpeed: 'slow' as const, scrollPageWaitMs: 8000, scrollIntervalMs: 3500 }),
+      onFilterLog: m => logs.push(m),
+      getStallThresholdSec: () => 100 // 远高于 15.5s 下限
+    })
+    const p = s.run(taskId)
+    await new Promise(r => setTimeout(r, 20))
+    expect((s as any).stallSec).toBe(100)
+    expect(logs.some(l => l.includes('停滞阈值'))).toBe(false)
+    await s.pause()
+    await p
+  }, 10000)
+})
+
+describe('scrollIntervalMs 每次 run 现读（Task4：设置保存不重启也生效）', () => {
+  it('改设置后不重启，下一次 run/resume 使用新的 scrollIntervalMs', async () => {
+    const db = newDb()
+    const taskId = createTask(db, input)
+    const browser = new FakeBrowser()
+    let interval = 111
+    const s = new Scheduler({
+      db, browser, analyzer: null, downloader: new FakeDownloader(),
+      emit: () => {},
+      getScrollParams: () => ({ scrollSpeed: 'slow' as const, scrollPageWaitMs: 8000, scrollIntervalMs: interval }),
+      getStallThresholdSec: () => 999 // 阈值足够大：本用例只关心 scrollIntervalMs 是否现读，不依赖自然停滞
+    })
+    const p1 = s.run(taskId)
+    await new Promise(r => setTimeout(r, 20))
+    expect((s as any).scrollIntervalMs).toBe(111)
+    await s.pause()
+    await p1
+
+    interval = 222 // 模拟设置页保存了新值（scheduler 实例不重启，getScrollParams 桩可变）
+    const p2 = s.resume(taskId)
+    await new Promise(r => setTimeout(r, 20))
+    expect((s as any).scrollIntervalMs).toBe(222)
+    await s.pause()
+    await p2
+  }, 10000)
+})
+
+describe('自救日志顺序（Task4：重搜用尽后不再打印撒谎的"执行重搜"）', () => {
+  it('重搜 3 次用尽后再次停滞 → 不再出现"执行重搜"日志行，只有"自动暂停"', async () => {
+    const db = newDb()
+    const taskId = createTask(db, input)
+    const browser = new FakeBrowser()
+    browser.bottomText = null // 走"未找到到底文案...执行重搜"分支（旧版超限时仍会打印这条撒谎日志）
+    advancingClock()
+    const logs: string[] = []
+    const s = new Scheduler({
+      db, browser, analyzer: null, downloader: new FakeDownloader(),
+      emit: () => {},
+      getScrollParams: () => ({ scrollSpeed: 'slow' as const, scrollPageWaitMs: 8000, scrollIntervalMs: 1 }),
+      onFilterLog: m => logs.push(m),
+      getStallThresholdSec: () => 0.01
+    })
+    await s.run(taskId)
+    const executeLogs = logs.filter(l => l.includes('执行重搜'))
+    const pausedLogs = logs.filter(l => l.includes('已重搜 3 次仍爬不满'))
+    expect(executeLogs.length).toBe(3) // 3 次真实重搜各打 1 条；重搜用尽那一轮不再多打这条假日志
+    expect(pausedLogs.length).toBe(1)
     expect(db.prepare('SELECT status, error FROM tasks WHERE id=?').get(taskId)).toEqual({ status: 'paused', error: 'stalled' })
   }, 10000)
 })

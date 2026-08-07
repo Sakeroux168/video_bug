@@ -187,11 +187,11 @@ app.whenReady().then(() => {
   scheduler = new Scheduler({
     db, browser, analyzer, downloader,
     emit: push,
-    scrollIntervalMs: settings.scrollIntervalMs,
-    // T2：滚动参数由 scheduler 每次 run 现读（设置保存即生效，无需重启）
+    // T2/Task4：滚动参数（含 scrollIntervalMs）由 scheduler 每次 run 现读（设置保存即生效，无需重启；
+    // 此前 scrollIntervalMs 在此处构造时读死，改设置不重启不生效，与本注释描述的行为不一致，Task4 修正）
     getScrollParams: () => {
       const s = getSettings()
-      return { scrollSpeed: s.scrollSpeed, scrollPageWaitMs: s.scrollPageWaitMs }
+      return { scrollSpeed: s.scrollSpeed, scrollPageWaitMs: s.scrollPageWaitMs, scrollIntervalMs: s.scrollIntervalMs }
     },
     // R11：停滞阈值由 scheduler 每次 run 现读（设置保存即生效，无需重启）
     getStallThresholdSec: () => getSettings().stallThresholdSec ?? 5,
@@ -249,6 +249,9 @@ const rawLog: Array<{
 function pushFilterLog(msg: string): void {
   rawLog.push({ at: new Date().toISOString().slice(11, 19), filterLog: msg })
   if (rawLog.length > 60) rawLog.shift()
+  // R14：同步打到主进程终端。rawLog 只在界面面板可见，排查真机问题时终端看不到自救链路，
+  // 定位全靠用户截图；这里补一条，dev 下直接跟着日志走。
+  console.log('[自救]', msg)
 }
 ipcMain.on('dy:raw', async (_e, msg) => {
   const url = String(msg?.url ?? '')
@@ -266,6 +269,9 @@ ipcMain.on('dy:raw', async (_e, msg) => {
     topKeys: durationZero ? diags[0].topKeys : undefined
   })
   if (rawLog.length > 60) rawLog.shift()
+  // R14：拦截结果同步打终端（与 [自救] 同理，排查真机「一条没抓到」时要区分
+  // 「钩子没拦到接口」和「拦到了但解析/过滤掉了」——只看界面面板定位不了）
+  console.log('[拦截]', handled ? '命中' : '忽略', url.slice(0, 100), stats ? `解析${stats.items}→留${stats.kept}` : '')
 })
 ipcMain.handle('debug:rawLog', () => rawLog.slice(-60))
 
