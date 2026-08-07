@@ -10,11 +10,11 @@
 //
 // 这个文件不 import electron，主进程和普通 Node 测试都能跑。
 
-import { execFile, spawnSync } from 'node:child_process'
+import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
-import { existsSync, readdirSync } from 'node:fs'
 import { mkdir, rename, unlink } from 'node:fs/promises'
 import { dirname, join } from 'node:path'
+import { findBin } from '../ffbin'
 
 const execFileAsync = promisify(execFile)
 
@@ -25,25 +25,9 @@ const FFMPEG_CONCURRENCY = 2
 // 定位 ffmpeg
 // ==========================
 
-let ffmpegPath: string | null | undefined
-/** 在常见路径/PATH 里找 ffmpeg（本机装在 F:/123 下的 ffmpeg 目录的 bin 里）。找不到返回 null */
+/** 在常见路径/PATH 里找 ffmpeg（各盘符 /123 下的 ffmpeg 目录的 bin 里）。找不到返回 null */
 export function findFfmpeg(): string | null {
-  if (ffmpegPath !== undefined) return ffmpegPath
-  // 先扫 F:/123 下 ffmpeg* 目录的 bin/ffmpeg.exe（和 downloader.findFfprobe 同套路）
-  try {
-    for (const d of readdirSync('F:/123', { withFileTypes: true })) {
-      if (!d.isDirectory() || !/^ffmpeg/i.test(d.name)) continue
-      const p = `F:/123/${d.name}/bin/ffmpeg.exe`
-      if (existsSync(p)) { ffmpegPath = p; return p }
-    }
-  } catch { /* F 盘不存在等 */ }
-  // 兜底：PATH 里找
-  try {
-    const r = spawnSync('where', ['ffmpeg'], { encoding: 'utf8' })
-    if (r.status === 0 && r.stdout) { ffmpegPath = r.stdout.trim().split('\n')[0]; return ffmpegPath }
-  } catch { /* ignore */ }
-  ffmpegPath = null
-  return null
+  return findBin('ffmpeg')
 }
 
 // ==========================

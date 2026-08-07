@@ -3,7 +3,8 @@ import { createWriteStream, mkdirSync, readdirSync, existsSync, rmSync } from 'f
 import { pipeline } from 'stream/promises'
 import { Readable } from 'stream'
 import { join } from 'path'
-import { execFile, spawnSync } from 'child_process'
+import { execFile } from 'child_process'
+import { findBin } from './ffbin'
 import type { AppSettings, VideoRow, VideoStatus } from '../shared/types'
 import { ERROR } from '../shared/types'
 import { classifyDownloadError, AddressPolicy } from './errors'
@@ -310,23 +311,9 @@ async function isMp4(file: string): Promise<boolean> {
   } catch { return false }
 }
 
-let ffprobePath: string | null | undefined
-/** 在常见路径/PATH 里找 ffprobe（本机装在 F:/123 下的 ffmpeg 目录的 bin 里） */
+/** 在常见路径/PATH 里找 ffprobe（各盘符 /123 下的 ffmpeg 目录的 bin 里） */
 function findFfprobe(): string | null {
-  if (ffprobePath !== undefined) return ffprobePath
-  try {
-    for (const d of readdirSync('F:/123', { withFileTypes: true })) {
-      if (!d.isDirectory() || !/^ffmpeg/i.test(d.name)) continue
-      const p = `F:/123/${d.name}/bin/ffprobe.exe`
-      if (existsSync(p)) { ffprobePath = p; return p }
-    }
-  } catch { /* F 盘不存在等 */ }
-  try {
-    const r = spawnSync('where', ['ffprobe'], { encoding: 'utf8' })
-    if (r.status === 0 && r.stdout) { ffprobePath = r.stdout.trim().split('\n')[0]; return ffprobePath }
-  } catch { /* ignore */ }
-  ffprobePath = null
-  return null
+  return findBin('ffprobe')
 }
 
 /** 用 ffprobe 确认文件含视频轨（纯音频/损坏文件→黑屏）。找不到 ffprobe 时跳过校验（兜底放行）。 */
