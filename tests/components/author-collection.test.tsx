@@ -142,4 +142,66 @@ describe('AuthorCollection 批量导入作者', () => {
     expect(row3.textContent).not.toContain('待校验')
   })
 
+  // 用户实测：校验失败只能看到 3 秒的 toast，看不完。根因不是 toast 太短——
+  // 而是作者表只在 mount 时拉一次（useEffect 空依赖）、无任何事件订阅，
+  // 校验结果写进库后界面永远停在旧数据上。
+  it('收到作者校验失败事件 → 自动重拉作者表', async () => {
+    let fire: ((e: unknown) => void) | null = null
+    vi.mocked(window.api.onTaskProgress).mockImplementation((cb: (e: never) => void) => {
+      fire = cb as (e: unknown) => void
+      return () => {}
+    })
+    vi.mocked(window.api.listAuthors).mockResolvedValue([makeAuthor({ verify_state: 'pending' })] as never)
+    render(<AuthorCollection notify={() => {}} />)
+    await screen.findByText('张三')
+    const before = vi.mocked(window.api.listAuthors).mock.calls.length
+
+    vi.mocked(window.api.listAuthors).mockResolvedValue([
+      makeAuthor({ verify_state: 'failed', verify_error: '主页作者是「王五」，与你填的「张三」对不上' })
+    ] as never)
+    fire!({ type: 'task:paused', taskId: 1, reason: 'author_mismatch' })
+
+    await waitFor(() => expect(vi.mocked(window.api.listAuthors).mock.calls.length).toBeGreaterThan(before))
+    await screen.findByText(/对不上/)
+  })
+
+  it('失败原因显示在主页链接下方（常驻，不是一闪而过的 toast）', async () => {
+    vi.mocked(window.api.listAuthors).mockResolvedValue([
+      makeAuthor({ verify_state: 'failed', verify_error: '主页没取到作者昵称' })
+    ] as never)
+    const { container } = render(<AuthorCollection notify={() => {}} />)
+    await screen.findByText('张三')
+    const linkCell = Array.from(container.querySelectorAll('td')).find(td => (td.textContent ?? '').includes('douyin.com'))!
+    expect(linkCell.textContent).toContain('没取到')
+  })
+
+  // 用户诉求：手里有现成的作者表，只要有作者名和主页链接就该能导进来，
+  // 不管其他列是什么东西；导出时只要作者 + 主页链接两列。
+  it('选 CSV 文件 → 只取作者与链接两列，其余列全部忽略', async () => {
+    render(<AuthorCollection notify={() => {}} />)
+    fireEvent.click(await screen.findByRole('button', { name: '导入作者' }))
+
+    const csv = `序号,作者昵称,粉丝数,主页链接,备注
+1,张三,10万,https://www.douyin.com/user/a,随便写`
+    const file = new File([csv], 'authors.csv', { type: 'text/csv' })
+    const input = document.querySelector('input[type="file"]') as HTMLInputElement
+    Object.defineProperty(file, 'text', { value: async () => csv })
+    fireEvent.change(input, { target: { files: [file] } })
+
+    await waitFor(() => {
+      const ta = document.querySelector('textarea') as HTMLTextAreaElement
+      expect(ta.value).toContain('张三')
+      expect(ta.value).toContain('https://www.douyin.com/user/a')
+      expect(ta.value).not.toContain('粉丝数')
+      expect(ta.value).not.toContain('随便写')
+    })
+  })
+
+  it('导出 CSV 按钮存在，且空库时禁用', async () => {
+    vi.mocked(window.api.listAuthors).mockResolvedValue([] as never)
+    render(<AuthorCollection notify={() => {}} />)
+    const btn = await screen.findByRole('button', { name: /导出 CSV/ })
+    expect(btn).toBeDisabled()
+  })
+
 })

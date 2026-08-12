@@ -163,4 +163,25 @@ describe('useMarqueeSelect 边界防护', () => {
     fireEvent.mouseLeave(container)
     expect(onSelect.mock.calls[0][0]).toEqual([1, 2, 3])
   })
+  // 用户实测：表格里的作者名与主页链接无法选中复制。
+  // 根因是框选功能给容器加了 select-none。开一个口子：带 data-allow-select
+  // 的元素上不启动框选，让浏览器的原生文本选中接管。
+  it('在 data-allow-select 元素上按下 → 不启动框选（让位给文本选中）', () => {
+    const onSelect = vi.fn()
+    const { getByTestId, queryByTestId } = render(<Host rows={[1, 2]} onSelect={onSelect} />)
+    const host = getByTestId('host')
+    patchGeom(host, 2)
+
+    const cell = document.createElement('span')
+    cell.setAttribute('data-allow-select', '')
+    host.appendChild(cell)
+
+    fireEvent.mouseDown(cell, { clientX: 110, clientY: 105 })
+    fireEvent.mouseMove(host, { clientX: 600, clientY: 400 })
+    fireEvent.mouseUp(host, { clientX: 600, clientY: 400 })
+
+    expect(queryByTestId('marquee')).toBeNull()
+    expect(onSelect).not.toHaveBeenCalled()
+  })
+
 })

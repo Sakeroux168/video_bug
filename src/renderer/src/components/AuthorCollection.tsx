@@ -5,6 +5,7 @@ import { Card, btnPrimary } from './ui'
 import { useMarqueeSelect } from './useMarqueeSelect'
 import { useTableSelection } from './useTableSelection'
 import { parsePastedAuthors } from './parsePastedAuthors'
+import { parseAuthorsCsv, buildAuthorsCsv } from './authorsCsv'
 
 type ImportResult = { created: number; results: Array<{ line: number; raw: string; ok: boolean; reason?: string }> }
 
@@ -24,6 +25,18 @@ export default function AuthorCollection({ notify }: { notify: (text: string) =>
   const [importing, setImporting] = useState(false)
 
   useEffect(() => { void api.listAuthors().then(setAuthors) }, [])
+
+  // 作者校验的结果是调度器写进库的，不订阅就永远停在旧数据上——
+  // 用户只能看到一闪而过的 toast。任务暂停/完成都可能改变作者行
+  // （校验状态、视频数），收到就重拉。进度事件很密，不能无差别刷。
+  useEffect(() => {
+    return api.onTaskProgress(e => {
+      const t = e as unknown as { type?: string; status?: string }
+      if (t?.type === 'task:paused' || t?.status === 'done' || t?.status === 'paused') {
+        void api.listAuthors().then(setAuthors)
+      }
+    })
+  }, [])
 
   function refresh(): void { void api.listAuthors().then(setAuthors) }
 
@@ -106,6 +119,29 @@ export default function AuthorCollection({ notify }: { notify: (text: string) =>
     setImportText('')
     setImportResult(null)
   }
+  /** 选 CSV 文件 → 只抽作者与主页链接两列，回填到文本框供确认 */
+  async function onPickCsv(e: React.ChangeEvent<HTMLInputElement>): Promise<void> {
+    const f = e.target.files?.[0]
+    if (!f) return
+    const rows = parseAuthorsCsv(await f.text())
+    setImportText(rows.map(r => `${r.nickname} ${r.url}`).join('\n'))
+    e.target.value = '' // 清空，同一个文件再选一次也能触发 change
+  }
+
+  /** 导出作者表 → 只导作者与主页链接两列（用户明确要求） */
+  function exportCsv(): void {
+    const csv = buildAuthorsCsv(authors)
+    // 加 BOM：Excel 不带 BOM 打开 UTF-8 CSV 会把中文显示成乱码
+    const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `作者表-${new Date().toISOString().slice(0, 10)}.csv`
+    a.click()
+    URL.revokeObjectURL(url)
+    notify(`已导出 ${authors.length} 个作者`)
+  }
+
   async function submitImport(): Promise<void> {
     const items = parsePastedAuthors(importText)
     setImporting(true)
@@ -137,6 +173,13 @@ export default function AuthorCollection({ notify }: { notify: (text: string) =>
         >
           导入作者
         </button>
+        <button
+          className="rounded-md px-2 py-1 text-zinc-500 hover:bg-zinc-100 disabled:text-zinc-300"
+          disabled={authors.length === 0}
+          onClick={exportCsv}
+        >
+          导出 CSV
+        </button>
         <span className="text-zinc-300">提示：点行排他选中，Ctrl 点选切换，Shift 点选范围，点空白取消，按住左键拖动框选替换</span>
       </div>
       {importOpen && (
@@ -149,6 +192,13 @@ export default function AuthorCollection({ notify }: { notify: (text: string) =>
             onChange={e => setImportText(e.target.value)}
           />
           <div className="mt-2 flex items-center gap-2">
+            {/* 手里有现成作者表的情况：选文件后只抽「作者 + 主页链接」两列填进上方文本框，
+                让用户先看一眼再确认——而不是选完文件就直接写库。
+                后续走与手工粘贴完全同一条校验链路。 */}
+            <label className="cursor-pointer rounded-md border border-zinc-300 px-3 py-1.5 text-xs text-zinc-600 hover:bg-zinc-100">
+              选择 CSV 文件
+              <input type="file" accept=".csv,text/csv" className="hidden" onChange={e => void onPickCsv(e)} />
+            </label>
             <button
               className={`${btnPrimary} !px-3 !py-1.5 !text-xs`}
               disabled={importing || importText.trim() === ''}
@@ -209,7 +259,9 @@ export default function AuthorCollection({ notify }: { notify: (text: string) =>
                   onClick={e => handleRowClick(a, e)}
                 >
                   <td className="py-2 pr-1"><input type="checkbox" checked={selected.has(a.id)} onChange={() => setSelected(rowClick(a.id, authors.map(x => x.id), selected, {}))} /></td>
-                  <td className="py-2 pr-2 font-medium">
+                  {/* data-allow-select + select-text：容器为框选加了 select-none，
+                      不开口子的话作者名和链接根本无法选中复制。 */}
+                  <td data-allow-select className="select-text py-2 pr-2 font-medium">
                     {a.nickname}
                     {/* R16：导入的作者需要校验名称与链接是否对得上。
                         verify_state 为 null = 抓取时自动收录，数据来自真实接口，不显示任何标识。 */}
@@ -219,14 +271,16 @@ export default function AuthorCollection({ notify }: { notify: (text: string) =>
                     {a.verify_state === 'failed' && (
                       <span className="ml-1.5 rounded bg-red-50 px-1 py-0.5 text-[10px] text-red-600" title={a.verify_error ?? ''}>校验失败</span>
                     )}
-                    {a.verify_error && (
-                      <div className="mt-0.5 text-[10px] font-normal text-red-500">{a.verify_error}</div>
-                    )}
                   </td>
-                  <td className="max-w-[240px] truncate py-2 pr-2">
-                    <a className="text-blue-500 hover:underline" href={a.home_url ?? '#'} target="_blank" rel="noreferrer">
+                  <td data-allow-select className="max-w-[240px] select-text py-2 pr-2">
+                    <a className="block truncate text-blue-500 hover:underline" href={a.home_url ?? '#'} target="_blank" rel="noreferrer">
                       {a.home_url ?? '—'}
                     </a>
+                    {/* 拒绝爬取的原因常驻在链接下方。不能只靠 toast：
+                        它 3 秒就消失，用户根本来不及看完一句带两个名字的对比说明。 */}
+                    {a.verify_error && (
+                      <div className="mt-0.5 whitespace-normal text-[10px] leading-snug text-red-500">{a.verify_error}</div>
+                    )}
                   </td>
                   <td className="py-2 pr-2">
                     {editingId === a.id ? (
