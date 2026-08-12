@@ -24,6 +24,9 @@ export interface PlatformAdapter {
   buildSearchUrl(query: string, filters: Filters): string
   buildAuthorUrl(secUid: string): string
   buildHashtagUrl(query: string): string
+  /** 解析用户粘贴的作者输入（完整主页 URL 或裸 sec_uid），返回归一化后的 sec_uid；
+   *  无法识别（短链/非本平台域名/空串/非法字符）返回 null。纯字符串处理，不联网、不解析短链跳转。 */
+  parseAuthorInput(raw: string): string | null
   parseApiJson(url: string, json: unknown): VideoItem[]
   normalizePlayUrl(rawUrl: string): string
 }

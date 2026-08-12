@@ -1,10 +1,11 @@
 import { ipcMain, BrowserWindow, dialog, shell } from 'electron'
 import type { DatabaseSync } from 'node:sqlite'
-import { createTask, listTasks, listVideos, listAuthors, setTaskStatus, setVideoStatus, updateAuthorCategory, deleteAuthors, taskStats } from './db'
+import { createTask, listTasks, listVideos, listAuthors, setTaskStatus, setVideoStatus, updateAuthorCategory, deleteAuthors, taskStats, insertAuthorIfAbsent } from './db'
 import { getSettings, saveSettings } from './settings'
 import { deleteVideoRows } from './videoDelete'
 import { scanFilesTree, deleteFileCategory, deleteFileAuthor, locateFileDir } from './fileManager'
-import { listAdapters } from './adapters'
+import { listAdapters, getAdapter } from './adapters'
+import { isDouyinShortLink } from './adapters/douyin'
 import type { Scheduler } from './scheduler'
 import type { Downloader } from './downloader'
 import { Analyzer } from './analyzer'
@@ -92,6 +93,43 @@ export function registerIpc(deps: IpcDeps): void {
     return true
   })
   ipcMain.handle('authors:delete', (_e, ids: number[]) => { deleteAuthors(db, ids); return true })
+
+  // 批量导入作者（粘贴主页 URL / 裸 sec_uid 列表）：只登记不刷新已有数据（insertAuthorIfAbsent）。
+  // 渲染层已过滤空行/纯空白，这里仍对 nickname 兜底校验；reason 词表逐字返回，供渲染层逐行展示。
+  ipcMain.handle('authors:import', (_e, items: Array<{ nickname: string; url: string }>) => {
+    const adapter = getAdapter('douyin')
+    let created = 0
+    const seen = new Set<string>()
+    const results: Array<{ line: number; raw: string; ok: boolean; reason?: string }> = []
+    items.forEach((item, idx) => {
+      const line = idx + 1
+      const raw = item.url
+      if (!item.nickname || !item.nickname.trim()) {
+        results.push({ line, raw, ok: false, reason: '缺少作者名称' })
+        return
+      }
+      const secUid = adapter?.parseAuthorInput(item.url) ?? null
+      if (secUid === null) {
+        const reason = isDouyinShortLink(item.url) ? '暂不支持短链接，请粘贴完整主页链接' : '未识别到抖音主页链接'
+        results.push({ line, raw, ok: false, reason })
+        return
+      }
+      if (seen.has(secUid)) {
+        results.push({ line, raw, ok: false, reason: '本次粘贴中重复' })
+        return
+      }
+      seen.add(secUid)
+      const homeUrl = adapter!.buildAuthorUrl(secUid)
+      const { created: wasCreated } = insertAuthorIfAbsent(db, { platform: 'douyin', secUid, nickname: item.nickname.trim(), homeUrl })
+      if (wasCreated) {
+        created++
+        results.push({ line, raw, ok: true })
+      } else {
+        results.push({ line, raw, ok: false, reason: '已存在，未修改' })
+      }
+    })
+    return { created, results }
+  })
 
   ipcMain.handle('settings:get', () => getSettings())
   ipcMain.handle('settings:save', (_e, s: Parameters<typeof saveSettings>[0]) => {

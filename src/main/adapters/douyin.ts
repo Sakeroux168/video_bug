@@ -104,6 +104,26 @@ export function normalizePlayUrl(raw: string): string {
   return url
 }
 
+// 完整抖音主页 URL：容忍 http(s)、www. 前缀、尾部 ?query / #hash / 尾斜杠（buildAuthorUrl 旁）
+const AUTHOR_URL_RE = /^https?:\/\/(?:www\.)?douyin\.com\/user\/([A-Za-z0-9_-]+)(?:[/?#].*)?$/i
+// 裸 sec_uid：无 scheme、无斜杠，字符集 [A-Za-z0-9_-]+
+const BARE_SEC_UID_RE = /^[A-Za-z0-9_-]+$/
+
+/** v.douyin.com 短链：明确不解析、不联网（无法在不发请求的情况下拿到跳转后的真实 sec_uid） */
+export function isDouyinShortLink(raw: string): boolean {
+  return /^https?:\/\/v\.douyin\.com\//i.test(raw.trim())
+}
+
+/** 解析用户粘贴的作者输入 → 归一化 sec_uid；短链/非本平台域名/空串/非法字符一律返回 null */
+export function parseAuthorInput(raw: string): string | null {
+  const s = raw.trim()
+  if (!s) return null
+  const m = s.match(AUTHOR_URL_RE)
+  if (m) return m[1]
+  if (BARE_SEC_UID_RE.test(s)) return s
+  return null
+}
+
 export const douyinAdapter: PlatformAdapter = {
   name: 'douyin',
   displayName: '抖音',
@@ -112,6 +132,7 @@ export const douyinAdapter: PlatformAdapter = {
   buildSearchUrl: (q: string) => `https://www.douyin.com/search/${encodeURIComponent(q)}`,
   buildAuthorUrl: (secUid: string) => `https://www.douyin.com/user/${secUid}`,
   buildHashtagUrl: (q: string) => `https://www.douyin.com/search/%23${encodeURIComponent(q)}`,
+  parseAuthorInput,
   parseApiJson: (_url: string, json: unknown) => {
     const diags: DurationDiag[] = []
     const items = collectAwemeList(json)

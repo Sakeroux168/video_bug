@@ -140,6 +140,24 @@ export function upsertAuthor(db: DatabaseSync, item: VideoItem, platform: string
   return { id: row.id, created }
 }
 
+/**
+ * 导入作者专用：仅在不存在时登记一行，已存在则什么都不改（created:false）。
+ * 与 upsertAuthor 语义完全不同——upsertAuthor 服务于「抓到视频时登记/刷新作者」这条热路径
+ * （会刷新 nickname/home_url、video_count+1、品类在空时补），复用会污染库里已有真实抓取数据
+ * 和人工改过的品类，故不复用、不改它。不写 video_count 列，DDL 默认值天然为 0。
+ */
+export function insertAuthorIfAbsent(
+  db: DatabaseSync,
+  a: { platform: string; secUid: string; nickname: string; homeUrl: string }
+): { id: number; created: boolean } {
+  const info = db.prepare(
+    `INSERT OR IGNORE INTO authors (platform, sec_uid, nickname, home_url) VALUES (?, ?, ?, ?)`
+  ).run(a.platform, a.secUid, a.nickname, a.homeUrl)
+  const created = info.changes > 0
+  const row = db.prepare('SELECT id FROM authors WHERE platform = ? AND sec_uid = ?').get(a.platform, a.secUid) as { id: number }
+  return { id: row.id, created }
+}
+
 export function updateAuthorCategory(db: DatabaseSync, id: number, category: string): void {
   db.prepare('UPDATE authors SET category = ? WHERE id = ?').run(category, id)
 }

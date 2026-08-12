@@ -109,6 +109,27 @@ describe('douyinAdapter URL 构造', () => {
   })
 })
 
+describe('douyinAdapter.parseAuthorInput', () => {
+  const cases: Array<{ label: string; input: string; expected: string | null }> = [
+    { label: '标准主页 URL', input: 'https://www.douyin.com/user/MS4wLjABAAAA1', expected: 'MS4wLjABAAAA1' },
+    { label: '容忍 http://', input: 'http://www.douyin.com/user/MS4wLjABAAAA1', expected: 'MS4wLjABAAAA1' },
+    { label: '容忍 ?query', input: 'https://www.douyin.com/user/MS4wLjABAAAA1?from_tab_name=main', expected: 'MS4wLjABAAAA1' },
+    { label: '容忍 #hash', input: 'https://www.douyin.com/user/MS4wLjABAAAA1#hash', expected: 'MS4wLjABAAAA1' },
+    { label: '容忍尾斜杠', input: 'https://www.douyin.com/user/MS4wLjABAAAA1/', expected: 'MS4wLjABAAAA1' },
+    { label: '容忍前后空白', input: '  https://www.douyin.com/user/MS4wLjABAAAA1  ', expected: 'MS4wLjABAAAA1' },
+    { label: '裸 sec_uid 原样返回', input: 'MS4wLjABAAAA1', expected: 'MS4wLjABAAAA1' },
+    { label: 'v.douyin.com 短链不解析', input: 'https://v.douyin.com/iXXXXXXX/', expected: null },
+    { label: '非抖音域名', input: 'https://www.baidu.com/user/MS4wLjABAAAA1', expected: null },
+    { label: '空串', input: '', expected: null },
+    { label: '含非法字符（空格）', input: 'MS4w Ljab AAAA1', expected: null }
+  ]
+  for (const c of cases) {
+    it(c.label, () => {
+      expect(douyinAdapter.parseAuthorInput(c.input)).toBe(c.expected)
+    })
+  }
+})
+
 describe('douyinAdapter 解析新 general/search 结构', () => {
   it('data 直接放视频对象（无 aweme_list 键）', () => {
     const json = { status_code: 0, cursor: 1, data: [AWEME, { ...AWEME, aweme_id: '7300000000000000002' }] }

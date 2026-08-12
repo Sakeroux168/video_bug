@@ -36,6 +36,7 @@ function freshApi(): Api {
     listAuthors: vi.fn(async () => []),
     updateAuthorCategory: vi.fn(async () => true),
     deleteAuthors: vi.fn(async () => true),
+    importAuthors: vi.fn(async () => ({ created: 0, results: [] })),
     organizeAuthor: vi.fn(async () => ({ ok: true })),
     organizeAll: vi.fn(async () => ({ ok: true })),
     getAsrStatus: vi.fn(async () => ({ dir: '', ready: false, files: [], totalBytes: 0 })),

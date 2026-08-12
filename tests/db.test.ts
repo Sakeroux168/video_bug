@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { DatabaseSync } from 'node:sqlite'
-import { initDb, createTask, listTasks, insertVideos, listVideos, upsertAuthor, listAuthors, setVideoStatus, listPendingVideos, setTaskStatus, taskStats, deleteVideos, recomputeAuthorCounts } from '../src/main/db'
+import { initDb, createTask, listTasks, insertVideos, listVideos, upsertAuthor, listAuthors, setVideoStatus, listPendingVideos, setTaskStatus, taskStats, deleteVideos, recomputeAuthorCounts, insertAuthorIfAbsent, updateAuthorCategory } from '../src/main/db'
 import type { CreateTaskInput, Filters } from '../src/shared/types'
 import type { VideoItem } from '../src/main/adapters/types'
 
@@ -206,5 +206,46 @@ describe('deleteVideos / recomputeAuthorCounts（Task 3 程序内删除）', () 
     const after = listAuthors(db)
     expect(after.find(a => a.id === sec1.id)!.video_count).toBe(0)
     expect(after.find(a => a.id === sec2.id)!.video_count).toBe(1)
+  })
+})
+
+describe('insertAuthorIfAbsent（导入作者：只登记不刷新）', () => {
+  const a = (over: Partial<{ platform: string; secUid: string; nickname: string; homeUrl: string }> = {}) => ({
+    platform: 'douyin', secUid: 'SEC_IMPORT_1', nickname: '导入作者', homeUrl: 'https://www.douyin.com/user/SEC_IMPORT_1',
+    ...over
+  })
+
+  it('新建作者：created=true 且 video_count=0（不写该列，DDL 默认值天然为 0）', () => {
+    const r = insertAuthorIfAbsent(db, a())
+    expect(r.created).toBe(true)
+    expect(r.id).toBeTypeOf('number')
+    const rows = listAuthors(db)
+    expect(rows).toHaveLength(1)
+    expect(rows[0].video_count).toBe(0)
+    expect(rows[0].nickname).toBe('导入作者')
+    expect(rows[0].home_url).toBe('https://www.douyin.com/user/SEC_IMPORT_1')
+  })
+
+  it('重复调用：created=false，且 nickname/category 不被覆盖', () => {
+    const r1 = insertAuthorIfAbsent(db, a())
+    updateAuthorCategory(db, r1.id, '人工品类')
+    const r2 = insertAuthorIfAbsent(db, a({ nickname: '改了个名', homeUrl: 'https://www.douyin.com/user/other' }))
+    expect(r2.created).toBe(false)
+    expect(r2.id).toBe(r1.id)
+    const rows = listAuthors(db)
+    expect(rows).toHaveLength(1)
+    expect(rows[0].nickname).toBe('导入作者') // 未被第二次调用的新 nickname 覆盖
+    expect(rows[0].category).toBe('人工品类') // 未被清空/覆盖
+    expect(rows[0].home_url).toBe('https://www.douyin.com/user/SEC_IMPORT_1') // 未被第二次调用的新 URL 覆盖
+    expect(rows[0].last_fetched_at).toBeNull() // 不动 last_fetched_at
+  })
+
+  it('不同 platform 同 sec_uid 各自成行（UNIQUE(platform, sec_uid) 联合约束）', () => {
+    const r1 = insertAuthorIfAbsent(db, a({ platform: 'douyin' }))
+    const r2 = insertAuthorIfAbsent(db, a({ platform: 'other' }))
+    expect(r1.created).toBe(true)
+    expect(r2.created).toBe(true)
+    expect(r1.id).not.toBe(r2.id)
+    expect(listAuthors(db)).toHaveLength(2)
   })
 })
