@@ -209,7 +209,20 @@ export default function AuthorCollection({ notify }: { notify: (text: string) =>
                   onClick={e => handleRowClick(a, e)}
                 >
                   <td className="py-2 pr-1"><input type="checkbox" checked={selected.has(a.id)} onChange={() => setSelected(rowClick(a.id, authors.map(x => x.id), selected, {}))} /></td>
-                  <td className="py-2 pr-2 font-medium">{a.nickname}</td>
+                  <td className="py-2 pr-2 font-medium">
+                    {a.nickname}
+                    {/* R16：导入的作者需要校验名称与链接是否对得上。
+                        verify_state 为 null = 抓取时自动收录，数据来自真实接口，不显示任何标识。 */}
+                    {a.verify_state === 'pending' && (
+                      <span className="ml-1.5 rounded bg-amber-50 px-1 py-0.5 text-[10px] text-amber-600" title="导入的作者尚未核实，首次「爬主页」时会自动校验">待校验</span>
+                    )}
+                    {a.verify_state === 'failed' && (
+                      <span className="ml-1.5 rounded bg-red-50 px-1 py-0.5 text-[10px] text-red-600" title={a.verify_error ?? ''}>校验失败</span>
+                    )}
+                    {a.verify_error && (
+                      <div className="mt-0.5 text-[10px] font-normal text-red-500">{a.verify_error}</div>
+                    )}
+                  </td>
                   <td className="max-w-[240px] truncate py-2 pr-2">
                     <a className="text-blue-500 hover:underline" href={a.home_url ?? '#'} target="_blank" rel="noreferrer">
                       {a.home_url ?? '—'}

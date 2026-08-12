@@ -253,6 +253,40 @@ export class VideoBrowser {
     } catch { return null }
   }
 
+  /**
+   * 从当前作者主页读取昵称（导入作者的「名称强绑链接」校验用）。
+   *
+   * **刻意不靠哈希类名取元素**——交接文档「已知坑 1」写明抖音的哈希类名
+   * 每次发版都可能变，靠它取昵称等于埋一颗定时炸弹。
+   * og:title / document.title 是给搜索引擎与分享卡片用的，抖音没有动机去混淆，
+   * 稳定性远高于 DOM 结构。
+   *
+   * 取不到返回 null——调用方据此判定校验失败，**不放行**。
+   */
+  async readAuthorNickname(): Promise<string | null> {
+    if (!this.win) return null
+    const script = `(() => {
+      const pick = () => {
+        const og = document.querySelector('meta[property="og:title"]');
+        const v = og && og.getAttribute('content');
+        if (v && v.trim()) return v.trim();
+        return (document.title || '').trim();
+      };
+      let t = pick();
+      if (!t) return null;
+      // 剥尾巴：「- 抖音」「_抖音」等站点后缀
+      t = t.replace(/\\s*[-_|｜]\\s*抖音.*$/, '').trim();
+      // 再剥「的主页」（仅当它在末尾时，避免把「主页装修师」这类昵称剪坏）
+      t = t.replace(/的主页$/, '').trim();
+      if (!t || t === '抖音') return null;
+      return t;
+    })()`
+    try {
+      const r = await this.win.webContents.executeJavaScript(script)
+      return typeof r === 'string' && r.length > 0 ? r : null
+    } catch { return null }
+  }
+
   /** 通知页面滚动脚本立即中止（fire-and-forget，不等待脚本返回）：
    *  webContents.send('dy:scroll-abort') → preload（隔离世界）→ window.postMessage → 主世界滚动脚本置 __scrollAborted，
    *  滚动循环在下个检查点退出（步间隔 ≤550ms，暂停 1 秒内生效） */

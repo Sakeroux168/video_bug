@@ -30,6 +30,11 @@ CREATE TABLE IF NOT EXISTS authors (
   category TEXT,
   organize_state TEXT,
   ai_classified_at TEXT,
+  -- 导入的作者需校验「名称与链接是否对得上」：
+  --   null   = 无需校验（抓取时自动收录的，数据来自真实接口）
+  --   pending= 导入后尚未校验； ok = 已核实； failed = 对不上（verify_error 说明原因）
+  verify_state TEXT,
+  verify_error TEXT,
   UNIQUE(platform, sec_uid)
 );
 CREATE TABLE IF NOT EXISTS videos (
@@ -73,6 +78,8 @@ export function initDb(db: DatabaseSync): void {
   addColumnIfMissing(db, 'tasks', 'auto_download', 'INTEGER NOT NULL DEFAULT 1')
   addColumnIfMissing(db, 'authors', 'organize_state', 'TEXT')
   addColumnIfMissing(db, 'authors', 'ai_classified_at', 'TEXT')
+  addColumnIfMissing(db, 'authors', 'verify_state', 'TEXT')
+  addColumnIfMissing(db, 'authors', 'verify_error', 'TEXT')
 }
 
 /** 老库迁移：表缺列时补列（ALTER TABLE ADD COLUMN 不能带 NOT NULL 无默认值的约束，故用 DEFAULT） */
@@ -151,11 +158,20 @@ export function insertAuthorIfAbsent(
   a: { platform: string; secUid: string; nickname: string; homeUrl: string }
 ): { id: number; created: boolean } {
   const info = db.prepare(
-    `INSERT OR IGNORE INTO authors (platform, sec_uid, nickname, home_url) VALUES (?, ?, ?, ?)`
+    `INSERT OR IGNORE INTO authors (platform, sec_uid, nickname, home_url, verify_state) VALUES (?, ?, ?, ?, 'pending')`
   ).run(a.platform, a.secUid, a.nickname, a.homeUrl)
   const created = info.changes > 0
   const row = db.prepare('SELECT id FROM authors WHERE platform = ? AND sec_uid = ?').get(a.platform, a.secUid) as { id: number }
   return { id: row.id, created }
+}
+
+/**
+ * 写入作者校验结果。ok 时一并清掉旧的 verify_error——
+ * 否则界面会同时显示「已核实」和一条陈旧的失败原因。
+ */
+export function setAuthorVerify(db: DatabaseSync, id: number, state: 'pending' | 'ok' | 'failed', error?: string): void {
+  db.prepare('UPDATE authors SET verify_state = ?, verify_error = ? WHERE id = ?')
+    .run(state, state === 'ok' ? null : (error ?? null), id)
 }
 
 export function updateAuthorCategory(db: DatabaseSync, id: number, category: string): void {

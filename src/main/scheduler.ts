@@ -4,7 +4,8 @@ import type { AppSettings, TaskRow, TaskStatus, Filters } from '../shared/types'
 import { ERROR } from '../shared/types'
 import { filterVideos, dedupeVideos, extractCategory } from './extractor'
 import { isRiskSignal } from './errors'
-import { upsertAuthor } from './db'
+import { upsertAuthor, listAuthors, setAuthorVerify } from './db'
+import { looseNicknameMatch } from './nicknameMatch'
 import type { Analyzer } from './analyzer'
 import type { Downloader } from './downloader'
 import type { VideoBrowser } from './browser'
@@ -187,6 +188,15 @@ export class Scheduler {
           : adapter.buildSearchUrl(task.query, this.filters)
       this.taskUrl = url // R11：重搜时复用（重新加载任务首屏，结果集重置；seen 去重保证只收新条目）
       await this.deps.browser.load(adapter, url)
+
+      // R16：导入作者的「名称强绑链接」校验。
+      // 搭这次页面加载的车——不额外开页、不增加任何风控。
+      // 只查 verify_state='pending' 的（导入进来的）；抓取自动收录的作者数据来自真实接口，不必校验。
+      if (task.type === 'author') {
+        const stop = await this.verifyImportedAuthor(taskId, adapter.parseAuthorInput(task.query) ?? task.query)
+        if (stop) return
+      }
+
       // 首轮不计静默，避免加载后立即以 0 抓取误停
       this.rawSinceLastRound = true
 
@@ -375,6 +385,42 @@ export class Scheduler {
    * 未命中且距上次重搜 < 冷却秒数（rescueCooldownSec 默认 10）→ 返回 'skip' 跳过本轮继续等；
    * 否则重搜（≤3 次，'continue' 继续循环）；重搜超限 → 'paused' 暂停。
    */
+  /**
+   * R16：校验「导入进来的作者」名称是否与主页对得上。返回 true 表示已中止本次 run。
+   *
+   * 只对 verify_state='pending' 的作者做——抓取时自动收录的作者数据来自真实接口，无需校验。
+   * 取不到昵称同样判失败：宁可少入不可入错（用户明确要求「不批准就要说为什么」）。
+   * 匹配用宽松规则（去空白/emoji/标点后互相包含），严格相等在真实昵称面前会大量误拒。
+   */
+  private async verifyImportedAuthor(taskId: number, secUid: string): Promise<boolean> {
+    const author = listAuthors(this.deps.db).find(a => a.sec_uid === secUid)
+    if (!author || author.verify_state !== 'pending') return false
+
+    const real = await this.deps.browser.readAuthorNickname()
+    if (real === null) {
+      const why = `主页没取到作者昵称（页面打不开、未登录或弹了验证码），无法确认这个链接是不是「${author.nickname}」`
+      setAuthorVerify(this.deps.db, author.id, 'failed', why)
+      this.deps.onFilterLog?.(`作者校验失败：${why}`)
+      this.deps.db.prepare("UPDATE tasks SET status='paused', error='author_unverifiable' WHERE id=?").run(taskId)
+      this.deps.emit({ type: 'task:paused', taskId, reason: 'author_unverifiable' })
+      this.deps.emit({ type: 'task:notice', text: `「${author.nickname}」校验失败：${why}` })
+      return true
+    }
+
+    if (!looseNicknameMatch(author.nickname, real)) {
+      const why = `主页作者是「${real}」，与你填的「${author.nickname}」对不上，已拒绝爬取`
+      setAuthorVerify(this.deps.db, author.id, 'failed', why)
+      this.deps.onFilterLog?.(`作者校验失败：${why}`)
+      this.deps.db.prepare("UPDATE tasks SET status='paused', error='author_mismatch' WHERE id=?").run(taskId)
+      this.deps.emit({ type: 'task:paused', taskId, reason: 'author_mismatch' })
+      this.deps.emit({ type: 'task:notice', text: `「${author.nickname}」校验失败：${why}` })
+      return true
+    }
+
+    setAuthorVerify(this.deps.db, author.id, 'ok')
+    this.deps.onFilterLog?.(`作者校验通过：「${author.nickname}」`)
+    return false
+  }
   private async rescueStall(adapter: PlatformAdapter, target: number, stallSec: number): Promise<'continue' | 'paused' | 'skip' | 'verify'> {
     if (this.rescuing || this.aborted) return 'continue'
     this.rescuing = true

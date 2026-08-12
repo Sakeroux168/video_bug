@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { DatabaseSync } from 'node:sqlite'
 import { buildStopDecision, Scheduler } from '../src/main/scheduler'
-import { initDb, createTask, listAuthors } from '../src/main/db'
+import { initDb, createTask, listAuthors, insertAuthorIfAbsent, upsertAuthor } from '../src/main/db'
 import { douyinAdapter } from '../src/main/adapters/douyin'
 import type { PlatformAdapter } from '../src/main/adapters/types'
 import type { CreateTaskInput } from '../src/shared/types'
@@ -29,6 +29,10 @@ class FakeBrowser {
 
   blockNextLoad(): void { this.loadBlocked = true }
   releaseLoad(): void { if (this.pendingLoad) { this.pendingLoad(); this.pendingLoad = null } }
+
+  /** 导入作者校验：模拟从主页读到的真实昵称；null = 页面打不开/取不到 */
+  authorNickname: string | null = null
+  async readAuthorNickname(): Promise<string | null> { return this.authorNickname }
 
   /** P1.5：最近一次 load 收到的 url（现在 load 忽略 url 参数，供测试捕获校验单层/双层包裹） */
   lastUrl: string | null = null
@@ -1240,4 +1244,82 @@ describe('P1.5：URL 双重包裹修复——scheduler 防御性归一', () => {
     await s.run(taskId)
     expect(browser.lastUrl).toBe('https://www.douyin.com/user/SEC_LEGACY_1') // 单层，不是套了两层 buildAuthorUrl
   }, 10000)
+})
+
+// 导入作者的「名称强绑定链接」校验。搭爬主页那次页面加载的车——不额外开页面、不增加风控。
+describe('导入作者的名称校验（R16）', () => {
+  function seed(db: DatabaseSync, nickname: string) {
+    const a = insertAuthorIfAbsent(db, {
+      platform: 'douyin', secUid: 'SEC_V', nickname,
+      homeUrl: 'https://www.douyin.com/user/SEC_V'
+    })
+    const taskId = createTask(db, { ...input, type: 'author', query: 'SEC_V' })
+    return { authorId: a.id, taskId }
+  }
+  const verifyRow = (db: DatabaseSync, id: number) =>
+    db.prepare('SELECT verify_state, verify_error FROM authors WHERE id = ?').get(id) as
+      { verify_state: string; verify_error: string | null }
+  const taskRow = (db: DatabaseSync, id: number) =>
+    db.prepare('SELECT status, error FROM tasks WHERE id = ?').get(id) as
+      { status: string; error: string | null }
+
+  it('昵称对得上（真实昵称多带后缀）→ 标 ok，不中断爬取', async () => {
+    const db = newDb()
+    const browser = new FakeBrowser()
+    browser.authorNickname = '张三 日常'
+    const { authorId, taskId } = seed(db, '张三')
+    const { s } = setup(db, new FakeDownloader(), browser)
+    const p = s.run(taskId)
+    await new Promise(r => setTimeout(r, 30))
+    await s.pause()
+    await p
+    expect(verifyRow(db, authorId).verify_state).toBe('ok')
+    expect(verifyRow(db, authorId).verify_error).toBe(null)
+    expect(taskRow(db, taskId).error).not.toBe('author_mismatch')
+  })
+
+  it('昵称对不上 → 中止任务 + 标 failed + 原因写明两个名字（不放行）', async () => {
+    const db = newDb()
+    const browser = new FakeBrowser()
+    browser.authorNickname = '王五'
+    const { authorId, taskId } = seed(db, '张三')
+    const { s } = setup(db, new FakeDownloader(), browser)
+    await s.run(taskId)
+    const v = verifyRow(db, authorId)
+    expect(v.verify_state).toBe('failed')
+    expect(v.verify_error).toContain('王五')
+    expect(v.verify_error).toContain('张三')
+    expect(taskRow(db, taskId).status).toBe('paused')
+    expect(taskRow(db, taskId).error).toBe('author_mismatch')
+  })
+
+  it('页面打不开/取不到昵称 → 同样拒绝，原因与「对不上」区分开', async () => {
+    const db = newDb()
+    const browser = new FakeBrowser()
+    browser.authorNickname = null
+    const { authorId, taskId } = seed(db, '张三')
+    const { s } = setup(db, new FakeDownloader(), browser)
+    await s.run(taskId)
+    expect(verifyRow(db, authorId).verify_state).toBe('failed')
+    expect(verifyRow(db, authorId).verify_error).toContain('没取到')
+    expect(taskRow(db, taskId).error).toBe('author_unverifiable')
+  })
+
+  it('抓取自动收录的作者（verify_state 为 null）不做校验——数据来自真实接口', async () => {
+    const db = newDb()
+    const browser = new FakeBrowser()
+    browser.authorNickname = '完全无关的名字'
+    upsertAuthor(db, {
+      awemeId: 'A', title: 't', authorSecUid: 'SEC_V', authorNickname: '原作者',
+      authorHomeUrl: 'u', playUrl: 'p', durationSec: 1, publishTime: 1, likes: 0
+    }, 'douyin')
+    const taskId = createTask(db, { ...input, type: 'author', query: 'SEC_V' })
+    const { s } = setup(db, new FakeDownloader(), browser)
+    const p = s.run(taskId)
+    await new Promise(r => setTimeout(r, 30))
+    await s.pause()
+    await p
+    expect(taskRow(db, taskId).error).not.toBe('author_mismatch')
+    expect(taskRow(db, taskId).error).not.toBe('author_unverifiable')
+  })
 })

@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest'
 import { DatabaseSync } from 'node:sqlite'
-import { initDb, createTask, listTasks, insertVideos, listVideos, upsertAuthor, listAuthors, setVideoStatus, listPendingVideos, setTaskStatus, taskStats, deleteVideos, recomputeAuthorCounts, insertAuthorIfAbsent, updateAuthorCategory } from '../src/main/db'
+import { initDb, createTask, listTasks, insertVideos, listVideos, upsertAuthor, listAuthors, setVideoStatus, listPendingVideos, setTaskStatus, taskStats, deleteVideos, recomputeAuthorCounts, insertAuthorIfAbsent, updateAuthorCategory, setAuthorVerify } from '../src/main/db'
 import type { CreateTaskInput, Filters } from '../src/shared/types'
 import type { VideoItem } from '../src/main/adapters/types'
 
@@ -247,5 +247,54 @@ describe('insertAuthorIfAbsent（导入作者：只登记不刷新）', () => {
     expect(r2.created).toBe(true)
     expect(r1.id).not.toBe(r2.id)
     expect(listAuthors(db)).toHaveLength(2)
+  })
+})
+
+describe('作者校验状态（导入的作者需要校验名称与链接是否对得上）', () => {
+  it('导入的作者初始为 pending；抓取自动收录的不带校验状态', () => {
+    const r = insertAuthorIfAbsent(db, { platform: 'douyin', secUid: 'S1', nickname: '张三', homeUrl: 'https://www.douyin.com/user/S1' })
+    const row = db.prepare('SELECT verify_state, verify_error FROM authors WHERE id = ?').get(r.id) as { verify_state: string | null; verify_error: string | null }
+    expect(row.verify_state).toBe('pending')
+    expect(row.verify_error).toBe(null)
+
+    // upsertAuthor 是抓取时登记作者的路径，数据来自真实接口，无需校验
+    const u = upsertAuthor(db, item({ authorSecUid: 'S2', authorNickname: '李四' }), 'douyin')
+    const row2 = db.prepare('SELECT verify_state FROM authors WHERE id = ?').get(u.id) as { verify_state: string | null }
+    expect(row2.verify_state).toBe(null)
+  })
+
+  it('setAuthorVerify 写入结果；ok 时清掉旧的失败原因', () => {
+    const r = insertAuthorIfAbsent(db, { platform: 'douyin', secUid: 'S1', nickname: '张三', homeUrl: 'u' })
+    setAuthorVerify(db, r.id, 'failed', '主页作者是「王五」，与你填的「张三」对不上')
+    let row = db.prepare('SELECT verify_state, verify_error FROM authors WHERE id = ?').get(r.id) as { verify_state: string; verify_error: string | null }
+    expect(row.verify_state).toBe('failed')
+    expect(row.verify_error).toContain('对不上')
+
+    setAuthorVerify(db, r.id, 'ok')
+    row = db.prepare('SELECT verify_state, verify_error FROM authors WHERE id = ?').get(r.id) as { verify_state: string; verify_error: string | null }
+    expect(row.verify_state).toBe('ok')
+    expect(row.verify_error).toBe(null)
+  })
+
+  it('listAuthors 带出校验状态与原因', () => {
+    const r = insertAuthorIfAbsent(db, { platform: 'douyin', secUid: 'S1', nickname: '张三', homeUrl: 'u' })
+    setAuthorVerify(db, r.id, 'failed', '页面打不开')
+    const a = listAuthors(db).find(x => x.id === r.id)!
+    expect(a.verify_state).toBe('failed')
+    expect(a.verify_error).toBe('页面打不开')
+  })
+
+  it('老库迁移：建旧表（无 verify_* 列）后 initDb 能补列且不丢数据', () => {
+    const old = new DatabaseSync(':memory:')
+    old.exec(`CREATE TABLE authors (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, platform TEXT NOT NULL DEFAULT 'douyin',
+      sec_uid TEXT NOT NULL, nickname TEXT NOT NULL, home_url TEXT,
+      video_count INTEGER NOT NULL DEFAULT 0, last_fetched_at TEXT, note TEXT,
+      UNIQUE(platform, sec_uid))`)
+    old.prepare('INSERT INTO authors (platform, sec_uid, nickname) VALUES (?,?,?)').run('douyin', 'OLD', '老作者')
+    initDb(old)
+    const row = old.prepare("SELECT nickname, verify_state FROM authors WHERE sec_uid = 'OLD'").get() as { nickname: string; verify_state: string | null }
+    expect(row.nickname).toBe('老作者')
+    expect(row.verify_state).toBe(null)
   })
 })

@@ -13,6 +13,7 @@ function makeAuthor(overrides: Partial<AuthorRow> = {}): AuthorRow {
     id: 1, platform: 'douyin', sec_uid: 'sec1', nickname: '张三',
     home_url: 'https://www.douyin.com/user/sec1', video_count: 5, last_fetched_at: null, note: null,
     category: null, organize_state: null, ai_classified_at: null,
+    verify_state: null, verify_error: null,
     ...overrides
   }
 }
@@ -119,4 +120,26 @@ describe('AuthorCollection 批量导入作者', () => {
     fireEvent.click(screen.getByRole('button', { name: '导入作者' }))
     expect(row.getAttribute('data-selected')).toBe('true')
   })
+  it('待校验 / 校验失败 的作者在表里有明确标识与原因', async () => {
+    vi.mocked(window.api.listAuthors).mockResolvedValue([
+      { id: 1, platform: 'douyin', sec_uid: 'S1', nickname: '张三', home_url: 'u1', video_count: 0,
+        last_fetched_at: null, note: null, category: null, organize_state: null, ai_classified_at: null,
+        verify_state: 'pending', verify_error: null },
+      { id: 2, platform: 'douyin', sec_uid: 'S2', nickname: '李四', home_url: 'u2', video_count: 0,
+        last_fetched_at: null, note: null, category: null, organize_state: null, ai_classified_at: null,
+        verify_state: 'failed', verify_error: '主页作者是「王五」，与你填的「李四」对不上' },
+      { id: 3, platform: 'douyin', sec_uid: 'S3', nickname: '王五', home_url: 'u3', video_count: 5,
+        last_fetched_at: null, note: null, category: null, organize_state: null, ai_classified_at: null,
+        verify_state: null, verify_error: null }
+    ] as never)
+    const { container } = render(<AuthorCollection notify={() => {}} />)
+    await screen.findByText('张三')
+    const text = container.textContent ?? ''
+    expect(text).toContain('待校验')
+    expect(text).toContain('对不上')
+    // 抓取自动收录的（verify_state=null）不应出现任何校验标识
+    const row3 = Array.from(container.querySelectorAll('tbody tr')).find(r => (r.textContent ?? '').includes('王五'))!
+    expect(row3.textContent).not.toContain('待校验')
+  })
+
 })
