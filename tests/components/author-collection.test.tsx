@@ -204,4 +204,33 @@ describe('AuthorCollection 批量导入作者', () => {
     expect(btn).toBeDisabled()
   })
 
+  // 用户诉求：框选出想要的行，直接复制到自己的表格里。
+  // （不能为了“能选中文本”去动框选——容器必须保持 select-none）
+  it('复制所选：未选时禁用；选中后把作者与链接以制表符分隔写入剪贴板', async () => {
+    vi.mocked(window.api.listAuthors).mockResolvedValue([
+      makeAuthor({ id: 1, nickname: '张三', home_url: 'https://www.douyin.com/user/a' }),
+      makeAuthor({ id: 2, sec_uid: 'sec2', nickname: '李四', home_url: 'https://www.douyin.com/user/b' })
+    ] as never)
+    const { container } = render(<AuthorCollection notify={() => {}} />)
+    await screen.findByText('张三')
+
+    const copyBtn = screen.getByRole('button', { name: /复制所选/ })
+    expect(copyBtn).toBeDisabled()
+
+    // 点中第一行
+    const row = container.querySelector('tbody tr[data-id="1"]') as HTMLElement
+    fireEvent.mouseDown(row, { clientX: 5, clientY: 5 })
+    fireEvent.mouseUp(row, { clientX: 5, clientY: 5 })
+    fireEvent.click(row)
+
+    const btn = screen.getByRole('button', { name: /复制所选/ })
+    expect(btn).toBeEnabled()
+    fireEvent.click(btn)
+
+    await waitFor(() => expect(window.api.writeClipboard).toHaveBeenCalled())
+    const text = vi.mocked(window.api.writeClipboard).mock.calls[0][0] as string
+    // 制表符分隔：粘进 Excel 会自动分列
+    expect(text).toBe('张三\thttps://www.douyin.com/user/a')
+  })
+
 })

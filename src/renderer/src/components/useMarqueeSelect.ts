@@ -41,9 +41,7 @@ export function useMarqueeSelect<T extends number | string = number>(options: {
 
   const onMouseDown = useCallback((e: React.MouseEvent): void => {
     const target = e.target as HTMLElement
-    // 交互元素不触发框选；[data-allow-select] 是给「想选中复制的文本」开的口子——
-    // 容器为了框选加了 select-none，导致作者名/主页链接根本无法选中复制。
-    if (target.closest('button, a, input, [data-allow-select]')) return
+    if (target.closest('button, a, input')) return // 交互元素不触发框选
     e.preventDefault()
     didDragRef.current = false
     const rect = containerRef.current?.getBoundingClientRect()

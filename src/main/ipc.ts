@@ -1,4 +1,4 @@
-import { ipcMain, BrowserWindow, dialog, shell } from 'electron'
+import { ipcMain, BrowserWindow, dialog, shell, clipboard } from 'electron'
 import type { DatabaseSync } from 'node:sqlite'
 import { createTask, listTasks, listVideos, listAuthors, setTaskStatus, setVideoStatus, updateAuthorCategory, deleteAuthors, taskStats, insertAuthorIfAbsent } from './db'
 import { getSettings, saveSettings } from './settings'
@@ -110,6 +110,10 @@ export function registerIpc(deps: IpcDeps): void {
 
   // 批量导入作者（粘贴主页 URL / 裸 sec_uid 列表）：只登记不刷新已有数据（insertAuthorIfAbsent）。
   // 渲染层已过滤空行/纯空白，这里仍对 nickname 兜底校验；reason 词表逐字返回，供渲染层逐行展示。
+  // 走主进程写剪贴板：打包后页面是 file:// 协议，navigator.clipboard 在部分环境下不可用，
+  // 而 Electron 的 clipboard 模块无这个顾虑。
+  ipcMain.handle('clipboard:write', (_e, text: string) => { clipboard.writeText(String(text ?? '')) })
+
   ipcMain.handle('authors:import', (_e, items: Array<{ nickname: string; url: string }>) => {
     const adapter = getAdapter('douyin')
     let created = 0

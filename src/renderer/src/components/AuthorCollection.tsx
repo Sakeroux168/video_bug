@@ -119,6 +119,21 @@ export default function AuthorCollection({ notify }: { notify: (text: string) =>
     setImportText('')
     setImportResult(null)
   }
+  /**
+   * 复制选中的作者 → 剪贴板。制表符分隔，粘进 Excel/表格会自动分成两列。
+   *
+   * 为什么不是「让单元格可选中」：框选要求容器 select-none，开了文本选中就会把
+   * 作者名/链接那两列变成框选的死区（它俩占了行宽大部分）——相当于用框选换复制。
+   * 先框选、再一键复制，两个能力都保住。
+   */
+  async function copySelected(): Promise<void> {
+    const rows = authors.filter(a => selected.has(a.id))
+    if (rows.length === 0) return
+    const text = rows.map(a => `${a.nickname}\t${a.home_url ?? ''}`).join('\n')
+    await api.writeClipboard(text)
+    notify(`已复制 ${rows.length} 个作者（制表符分隔，可直接粘进表格）`)
+  }
+
   /** 选 CSV 文件 → 只抽作者与主页链接两列，回填到文本框供确认 */
   async function onPickCsv(e: React.ChangeEvent<HTMLInputElement>): Promise<void> {
     const f = e.target.files?.[0]
@@ -165,6 +180,15 @@ export default function AuthorCollection({ notify }: { notify: (text: string) =>
             onClick={() => void deleteSelected()}
           >
             删除选中{selected.size > 0 ? `（${selected.size}）` : ''}
+          </button>
+        )}
+        {authors.length > 0 && (
+          <button
+            className={`rounded-md px-2 py-1 ${selected.size ? 'text-zinc-600 hover:bg-zinc-100' : 'text-zinc-300'}`}
+            disabled={selected.size === 0}
+            onClick={() => void copySelected()}
+          >
+            复制所选{selected.size > 0 ? `（${selected.size}）` : ''}
           </button>
         )}
         <button
@@ -259,9 +283,7 @@ export default function AuthorCollection({ notify }: { notify: (text: string) =>
                   onClick={e => handleRowClick(a, e)}
                 >
                   <td className="py-2 pr-1"><input type="checkbox" checked={selected.has(a.id)} onChange={() => setSelected(rowClick(a.id, authors.map(x => x.id), selected, {}))} /></td>
-                  {/* data-allow-select + select-text：容器为框选加了 select-none，
-                      不开口子的话作者名和链接根本无法选中复制。 */}
-                  <td data-allow-select className="select-text py-2 pr-2 font-medium">
+                  <td className="py-2 pr-2 font-medium">
                     {a.nickname}
                     {/* R16：导入的作者需要校验名称与链接是否对得上。
                         verify_state 为 null = 抓取时自动收录，数据来自真实接口，不显示任何标识。 */}
@@ -272,7 +294,7 @@ export default function AuthorCollection({ notify }: { notify: (text: string) =>
                       <span className="ml-1.5 rounded bg-red-50 px-1 py-0.5 text-[10px] text-red-600" title={a.verify_error ?? ''}>校验失败</span>
                     )}
                   </td>
-                  <td data-allow-select className="max-w-[240px] select-text py-2 pr-2">
+                  <td className="max-w-[240px] py-2 pr-2">
                     <a className="block truncate text-blue-500 hover:underline" href={a.home_url ?? '#'} target="_blank" rel="noreferrer">
                       {a.home_url ?? '—'}
                     </a>
