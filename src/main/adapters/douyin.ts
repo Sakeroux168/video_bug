@@ -105,7 +105,7 @@ export function normalizePlayUrl(raw: string): string {
 }
 
 // 完整抖音主页 URL：容忍 http(s)、www. 前缀、尾部 ?query / #hash / 尾斜杠（buildAuthorUrl 旁）
-const AUTHOR_URL_RE = /^https?:\/\/(?:www\.)?douyin\.com\/user\/([A-Za-z0-9_-]+)(?:[/?#].*)?$/i
+const AUTHOR_URL_RE = /^https?:\/\/(?:www\.|m\.)?douyin\.com\/user\/([A-Za-z0-9_-]+)(?:[/?#].*)?$/i
 // 裸 sec_uid：无 scheme、无斜杠，字符集 [A-Za-z0-9_-]+
 const BARE_SEC_UID_RE = /^[A-Za-z0-9_-]+$/
 

@@ -10,7 +10,10 @@
  * 让主进程给出逐行 reason。
  */
 
-const URL_RE = /https?:\/\/\S+/
+// 不能用 \S+：逗号紧跟链接时会把分隔符和后面的名称一起吞进 URL，
+// 结果名称与链接双双报废，用户只看到「未识别到抖音主页链接」，无从判断原因。
+// 抖音 sec_uid 字符集是 [A-Za-z0-9_-]，不含这些分隔符，排除掉是安全的。
+const URL_RE = /https?:\/\/[^\s,，、;；]+/
 
 export function parsePastedAuthors(text: string): Array<{ nickname: string; url: string }> {
   const lines = text.split(/\r\n|\r|\n/)
@@ -28,7 +31,9 @@ export function parsePastedAuthors(text: string): Array<{ nickname: string; url:
     const url = match[0]
     const rest = rawLine.slice(0, match.index) + rawLine.slice(match.index + url.length)
     // 去掉紧贴链接的单个分隔符（Tab/逗号），再 trim 两端多余空白；名称内部的逗号/空格保留
-    const nickname = rest.replace(/^[\t,]+|[\t,]+$/g, '').trim()
+    // 先 trim 掉两端空白（含 Tab），再剥掉紧贴链接的分隔符，最后再 trim 一次。
+    // 刻意不把 Tab 写进字符类：那需要在源码里放一个不可见字符，后人极易改坏。
+    const nickname = rest.trim().replace(/^[,，、;；]+|[,，、;；]+$/g, '').trim()
 
     result.push({ nickname, url })
   }

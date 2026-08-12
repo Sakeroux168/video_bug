@@ -152,4 +152,10 @@ describe('douyinAdapter 解析新版卡片结构（aweme_info 包装）', () => 
     expect(items[0].awemeId).toBe('7300000000000000011')
     expect(items[1].awemeId).toBe('7300000000000000012')
   })
+  // 审查补：手机端分享出来的主页链接有时带 m. 子域，原实现只认 www. 与裸域名，
+  // 员工粘 m.douyin.com 会拿到「未识别到抖音主页链接」却看不出问题在子域上。
+  it('parseAuthorInput 认 m. 子域的主页链接', () => {
+    expect(douyinAdapter.parseAuthorInput('https://m.douyin.com/user/MS4wLjABAAAA')).toBe('MS4wLjABAAAA')
+  })
+
 })

@@ -60,4 +60,26 @@ describe('parsePastedAuthors', () => {
       { nickname: '李四', url: 'https://www.douyin.com/user/b' }
     ])
   })
+
+  // 审查补：逗号紧跟链接、中间无空格时，原实现的 /https?:\/\/\S+/ 会把逗号和后面的名称
+  // 一起吞进 URL —— 名称和链接双双报废，用户只看到「未识别到抖音主页链接」，无从判断原因。
+  // 从 Excel 拷贝时「链接在前、逗号分隔」是很可能的排列。
+  it('链接在前、逗号分隔且无空格 → 链接与名称都能正确切出', () => {
+    expect(parsePastedAuthors('https://www.douyin.com/user/abc,张三')).toEqual([
+      { nickname: '张三', url: 'https://www.douyin.com/user/abc' }
+    ])
+  })
+
+  it('中文逗号 / 顿号 / 分号 同样能作分隔符', () => {
+    expect(parsePastedAuthors('https://www.douyin.com/user/a，张三')).toEqual([
+      { nickname: '张三', url: 'https://www.douyin.com/user/a' }
+    ])
+    expect(parsePastedAuthors('https://www.douyin.com/user/b、李四')).toEqual([
+      { nickname: '李四', url: 'https://www.douyin.com/user/b' }
+    ])
+    expect(parsePastedAuthors('https://www.douyin.com/user/c；王五')).toEqual([
+      { nickname: '王五', url: 'https://www.douyin.com/user/c' }
+    ])
+  })
+
 })
