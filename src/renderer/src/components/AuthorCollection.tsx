@@ -104,7 +104,7 @@ export default function AuthorCollection({ notify }: { notify: (text: string) =>
         <span className="text-sm text-zinc-400">暂无收藏的作者，抓取后自动收录</span>
       ) : (
         <div
-          ref={containerRef} className="relative select-none overflow-auto"
+          ref={containerRef} data-testid="authors-table" className="relative select-none overflow-auto"
           onMouseDown={onMouseDown} onMouseMove={onMouseMove}
           onMouseUp={endDrag} onMouseLeave={endDrag}
           onClick={handleContainerClick}
@@ -125,6 +125,7 @@ export default function AuthorCollection({ notify }: { notify: (text: string) =>
                 <tr
                   key={`${a.platform}:${a.sec_uid}`}
                   data-id={a.id}
+                  data-selected={selected.has(a.id) ? 'true' : undefined}
                   className={`cursor-pointer border-b border-zinc-100 transition-colors hover:bg-zinc-50 ${selected.has(a.id) ? 'bg-blue-50' : ''}`}
                   onClick={e => handleRowClick(a, e)}
                 >

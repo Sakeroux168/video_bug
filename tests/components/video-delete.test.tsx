@@ -39,7 +39,7 @@ async function setup(videos: VideoRow[], notify: (t: string) => void = () => {})
   render(<TaskList notify={notify} />)
   fireEvent.click(await screen.findByText('展开'))
   await screen.findByText('标题') // 视频表格头出现，视频已加载
-  return screen.getByText('标题').closest('table')!.parentElement as HTMLElement
+  return screen.getByTestId('video-table')
 }
 
 describe('Task 3 视频删除 UI', () => {
@@ -93,7 +93,7 @@ describe('Task 3 视频删除 UI', () => {
     await setup([makeVideo(1), makeVideo(2)], notify)
     // setup 内 installFakeApi 会重置方法，须在 setup 之后再 mock 返回值
     vi.mocked(window.api.deleteVideos).mockResolvedValue({ ok: true, deleted: 1 })
-    const c = screen.getByText('标题').closest('table')!.parentElement as HTMLElement
+    const c = screen.getByTestId('video-table')
     const row = c.querySelector('tbody tr[data-id="1"]') as HTMLElement
     const delBtn = Array.from(row.querySelectorAll('button')).find(b => b.textContent === '删除')
     fireEvent.click(delBtn!)
@@ -107,7 +107,7 @@ describe('Task 3 视频删除 UI', () => {
     await setup([makeVideo(1), makeVideo(2)], notify)
     vi.mocked(window.api.deleteVideos).mockResolvedValue({ ok: false, deleted: 1, error: '删除文件失败 C:\\x.mp4' })
     const callsBefore = vi.mocked(window.api.listTasks).mock.calls.length
-    const c = screen.getByText('标题').closest('table')!.parentElement as HTMLElement
+    const c = screen.getByTestId('video-table')
     const row = c.querySelector('tbody tr[data-id="1"]') as HTMLElement
     const delBtn = Array.from(row.querySelectorAll('button')).find(b => b.textContent === '删除')
     fireEvent.click(delBtn!)
@@ -121,7 +121,7 @@ describe('Task 3 视频删除 UI', () => {
     await setup([makeVideo(1)], notify)
     vi.mocked(window.api.deleteVideos).mockResolvedValue({ ok: false, deleted: 0, error: '磁盘错误' })
     const callsBefore = vi.mocked(window.api.listTasks).mock.calls.length
-    const c = screen.getByText('标题').closest('table')!.parentElement as HTMLElement
+    const c = screen.getByTestId('video-table')
     const row = c.querySelector('tbody tr[data-id="1"]') as HTMLElement
     const delBtn = Array.from(row.querySelectorAll('button')).find(b => b.textContent === '删除')
     fireEvent.click(delBtn!)

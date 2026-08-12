@@ -161,7 +161,7 @@ export default function FileManager({ notify }: { notify: (text: string) => void
           <span className="text-sm text-zinc-400">该品类下没有作者文件夹</span>
         ) : (
           <div
-            ref={containerRef} className="relative select-none overflow-auto"
+            ref={containerRef} data-testid="files-author-table" className="relative select-none overflow-auto"
             onMouseDown={onMouseDown} onMouseMove={onMouseMove}
             onMouseUp={endDrag} onMouseLeave={endDrag}
             onClick={handleContainerClick}
@@ -181,6 +181,7 @@ export default function FileManager({ notify }: { notify: (text: string) => void
                   <tr
                     key={a.name}
                     data-id={a.name}
+                    data-selected={selectedAuthors.has(a.name) ? 'true' : undefined}
                     className={`cursor-pointer border-b border-zinc-100 transition-colors hover:bg-zinc-50 ${selectedAuthors.has(a.name) ? 'bg-blue-50' : ''}`}
                     onClick={e => handleAuthorClick(a.name, e)}
                   >
@@ -227,7 +228,7 @@ export default function FileManager({ notify }: { notify: (text: string) => void
         <span className="text-sm text-zinc-400">{tree === null ? '加载中…' : '下载目录还没有品类文件夹'}</span>
       ) : (
         <div
-          ref={containerRef} className="relative select-none overflow-auto"
+          ref={containerRef} data-testid="files-category-table" className="relative select-none overflow-auto"
           onMouseDown={onMouseDown} onMouseMove={onMouseMove}
           onMouseUp={endDrag} onMouseLeave={endDrag}
           onClick={handleContainerClick}
@@ -247,6 +248,7 @@ export default function FileManager({ notify }: { notify: (text: string) => void
                 <tr
                   key={c.name}
                   data-id={c.name}
+                  data-selected={selectedCats.has(c.name) ? 'true' : undefined}
                   className={`cursor-pointer border-b border-zinc-100 transition-colors hover:bg-zinc-50 ${selectedCats.has(c.name) ? 'bg-blue-50' : ''}`}
                   onClick={e => handleCatClick(c.name, e)}
                 >

@@ -53,7 +53,7 @@ async function setup(videos: VideoRow[]): Promise<HTMLElement> {
   render(<TaskList notify={() => {}} />)
   fireEvent.click(await screen.findByText('展开'))
   await screen.findByText('标题') // 视频表格头出现
-  return screen.getByText('标题').closest('table')!.parentElement as HTMLElement
+  return screen.getByTestId('video-table')
 }
 
 /** ctrl+点击行 = 切换选中（不清其它），与 selection.test.tsx 手势一致 */
@@ -66,13 +66,22 @@ function toggleRow(containerDiv: HTMLElement, id: number): void {
 
 /** 视频表格头部「本页全选」勾选框（checked + indeterminate 由 ref 回调维护） */
 function headerCheckbox(): HTMLInputElement {
-  const table = screen.getByText('标题').closest('table') as HTMLElement
-  return table.querySelector('thead input[type="checkbox"]') as HTMLInputElement
+  // 从视频表容器内取：外层任务表 thead 里也有一个 disabled 占位勾选框，
+  // 全局 getByTestId('select-all') 会歧义（多任务展开时更甚），必须带容器作用域。
+  return screen.getByTestId('video-table')
+    .querySelector('[data-testid="select-all"]') as HTMLInputElement
 }
 
-/** 行内所有交互元素文本（button/a），用于按钮组合矩阵断言（顺序即 DOM 顺序） */
+/** 行内所有交互元素文本（button/a），用于按钮**文案**契约断言（顺序即 DOM 顺序） */
 function rowControls(row: HTMLElement): string[] {
   return Array.from(row.querySelectorAll('button, a')).map(el => el.textContent ?? '')
+}
+
+/** 行内所有交互元素的 data-action（顺序即 DOM 顺序）。
+ *  P0 脱敏：能力矩阵改用 action 断言，与按钮文案解耦——文案另有一条契约单独锁，
+ *  两者分别回答「这一行提供了什么能力」与「按钮叫什么」。 */
+function rowActions(row: HTMLElement): string[] {
+  return Array.from(row.querySelectorAll('button, a')).map(el => el.getAttribute('data-action') ?? '')
 }
 
 /** 按 data-id 定位视频行；filtered 行无 data-id，用标题文本定位 */
@@ -261,15 +270,15 @@ describe('批量操作矩阵（全选/indeterminate + 批量按钮 + 行内按�
     ])
 
     // 存在性组合（顺序 = DOM 顺序：下载/重试/暂停/继续/取消/定位/原视频/删除）
-    expect(rowControls(rowOf(c, 1))).toEqual(['暂停', '取消', '原视频', '删除'])
-    expect(rowControls(rowOf(c, 2))).toEqual(['暂停', '取消', '原视频', '删除'])
-    expect(rowControls(rowOf(c, 3))).toEqual(['继续', '原视频', '删除'])
-    expect(rowControls(rowOf(c, 4))).toEqual(['下载', '重试', '原视频', '删除'])
-    expect(rowControls(rowOf(c, 5))).toEqual(['下载', '原视频', '删除'])
-    expect(rowControls(rowOf(c, 6))).toEqual(['下载', '原视频', '删除'])
-    expect(rowControls(rowOf(c, 7))).toEqual(['定位', '原视频', '删除'])
-    expect(rowControls(rowOf(c, 8))).toEqual(['原视频', '删除'])
-    expect(rowControls(rowOf(c, 9))).toEqual([]) // filtered 行无任何操作元素
+    expect(rowActions(rowOf(c, 1))).toEqual(['pause', 'cancel', 'source', 'delete'])
+    expect(rowActions(rowOf(c, 2))).toEqual(['pause', 'cancel', 'source', 'delete'])
+    expect(rowActions(rowOf(c, 3))).toEqual(['resume', 'source', 'delete'])
+    expect(rowActions(rowOf(c, 4))).toEqual(['download', 'retry', 'source', 'delete'])
+    expect(rowActions(rowOf(c, 5))).toEqual(['download', 'source', 'delete'])
+    expect(rowActions(rowOf(c, 6))).toEqual(['download', 'source', 'delete'])
+    expect(rowActions(rowOf(c, 7))).toEqual(['locate', 'source', 'delete'])
+    expect(rowActions(rowOf(c, 8))).toEqual(['source', 'delete'])
+    expect(rowActions(rowOf(c, 9))).toEqual([]) // filtered 行无任何操作元素
 
     // 代表性按钮点击 → 对应接口
     const btnIn = (row: HTMLElement, label: string) =>
@@ -286,5 +295,33 @@ describe('批量操作矩阵（全选/indeterminate + 批量按钮 + 行内按�
     expect(window.api.cancelVideos).toHaveBeenCalledWith([2])
     fireEvent.click(btnIn(rowOf(c, 7), '定位'))
     expect(window.api.locateVideo).toHaveBeenCalledWith('D:\\videos\\x.mp4')
+  })
+
+  // P0 脱敏配套：上面的能力矩阵改用 data-action 断言后，按钮**文案**不再被任何测试覆盖。
+  // 文案是用户直接看到的东西，也是 useMarqueeSelect 的 closest('button, a, input') 守卫
+  // 赖以生效的原生 button/a 结构的一部分。这里把原来的文案数组原样保留成独立契约——
+  // 能力（做什么）与叫法（显示什么）分开测，断言总数只增不减。
+  it('⑧ 行内按钮文案契约（与能力矩阵一一对应）', async () => {
+    const c = await setup([
+      makeVideo(1, { status: 'pending' }),
+      makeVideo(2, { status: 'downloading' }),
+      makeVideo(3, { status: 'paused' }),
+      makeVideo(4, { status: 'failed' }),
+      makeVideo(5, { status: 'collected' }),
+      makeVideo(6, { status: 'cancelled' }),
+      makeVideo(7, { status: 'done', local_path: 'D:/videos/x.mp4' }),
+      makeVideo(8, { status: 'done', local_path: null }),
+      makeVideo(9, { status: 'filtered' })
+    ])
+
+    expect(rowControls(rowOf(c, 1))).toEqual(['暂停', '取消', '原视频', '删除'])
+    expect(rowControls(rowOf(c, 2))).toEqual(['暂停', '取消', '原视频', '删除'])
+    expect(rowControls(rowOf(c, 3))).toEqual(['继续', '原视频', '删除'])
+    expect(rowControls(rowOf(c, 4))).toEqual(['下载', '重试', '原视频', '删除'])
+    expect(rowControls(rowOf(c, 5))).toEqual(['下载', '原视频', '删除'])
+    expect(rowControls(rowOf(c, 6))).toEqual(['下载', '原视频', '删除'])
+    expect(rowControls(rowOf(c, 7))).toEqual(['定位', '原视频', '删除'])
+    expect(rowControls(rowOf(c, 8))).toEqual(['原视频', '删除'])
+    expect(rowControls(rowOf(c, 9))).toEqual([]) // filtered 行无任何操作元素
   })
 })

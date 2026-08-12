@@ -48,7 +48,7 @@ async function setup(n: number): Promise<HTMLElement> {
   fireEvent.click(await screen.findByText('展开'))
   await screen.findByText('标题') // 视频表格头出现，视频已加载
 
-  const containerDiv = screen.getByText('标题').closest('table')!.parentElement as HTMLElement
+  const containerDiv = screen.getByTestId('video-table')
   // jsdom 的 getBoundingClientRect 全返回 0，框选相交判断需要真实几何：
   // 容器 600x400，第 i 个视频行（0 基）占据 y = i*20 .. i*20+20。
   // 注意不能对 'tbody tr' 全部 stub：视频表格位于外层任务表格的 tbody 内，
@@ -67,10 +67,11 @@ function rowEl(containerDiv: HTMLElement, id: number): HTMLElement {
   return containerDiv.querySelector(`tbody tr[data-id="${id}"]`) as HTMLElement
 }
 
-/** 当前选中（bg-blue-50）的行 id，升序 */
+/** 当前选中的行 id，升序。读 data-selected 属性而非 Tailwind 类名——
+ *  P0 脱敏：让选中语义的断言与视觉实现解耦，UI 换色不会打碎这两条核心用例。 */
 function selectedIds(containerDiv: HTMLElement): number[] {
   const ids = Array.from(containerDiv.querySelectorAll('tbody tr[data-id]'))
-    .filter(tr => tr.classList.contains('bg-blue-50'))
+    .filter(tr => tr.getAttribute('data-selected') === 'true')
     .map(tr => Number(tr.getAttribute('data-id')))
   return ids.sort((a, b) => a - b)
 }

@@ -531,6 +531,7 @@ function TaskVideoTable({
     <>
       <div
         ref={containerRef}
+        data-testid="video-table"
         className="relative select-none overflow-x-auto"
         onMouseDown={onMouseDown}
         onMouseMove={onMouseMove}
@@ -544,6 +545,7 @@ function TaskVideoTable({
               <th className="w-8 py-1 pr-1 font-normal">
                 <input
                   type="checkbox"
+                  data-testid="select-all"
                   checked={d.allOnPageSelected}
                   ref={el => { if (el) el.indeterminate = d.someOnPageSelected && !d.allOnPageSelected }}
                   onChange={() => onTogglePage(d.allOnPageSelected)}
@@ -565,6 +567,7 @@ function TaskVideoTable({
                 <tr
                   key={v.id}
                   data-id={isFiltered ? undefined : v.id}
+                  data-selected={!isFiltered && selected.has(v.id) ? 'true' : undefined}
                   className={`border-b border-zinc-100 transition-colors ${isFiltered ? 'text-zinc-400' : 'cursor-pointer hover:bg-zinc-50'} ${!isFiltered && selected.has(v.id) ? 'bg-blue-50' : ''}`}
                   onClick={isFiltered ? undefined : e => handleRowClick(v, e)}
                 >
@@ -586,25 +589,25 @@ function TaskVideoTable({
                     {!isFiltered && (
                       <div className="flex items-center gap-1.5">
                         {(v.status === 'collected' || v.status === 'cancelled' || v.status === 'failed') && (
-                          <RowBtn label="下载" onClick={() => { void api.downloadVideos([v.id]).then(() => { refresh(); notify('已开始下载') }) }} />
+                          <RowBtn label="下载" action="download" onClick={() => { void api.downloadVideos([v.id]).then(() => { refresh(); notify('已开始下载') }) }} />
                         )}
                         {v.status === 'failed' && (
-                          <RowBtn label="重试" onClick={() => { void api.retryVideos([v.id]).then(() => { refresh(); notify('已重试') }) }} />
+                          <RowBtn label="重试" action="retry" onClick={() => { void api.retryVideos([v.id]).then(() => { refresh(); notify('已重试') }) }} />
                         )}
                         {(v.status === 'pending' || v.status === 'downloading') && (
-                          <RowBtn label="暂停" onClick={() => { void api.pauseVideos([v.id]).then(() => { refresh(); notify('已暂停') }) }} />
+                          <RowBtn label="暂停" action="pause" onClick={() => { void api.pauseVideos([v.id]).then(() => { refresh(); notify('已暂停') }) }} />
                         )}
                         {v.status === 'paused' && (
-                          <RowBtn label="继续" onClick={() => { void api.resumeVideos([v.id]).then(() => { refresh(); notify('已恢复下载') }) }} />
+                          <RowBtn label="继续" action="resume" onClick={() => { void api.resumeVideos([v.id]).then(() => { refresh(); notify('已恢复下载') }) }} />
                         )}
                         {(v.status === 'pending' || v.status === 'downloading') && (
-                          <RowBtn label="取消" onClick={() => { void api.cancelVideos([v.id]).then(() => { refresh(); notify('已取消') }) }} />
+                          <RowBtn label="取消" action="cancel" onClick={() => { void api.cancelVideos([v.id]).then(() => { refresh(); notify('已取消') }) }} />
                         )}
                         {v.status === 'done' && v.local_path && (
-                          <RowBtn label="定位" onClick={() => void api.locateVideo(v.local_path!)} />
+                          <RowBtn label="定位" action="locate" onClick={() => void api.locateVideo(v.local_path!)} />
                         )}
-                        <a className="text-blue-500 hover:underline" href={`https://www.douyin.com/video/${v.aweme_id}`} target="_blank" rel="noreferrer">原视频</a>
-                        <button className="text-red-400 hover:text-red-500" onClick={() => onDeleteVideos([v.id])}>删除</button>
+                        <a data-action="source" className="text-blue-500 hover:underline" href={`https://www.douyin.com/video/${v.aweme_id}`} target="_blank" rel="noreferrer">原视频</a>
+                        <button data-action="delete" className="text-red-400 hover:text-red-500" onClick={() => onDeleteVideos([v.id])}>删除</button>
                       </div>
                     )}
                   </td>
@@ -640,6 +643,9 @@ function TaskVideoTable({
   )
 }
 
-function RowBtn({ label, onClick }: { label: string; onClick: () => void }): React.ReactElement {
-  return <button className="text-blue-500 hover:underline" onClick={onClick}>{label}</button>
+/** 行内文字按钮。data-action 供测试断言「这一行提供了什么能力」，与按钮文案解耦
+ *  （文案另有一条契约测试单独锁）。必须保持原生 <button>：useMarqueeSelect 的
+ *  closest('button, a, input') 守卫靠它区分「点按钮」与「点行/框选」。 */
+function RowBtn({ label, action, onClick }: { label: string; action: string; onClick: () => void }): React.ReactElement {
+  return <button data-action={action} className="text-blue-500 hover:underline" onClick={onClick}>{label}</button>
 }

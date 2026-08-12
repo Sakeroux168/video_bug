@@ -49,7 +49,7 @@ async function setup(videos: VideoRow[]): Promise<HTMLElement> {
   render(<TaskList notify={() => {}} />)
   fireEvent.click(await screen.findByText('展开'))
   await screen.findByText('标题') // 视频表格头出现
-  return screen.getByText('标题').closest('table')!.parentElement as HTMLElement
+  return screen.getByTestId('video-table')
 }
 
 /** ctrl+点击行 = 切换选中（不清其它），与 selection.test.tsx 手势一致 */
@@ -100,7 +100,7 @@ describe('批量暂停/继续（视频表格工具栏）', () => {
       makeVideo(5, { status: 'done' })
     ])
     // 勾选 collected + done：均不属于暂停/继续集
-    toggleRow(screen.getByText('标题').closest('table')!.parentElement as HTMLElement, 4)
+    toggleRow(screen.getByTestId('video-table'), 4)
 
     const pauseBtn = screen.getByText('暂停选中(0)') as HTMLButtonElement
     const resumeBtn = screen.getByText('继续选中(0)') as HTMLButtonElement
