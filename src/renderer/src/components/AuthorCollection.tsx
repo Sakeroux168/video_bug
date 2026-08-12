@@ -4,12 +4,24 @@ import type { AuthorRow } from '../../../shared/types'
 import { Card, btnPrimary } from './ui'
 import { useMarqueeSelect } from './useMarqueeSelect'
 import { useTableSelection } from './useTableSelection'
+import { parsePastedAuthors } from './parsePastedAuthors'
+
+type ImportResult = { created: number; results: Array<{ line: number; raw: string; ok: boolean; reason?: string }> }
+
+const IMPORT_PLACEHOLDER =
+  '每行一个作者，名称 + 完整主页链接（顺序不限，用空格/Tab/逗号分隔）：\n' +
+  '张三的日常  https://www.douyin.com/user/MS4wLjABAAAA_abc123\n' +
+  '李四        https://www.douyin.com/user/MS4wLjABAAAA_def456'
 
 export default function AuthorCollection({ notify }: { notify: (text: string) => void }) {
   const [authors, setAuthors] = useState<AuthorRow[]>([])
   const [selected, setSelected] = useState<Set<number>>(new Set())
   const [editingId, setEditingId] = useState<number | null>(null)
   const [editVal, setEditVal] = useState('')
+  const [importOpen, setImportOpen] = useState(false)
+  const [importText, setImportText] = useState('')
+  const [importResult, setImportResult] = useState<ImportResult | null>(null)
+  const [importing, setImporting] = useState(false)
 
   useEffect(() => { void api.listAuthors().then(setAuthors) }, [])
 
@@ -86,6 +98,27 @@ export default function AuthorCollection({ notify }: { notify: (text: string) =>
     refresh()
   }
 
+  function toggleImportPanel(): void {
+    setImportOpen(v => !v)
+  }
+  function cancelImport(): void {
+    setImportOpen(false)
+    setImportText('')
+    setImportResult(null)
+  }
+  async function submitImport(): Promise<void> {
+    const items = parsePastedAuthors(importText)
+    setImporting(true)
+    try {
+      const r = await api.importAuthors(items)
+      setImportResult(r)
+      notify(r.created > 0 ? `已导入 ${r.created} 个作者` : '本次没有新增作者')
+      refresh()
+    } finally {
+      setImporting(false)
+    }
+  }
+
   return (
     <Card title="作者收藏">
       <div className="mb-2 flex items-center gap-3 text-xs">
@@ -98,10 +131,56 @@ export default function AuthorCollection({ notify }: { notify: (text: string) =>
             删除选中{selected.size > 0 ? `（${selected.size}）` : ''}
           </button>
         )}
+        <button
+          className="rounded-md px-2 py-1 text-zinc-500 hover:bg-zinc-100"
+          onClick={toggleImportPanel}
+        >
+          导入作者
+        </button>
         <span className="text-zinc-300">提示：点行排他选中，Ctrl 点选切换，Shift 点选范围，点空白取消，按住左键拖动框选替换</span>
       </div>
+      {importOpen && (
+        <div className="mb-3 rounded-md border border-zinc-200 bg-zinc-50 p-3">
+          <textarea
+            className="w-full rounded-md border border-zinc-300 px-3 py-2 text-xs outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+            rows={5}
+            placeholder={IMPORT_PLACEHOLDER}
+            value={importText}
+            onChange={e => setImportText(e.target.value)}
+          />
+          <div className="mt-2 flex items-center gap-2">
+            <button
+              className={`${btnPrimary} !px-3 !py-1.5 !text-xs`}
+              disabled={importing || importText.trim() === ''}
+              onClick={() => void submitImport()}
+            >
+              确定导入
+            </button>
+            <button
+              className="rounded-md px-3 py-1.5 text-xs text-zinc-500 hover:bg-zinc-100"
+              onClick={cancelImport}
+            >
+              取消
+            </button>
+          </div>
+          {importResult && (
+            <div className="mt-2 text-xs text-zinc-600">
+              <div>成功导入 {importResult.created} 个</div>
+              {importResult.results.some(r => !r.ok) && (
+                <ul className="mt-1 space-y-0.5 text-red-500">
+                  {importResult.results.filter(r => !r.ok).map(r => (
+                    <li key={r.line}>
+                      第 {r.line} 行「{r.raw}」：{r.reason}
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
+          )}
+        </div>
+      )}
       {authors.length === 0 ? (
-        <span className="text-sm text-zinc-400">暂无收藏的作者，抓取后自动收录</span>
+        <span className="text-sm text-zinc-400">暂无收藏的作者，抓取后自动收录，或点上方「导入作者」批量添加</span>
       ) : (
         <div
           ref={containerRef} data-testid="authors-table" className="relative select-none overflow-auto"
