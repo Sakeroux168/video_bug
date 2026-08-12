@@ -32,7 +32,8 @@ class FakeBrowser {
 
   /** 导入作者校验：模拟从主页读到的真实昵称；null = 页面打不开/取不到 */
   authorNickname: string | null = null
-  async readAuthorNickname(): Promise<string | null> { return this.authorNickname }
+  readAuthorNicknameCalls = 0
+  async readAuthorNickname(): Promise<string | null> { this.readAuthorNicknameCalls++; return this.authorNickname }
 
   /** P1.5：最近一次 load 收到的 url（现在 load 忽略 url 参数，供测试捕获校验单层/双层包裹） */
   lastUrl: string | null = null
@@ -1321,5 +1322,26 @@ describe('导入作者的名称校验（R16）', () => {
     await p
     expect(taskRow(db, taskId).error).not.toBe('author_mismatch')
     expect(taskRow(db, taskId).error).not.toBe('author_unverifiable')
+  })
+
+  // 边界：作者行在任务真正 run 之前被删除（例如导入后、爬主页前手动删除该作者）。
+  // 当前实现按 sec_uid 在 listAuthors() 里找不到行就直接放行（不校验、不暂停），
+  // 而不是把它当「校验失败」处理。锁住这个现状，供项目负责人评估是否符合预期
+  // （风险：被删除作者的任务会无提示地继续跑，用户不会看到任何校验相关提示）。
+  it('作者已被删除（任务 run 前该 sec_uid 已无作者行）→ 不校验、不暂停，任务照常推进', async () => {
+    const db = newDb()
+    const browser = new FakeBrowser()
+    browser.authorNickname = '随便什么昵称' // 即便页面能取到昵称，也不该被读取——因为压根没有作者行可比对
+    const taskId = createTask(db, { ...input, type: 'author', query: 'SEC_DELETED' })
+    const { s } = setup(db, new FakeDownloader(), browser)
+    const p = s.run(taskId)
+    await new Promise(r => setTimeout(r, 30))
+    await s.pause()
+    await p
+    // 注意：这里的 'paused' 是测试自己调用 s.pause() 造成的（收尾动作，避免测试挂起），
+    // 不是校验失败导致的暂停——所以只断言 error 原因，不断言 status。
+    expect(taskRow(db, taskId).error).not.toBe('author_mismatch')
+    expect(taskRow(db, taskId).error).not.toBe('author_unverifiable')
+    expect(browser.readAuthorNicknameCalls).toBe(0) // 没有作者行可校验，直接跳过，不发起昵称读取
   })
 })

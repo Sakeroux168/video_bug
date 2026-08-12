@@ -394,6 +394,10 @@ export class Scheduler {
    */
   private async verifyImportedAuthor(taskId: number, secUid: string): Promise<boolean> {
     const author = listAuthors(this.deps.db).find(a => a.sec_uid === secUid)
+    // 找不到作者行（导入后、真正开爬前被手动删掉）也直接放行——**这是有意为之**：
+    // 校验的对象是「导入时声称的名字」，行都删了就没有这个声称了，没什么可比对。
+    // 此时继续爬取、由 upsertAuthor 按真实接口数据重新登记作者（verify_state=null）才是对的，
+    // 拦下来反而错。测试工程师曾把它当缺陷报上来，此处写明以免重复被误判。
     if (!author || author.verify_state !== 'pending') return false
 
     const real = await this.deps.browser.readAuthorNickname()

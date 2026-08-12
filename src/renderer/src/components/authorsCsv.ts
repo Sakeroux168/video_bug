@@ -58,7 +58,15 @@ export function parseAuthorsCsv(text: string): Array<{ nickname: string; url: st
   if (rows.length === 0) return []
 
   const byHeader = pickByHeader(rows[0])
-  const body = byHeader ? rows.slice(1) : rows
+  // 表头认不出时（例如「作者链接,粉丝数」——单个表头同时命中名称词与链接词，
+  // 又没有第二列能当名称），不能直接把第一行当数据：表头文字会变成一条
+  // 莫名的失败行，用户会以为自己表格第一行有问题。
+  // 判定：第一行没有任何像链接的单元格，而后续行有 → 它是表头。
+  // 加「后续行有」这个条件是为了避免整个文件都没链接时静默丢掉第一条真数据。
+  const looksLikeHeaderRow =
+    !byHeader && rows.length > 1 &&
+    !rows[0].some(looksLikeUrl) && rows.slice(1).some(r => r.some(looksLikeUrl))
+  const body = byHeader ? rows.slice(1) : (looksLikeHeaderRow ? rows.slice(1) : rows)
 
   return body.map(r => {
     if (byHeader) {

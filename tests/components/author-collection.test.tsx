@@ -233,4 +233,43 @@ describe('AuthorCollection 批量导入作者', () => {
     expect(text).toBe('张三\thttps://www.douyin.com/user/a')
   })
 
+  // 边界（测试工程师第16轮补）：作者表本身不分页（全部作者一次性渲染在一张 table 里，
+  // 没有独立的「页」概念——与视频表格不同）。所以「跨页」场景在这个组件里无从谈起；
+  // 能验证的等价场景是「全选」：确认全选后复制的是完整选中集（按表格展示顺序），
+  // 而不是只复制了最近一次点击命中的行。
+  it('全选后复制所选：包含全部作者（按表格展示顺序），不是只复制最后点的那一行', async () => {
+    installFakeApi() // 换新的 vi.fn() 实例，避免上一条用例遗留的 writeClipboard 调用记录干扰 calls[0]
+    vi.mocked(window.api.listAuthors).mockResolvedValue([
+      makeAuthor({ id: 1, sec_uid: 'sec1', nickname: '张三', home_url: 'https://www.douyin.com/user/a' }),
+      makeAuthor({ id: 2, sec_uid: 'sec2', nickname: '李四', home_url: 'https://www.douyin.com/user/b' }),
+      makeAuthor({ id: 3, sec_uid: 'sec3', nickname: '王五', home_url: null })
+    ] as never)
+    render(<AuthorCollection notify={() => {}} />)
+    await screen.findByText('张三')
+
+    const selectAllCheckbox = document.querySelector('thead input[type="checkbox"]') as HTMLInputElement
+    fireEvent.click(selectAllCheckbox)
+
+    const btn = screen.getByRole('button', { name: /复制所选（3）/ })
+    fireEvent.click(btn)
+
+    await waitFor(() => expect(window.api.writeClipboard).toHaveBeenCalled())
+    const text = vi.mocked(window.api.writeClipboard).mock.calls[0][0] as string
+    expect(text).toBe('张三\thttps://www.douyin.com/user/a\n李四\thttps://www.douyin.com/user/b\n王五\t')
+  })
+
+  // 边界（测试工程师第16轮补）：AuthorCollection 订阅了 api.onTaskProgress 来在校验结果
+  // 写库后自动重拉作者表；useEffect 的清理函数就是 onTaskProgress 返回的退订函数本身
+  // （`return api.onTaskProgress(...)`）。组件卸载时 React 必须调用这个清理函数，否则
+  // 每次挂载都会在 preload 侧的 ipcRenderer 监听器列表里再堆一个，长期切换 tab 会累积泄漏。
+  it('组件卸载时调用 onTaskProgress 返回的退订函数（不泄漏监听器）', async () => {
+    const unsubscribe = vi.fn()
+    vi.mocked(window.api.onTaskProgress).mockImplementation(() => unsubscribe)
+    vi.mocked(window.api.listAuthors).mockResolvedValue([])
+    const { unmount } = render(<AuthorCollection notify={() => {}} />)
+    await screen.findByText('暂无收藏的作者，抓取后自动收录，或点上方「导入作者」批量添加')
+    expect(unsubscribe).not.toHaveBeenCalled()
+    unmount()
+    expect(unsubscribe).toHaveBeenCalledTimes(1)
+  })
 })
