@@ -132,3 +132,36 @@ describe('task:create 作者去重', () => {
     expect(enqueued).toEqual([r.id])
   })
 })
+
+// P1.5：URL 双重包裹修复——task:create 对 type=author 的 query 先 parseAuthorInput 归一化，
+// 避免 FilterForm 存完整 URL、scheduler 又套一层 buildAuthorUrl 拼出双重 URL；
+// 同时去重比对做了归一化，URL 与 sec_uid 两种输入格式能命中同一条去重记录。
+describe('task:create 作者 URL 归一化（P1.5）', () => {
+  beforeEach(() => { mkdirSync(mockIpc.userData, { recursive: true }) })
+  afterEach(() => { rmSync(mockIpc.userData, { recursive: true, force: true }) })
+
+  it('完整主页 URL 输入 → 落库 tasks.query 是 sec_uid（不是原始 URL）', async () => {
+    const { db, create } = setup()
+    const r = await create(input({ type: 'author', query: 'https://www.douyin.com/user/SEC_NORM_1' }))
+    expect(r.skipped).toBe(false)
+    expect(r.id).toBeTypeOf('number')
+    const row = db.prepare('SELECT query FROM tasks WHERE id=?').get(r.id) as { query: string }
+    expect(row.query).toBe('SEC_NORM_1')
+  })
+
+  it('URL 与 sec_uid 两种输入命中同一条去重记录', async () => {
+    const { db, create } = setup()
+    const r1 = await create(input({ type: 'author', query: 'https://www.douyin.com/user/SEC_NORM_2' }))
+    db.prepare("UPDATE tasks SET status='done' WHERE id=?").run(r1.id)
+
+    const r2 = await create(input({ type: 'author', query: 'SEC_NORM_2' }))
+    expect(r2).toEqual({ id: null, skipped: true, reason: '该作者主页已爬取过，可在作者表格中直接管理' })
+  })
+
+  it('无法解析的作者输入（短链/非法字符）→ skipped:true 且给出对应 reason，不建任务', async () => {
+    const { enqueued, create } = setup()
+    const r = await create(input({ type: 'author', query: 'https://v.douyin.com/iZZZZZZZ/' }))
+    expect(r).toEqual({ id: null, skipped: true, reason: '未识别到抖音主页链接或作者 ID' })
+    expect(enqueued).toEqual([])
+  })
+})

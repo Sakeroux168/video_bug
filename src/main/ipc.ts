@@ -39,13 +39,27 @@ export function registerIpc(deps: IpcDeps): void {
   ipcMain.on('api:ping', (e) => { e.returnValue = 'pong' })
   ipcMain.handle('platforms:list', () => listAdapters())
 
-  ipcMain.handle('task:create', (_e, input: Parameters<typeof createTask>[1]) => {
+  ipcMain.handle('task:create', (_e, rawInput: Parameters<typeof createTask>[1]) => {
+    let input = rawInput
+    // P1.5：type=author 时先归一化 query（完整 URL / 裸 sec_uid 两种输入统一转成 sec_uid）——
+    // 修复 FilterForm 存完整 URL、scheduler 又套一层 buildAuthorUrl 拼出双重 URL 的静默卡死 bug；
+    // 顺带修复去重键分裂（FilterForm 存 URL、AuthorCollection 存 sec_uid，此前两个键互不相认）。
+    if (input.type === 'author') {
+      const adapter = getAdapter(input.platform)
+      const secUid = adapter?.parseAuthorInput(input.query) ?? null
+      if (secUid === null) return { id: null, skipped: true, reason: '未识别到抖音主页链接或作者 ID' }
+      input = { ...input, query: secUid }
+    }
     // 作者去重：仅当该作者的"主页爬取"任务已完成才跳过（作者在搜索里出现过不算爬过主页）。
     // 允许重复：任务级 allowDuplicateAuthor 覆盖全局设置；未指定时回退到全局"允许重复爬取作者"。
+    // 比对时对已有 done 行的 query 也做一次归一化——库里可能有 P1.5 修复前存的完整 URL 历史行，
+    // 不归一会导致「URL 输入」和「sec_uid 输入」两种格式各自建一条去重记录，去重形同虚设。
     if (input.type === 'author' && !(input.allowDuplicateAuthor ?? getSettings().allowDuplicateAuthor)) {
-      const done = db.prepare("SELECT id FROM tasks WHERE type='author' AND query=? AND status='done' LIMIT 1")
-        .get(input.query) as { id: number } | undefined
-      if (done) return { id: null, skipped: true, reason: '该作者主页已爬取过，可在作者表格中直接管理' }
+      const adapter = getAdapter(input.platform)
+      const doneRows = db.prepare("SELECT query FROM tasks WHERE type='author' AND status='done'")
+        .all() as Array<{ query: string }>
+      const dup = doneRows.some(r => (adapter?.parseAuthorInput(r.query) ?? r.query) === input.query)
+      if (dup) return { id: null, skipped: true, reason: '该作者主页已爬取过，可在作者表格中直接管理' }
     }
     const id = createTask(db, input)
     deps.enqueueTask(id)

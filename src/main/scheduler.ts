@@ -179,7 +179,9 @@ export class Scheduler {
       this.deps.emit({ type: 'task:progress', taskId, fetched: this.fetched, status: 'running' })
 
       const url = task.type === 'author'
-        ? adapter.buildAuthorUrl(task.query)
+        // P1.5：防御性归一——库里可能有 query=完整 URL 的历史 pending 行（重启恢复会重新入队），
+        // 不归一会拼出 buildAuthorUrl(完整URL) 的双重包裹 URL（无效页面→任务静默卡死）
+        ? adapter.buildAuthorUrl(adapter.parseAuthorInput(task.query) ?? task.query)
         : task.type === 'hashtag'
           ? adapter.buildHashtagUrl(task.query)
           : adapter.buildSearchUrl(task.query, this.filters)

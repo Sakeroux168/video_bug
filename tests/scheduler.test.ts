@@ -30,8 +30,12 @@ class FakeBrowser {
   blockNextLoad(): void { this.loadBlocked = true }
   releaseLoad(): void { if (this.pendingLoad) { this.pendingLoad(); this.pendingLoad = null } }
 
+  /** P1.5：最近一次 load 收到的 url（现在 load 忽略 url 参数，供测试捕获校验单层/双层包裹） */
+  lastUrl: string | null = null
+
   async init(): Promise<void> {}
-  async load(_adapter: PlatformAdapter, _url: string): Promise<void> {
+  async load(_adapter: PlatformAdapter, url: string): Promise<void> {
+    this.lastUrl = url
     if (this.failLoad) throw new Error('load_failed')
     if (this.loadBlocked) {
       this.loadBlocked = false
@@ -1221,5 +1225,19 @@ describe('自救日志顺序（Task4：重搜用尽后不再打印撒谎的"执�
     expect(executeLogs.length).toBe(3) // 3 次真实重搜各打 1 条；重搜用尽那一轮不再多打这条假日志
     expect(pausedLogs.length).toBe(1)
     expect(db.prepare('SELECT status, error FROM tasks WHERE id=?').get(taskId)).toEqual({ status: 'paused', error: 'stalled' })
+  }, 10000)
+})
+
+describe('P1.5：URL 双重包裹修复——scheduler 防御性归一', () => {
+  it('query=完整主页 URL 的历史任务（重启恢复的老 pending 行）→ browser.load 收到单层 URL，不双重包裹', async () => {
+    const db = newDb()
+    const fullUrl = 'https://www.douyin.com/user/SEC_LEGACY_1'
+    // 模拟老版本写入的历史行：query 直接存了完整 URL（P1.5 修复前 FilterForm 的行为）
+    const taskId = createTask(db, { ...input, type: 'author', query: fullUrl })
+    const browser = new FakeBrowser()
+    advancingClock()
+    const { s } = setup(db, new FakeDownloader(), browser)
+    await s.run(taskId)
+    expect(browser.lastUrl).toBe('https://www.douyin.com/user/SEC_LEGACY_1') // 单层，不是套了两层 buildAuthorUrl
   }, 10000)
 })
