@@ -5,7 +5,7 @@ import { Card, btnPrimary } from './ui'
 import { useMarqueeSelect } from './useMarqueeSelect'
 import { useTableSelection } from './useTableSelection'
 import { parsePastedAuthors } from './parsePastedAuthors'
-import { parseAuthorsCsv, buildAuthorsCsv } from './authorsCsv'
+import { parseAuthorsCsv, buildAuthorsCsv, decodeCsvBytes } from './authorsCsv'
 
 type ImportResult = { created: number; results: Array<{ line: number; raw: string; ok: boolean; reason?: string }> }
 
@@ -134,13 +134,24 @@ export default function AuthorCollection({ notify }: { notify: (text: string) =>
     notify(`已复制 ${rows.length} 个作者（制表符分隔，可直接粘进表格）`)
   }
 
-  /** 选 CSV 文件 → 只抽作者与主页链接两列，回填到文本框供确认 */
+  /**
+   * 选文件 → 只抽作者与主页链接两列，回填到文本框供确认。
+   *
+   * 读字节而不是直接 file.text()：用户很容易选成 .xlsx（本质是 zip），
+   * 当文本硬读会把压缩包字节填满文本框、再产出几十条「未识别」的假失败行；
+   * 中文 Excel 另存为 CSV 默认又是 GBK，按 UTF-8 读同样乱码。两件事都在 decodeCsvBytes 里处理。
+   */
   async function onPickCsv(e: React.ChangeEvent<HTMLInputElement>): Promise<void> {
     const f = e.target.files?.[0]
+    e.target.value = '' // 先清空：同一个文件修好后再选一次也能触发 change
     if (!f) return
-    const rows = parseAuthorsCsv(await f.text())
+    const decoded = decodeCsvBytes(await f.arrayBuffer())
+    if (!decoded.ok) {
+      setImportResult({ created: 0, results: [{ line: 0, raw: f.name, ok: false, reason: decoded.error }] })
+      return
+    }
+    const rows = parseAuthorsCsv(decoded.text)
     setImportText(rows.map(r => `${r.nickname} ${r.url}`).join('\n'))
-    e.target.value = '' // 清空，同一个文件再选一次也能触发 change
   }
 
   /** 导出作者表 → 只导作者与主页链接两列（用户明确要求） */
@@ -221,7 +232,7 @@ export default function AuthorCollection({ notify }: { notify: (text: string) =>
                 后续走与手工粘贴完全同一条校验链路。 */}
             <label className="cursor-pointer rounded-md border border-zinc-300 px-3 py-1.5 text-xs text-zinc-600 hover:bg-zinc-100">
               选择 CSV 文件
-              <input type="file" accept=".csv,text/csv" className="hidden" onChange={e => void onPickCsv(e)} />
+              <input type="file" accept=".csv,.xlsx,.xls,text/csv" className="hidden" onChange={e => void onPickCsv(e)} />
             </label>
             <button
               className={`${btnPrimary} !px-3 !py-1.5 !text-xs`}

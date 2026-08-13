@@ -93,3 +93,44 @@ export function buildAuthorsCsv(rows: Array<{ nickname: string; home_url: string
   const lines = ['作者,主页链接', ...rows.map(r => `${esc(r.nickname)},${esc(r.home_url ?? '')}`)]
   return lines.join('\r\n')
 }
+
+// ==========================
+// 文件字节 → 文本
+// ==========================
+
+export type DecodeResult = { ok: true; text: string } | { ok: false; error: string }
+
+/** 文件头魔数：识别「用户选错文件类型」而不是把二进制当文本硬读 */
+const MAGIC: Array<{ sig: number[]; msg: string }> = [
+  // .xlsx/.xlsm 本质是 zip
+  { sig: [0x50, 0x4b, 0x03, 0x04], msg: '这看起来是 Excel 文件（.xlsx）。请在 Excel 里「文件 → 另存为」，格式选「CSV UTF-8（逗号分隔）」，再选那个 .csv 文件。' },
+  // .xls 老版 OLE 复合文档
+  { sig: [0xd0, 0xcf, 0x11, 0xe0], msg: '这看起来是老版 Excel 文件（.xls）。请在 Excel 里「文件 → 另存为」，格式选「CSV UTF-8（逗号分隔）」，再选那个 .csv 文件。' }
+]
+
+/**
+ * 把选中文件的字节解成 CSV 文本。
+ *
+ * 两件事必须在这里做掉，否则用户会拿到满屏乱码却不知道为什么：
+ *   1. **认出根本不是 CSV 的文件**（.xlsx 是 zip、.xls 是 OLE），直接给出可操作的提示。
+ *      此前直接 file.text() 硬读，压缩包字节被当成几十行数据，产出一堆「未识别」的假失败行。
+ *   2. **GBK 兜底**：中文 Windows 的 Excel「另存为 CSV」默认就是 GBK，按 UTF-8 解必然乱码。
+ *      判据是 UTF-8 解码后出现替换字符 U+FFFD——这是解码器明确表示「这段字节不是合法 UTF-8」。
+ */
+export function decodeCsvBytes(buf: ArrayBuffer): DecodeResult {
+  const u8 = new Uint8Array(buf)
+  for (const m of MAGIC) {
+    if (m.sig.every((b, i) => u8[i] === b)) return { ok: false, error: m.msg }
+  }
+
+  const asUtf8 = new TextDecoder('utf-8').decode(u8)
+  if (!asUtf8.includes('\uFFFD')) return { ok: true, text: asUtf8.replace(/^\uFEFF/, '') }
+
+  try {
+    const asGbk = new TextDecoder('gbk').decode(u8)
+    // GBK 也解不干净就退回 UTF-8 结果：至少 ASCII 部分是对的，用户还能看出个大概
+    if (!asGbk.includes('\uFFFD')) return { ok: true, text: asGbk.replace(/^\uFEFF/, '') }
+  } catch { /* 运行环境不支持 gbk：退回 UTF-8 */ }
+
+  return { ok: true, text: asUtf8.replace(/^\uFEFF/, '') }
+}

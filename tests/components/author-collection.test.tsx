@@ -272,4 +272,36 @@ describe('AuthorCollection 批量导入作者', () => {
     unmount()
     expect(unsubscribe).toHaveBeenCalledTimes(1)
   })
+  // 用户实测：选了 .xlsx（zip）直接当文本读，满屏压缩包字节 + 34 条假失败行。
+  it('选到 .xlsx → 给可操作的提示，不把二进制填进文本框', async () => {
+    render(<AuthorCollection notify={() => {}} />)
+    fireEvent.click(await screen.findByRole('button', { name: '导入作者' }))
+
+    const zip = new Uint8Array([0x50, 0x4b, 0x03, 0x04, 0x14, 0x00, 0x06, 0x00]).buffer
+    const file = new File([zip], 'authors.xlsx')
+    Object.defineProperty(file, 'arrayBuffer', { value: async () => zip })
+    fireEvent.change(document.querySelector('input[type="file"]') as HTMLInputElement, { target: { files: [file] } })
+
+    await screen.findByText(/另存为/)
+    const ta = document.querySelector('textarea') as HTMLTextAreaElement
+    expect(ta.value).toBe('')  // 文本框保持干净，不填乱码
+  })
+
+  it('GBK 编码的 CSV（中文 Excel 另存为 CSV 的默认编码）能正确读出中文', async () => {
+    render(<AuthorCollection notify={() => {}} />)
+    fireEvent.click(await screen.findByRole('button', { name: '导入作者' }))
+
+    const ascii = ',https://www.douyin.com/user/a'
+    const gbk = new Uint8Array([0xd5, 0xc5, 0xc8, 0xfd, ...Array.from(ascii).map(c => c.charCodeAt(0))]).buffer
+    const file = new File([gbk], 'authors.csv')
+    Object.defineProperty(file, 'arrayBuffer', { value: async () => gbk })
+    fireEvent.change(document.querySelector('input[type="file"]') as HTMLInputElement, { target: { files: [file] } })
+
+    await waitFor(() => {
+      const ta = document.querySelector('textarea') as HTMLTextAreaElement
+      expect(ta.value).toContain('张三')
+      expect(ta.value).not.toContain('�')
+    })
+  })
+
 })
