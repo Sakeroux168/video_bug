@@ -190,7 +190,7 @@ export default function AuthorCollection({ notify }: { notify: (text: string) =>
       <div className="mb-2 flex items-center gap-3 text-xs">
         {authors.length > 0 && (
           <button
-            className={`rounded-md px-2 py-1 ${selected.size ? 'bg-red-50 text-red-500 hover:bg-red-100' : 'text-zinc-300'}`}
+            className={`rounded-md px-2 py-1 ${selected.size ? 'bg-red-50 text-red-500 hover:bg-red-100' : 'text-slate-300'}`}
             disabled={selected.size === 0}
             onClick={() => void deleteSelected()}
           >
@@ -199,7 +199,7 @@ export default function AuthorCollection({ notify }: { notify: (text: string) =>
         )}
         {authors.length > 0 && (
           <button
-            className={`rounded-md px-2 py-1 ${selected.size ? 'text-zinc-600 hover:bg-zinc-100' : 'text-zinc-300'}`}
+            className={`rounded-md px-2 py-1 ${selected.size ? 'text-slate-600 hover:bg-slate-100' : 'text-slate-300'}`}
             disabled={selected.size === 0}
             onClick={() => void copySelected()}
           >
@@ -208,7 +208,7 @@ export default function AuthorCollection({ notify }: { notify: (text: string) =>
         )}
         {authors.length > 0 && (
           <button
-            className={`rounded-md px-2 py-1 ${selected.size ? 'text-zinc-600 hover:bg-zinc-100' : 'text-zinc-300'}`}
+            className={`rounded-md px-2 py-1 ${selected.size ? 'text-slate-600 hover:bg-slate-100' : 'text-slate-300'}`}
             disabled={selected.size === 0}
             onClick={() => void copySelected('name')}
           >
@@ -217,7 +217,7 @@ export default function AuthorCollection({ notify }: { notify: (text: string) =>
         )}
         {authors.length > 0 && (
           <button
-            className={`rounded-md px-2 py-1 ${selected.size ? 'text-zinc-600 hover:bg-zinc-100' : 'text-zinc-300'}`}
+            className={`rounded-md px-2 py-1 ${selected.size ? 'text-slate-600 hover:bg-slate-100' : 'text-slate-300'}`}
             disabled={selected.size === 0}
             onClick={() => void copySelected('url')}
           >
@@ -225,24 +225,24 @@ export default function AuthorCollection({ notify }: { notify: (text: string) =>
           </button>
         )}
         <button
-          className="rounded-md px-2 py-1 text-zinc-500 hover:bg-zinc-100"
+          className="rounded-md px-2 py-1 text-slate-500 hover:bg-slate-100"
           onClick={toggleImportPanel}
         >
           导入作者
         </button>
         <button
-          className="rounded-md px-2 py-1 text-zinc-500 hover:bg-zinc-100 disabled:text-zinc-300"
+          className="rounded-md px-2 py-1 text-slate-500 hover:bg-slate-100 disabled:text-slate-300"
           disabled={authors.length === 0}
           onClick={exportCsv}
         >
           导出 CSV
         </button>
-        <span className="text-zinc-300">提示：点行排他选中，Ctrl 点选切换，Shift 点选范围，点空白取消，按住左键拖动框选替换</span>
+        <span className="text-slate-300">提示：点行排他选中，Ctrl 点选切换，Shift 点选范围，点空白取消，按住左键拖动框选替换</span>
       </div>
       {importOpen && (
-        <div className="mb-3 rounded-md border border-zinc-200 bg-zinc-50 p-3">
+        <div className="mb-3 rounded-md border border-slate-200 bg-slate-50 p-3">
           <textarea
-            className="w-full rounded-md border border-zinc-300 px-3 py-2 text-xs outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500"
+            className="w-full rounded-md border border-slate-300 px-3 py-2 text-xs outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500"
             rows={5}
             placeholder={IMPORT_PLACEHOLDER}
             value={importText}
@@ -252,7 +252,7 @@ export default function AuthorCollection({ notify }: { notify: (text: string) =>
             {/* 手里有现成作者表的情况：选文件后只抽「作者 + 主页链接」两列填进上方文本框，
                 让用户先看一眼再确认——而不是选完文件就直接写库。
                 后续走与手工粘贴完全同一条校验链路。 */}
-            <label className="cursor-pointer rounded-md border border-zinc-300 px-3 py-1.5 text-xs text-zinc-600 hover:bg-zinc-100">
+            <label className="cursor-pointer rounded-md border border-slate-300 px-3 py-1.5 text-xs text-slate-600 hover:bg-slate-100">
               选择 CSV 文件
               <input type="file" accept=".csv,.xlsx,.xls,text/csv" className="hidden" onChange={e => void onPickCsv(e)} />
             </label>
@@ -264,14 +264,14 @@ export default function AuthorCollection({ notify }: { notify: (text: string) =>
               确定导入
             </button>
             <button
-              className="rounded-md px-3 py-1.5 text-xs text-zinc-500 hover:bg-zinc-100"
+              className="rounded-md px-3 py-1.5 text-xs text-slate-500 hover:bg-slate-100"
               onClick={cancelImport}
             >
               取消
             </button>
           </div>
           {importResult && (
-            <div className="mt-2 text-xs text-zinc-600">
+            <div className="mt-2 text-xs text-slate-600">
               <div>成功导入 {importResult.created} 个</div>
               {importResult.results.some(r => !r.ok) && (
                 <ul className="mt-1 space-y-0.5 text-red-500">
@@ -287,7 +287,7 @@ export default function AuthorCollection({ notify }: { notify: (text: string) =>
         </div>
       )}
       {authors.length === 0 ? (
-        <span className="text-sm text-zinc-400">暂无收藏的作者，抓取后自动收录，或点上方「导入作者」批量添加</span>
+        <span className="text-sm text-slate-400">暂无收藏的作者，抓取后自动收录，或点上方「导入作者」批量添加</span>
       ) : (
         <div
           ref={containerRef} data-testid="authors-table" className="relative select-none overflow-auto"
@@ -297,7 +297,7 @@ export default function AuthorCollection({ notify }: { notify: (text: string) =>
         >
           <table className="w-full text-left text-sm">
             <thead>
-              <tr className="border-b border-zinc-200 text-xs text-zinc-400">
+              <tr className="border-b border-slate-200 text-xs text-slate-400">
                 <th className="w-8 py-2 pr-1 font-medium"><input type="checkbox" checked={allSelected} onChange={toggleAll} /></th>
                 <th className="py-2 pr-2 font-medium">作者</th>
                 <th className="py-2 pr-2 font-medium">主页链接</th>
@@ -312,7 +312,7 @@ export default function AuthorCollection({ notify }: { notify: (text: string) =>
                   key={`${a.platform}:${a.sec_uid}`}
                   data-id={a.id}
                   data-selected={selected.has(a.id) ? 'true' : undefined}
-                  className={`cursor-pointer border-b border-zinc-100 transition-colors hover:bg-zinc-50 ${selected.has(a.id) ? 'bg-blue-50' : ''}`}
+                  className={`cursor-pointer border-b border-slate-100 transition-colors hover:bg-slate-50 ${selected.has(a.id) ? 'bg-brand-50' : ''}`}
                   onClick={e => handleRowClick(a, e)}
                 >
                   <td className="py-2 pr-1"><input type="checkbox" checked={selected.has(a.id)} onChange={() => setSelected(rowClick(a.id, authors.map(x => x.id), selected, {}))} /></td>
@@ -328,7 +328,7 @@ export default function AuthorCollection({ notify }: { notify: (text: string) =>
                     )}
                   </td>
                   <td className="max-w-[240px] py-2 pr-2">
-                    <a className="block truncate text-blue-500 hover:underline" href={a.home_url ?? '#'} target="_blank" rel="noreferrer">
+                    <a className="block truncate text-slate-600 hover:underline" href={a.home_url ?? '#'} target="_blank" rel="noreferrer">
                       {a.home_url ?? '—'}
                     </a>
                     {/* 拒绝爬取的原因常驻在链接下方。不能只靠 toast：
@@ -340,7 +340,7 @@ export default function AuthorCollection({ notify }: { notify: (text: string) =>
                   <td className="py-2 pr-2">
                     {editingId === a.id ? (
                       <input
-                        autoFocus className="w-32 rounded border border-blue-400 px-2 py-1 text-xs outline-none"
+                        autoFocus className="w-32 rounded border border-brand-400 px-2 py-1 text-xs outline-none"
                         value={editVal}
                         onChange={e => setEditVal(e.target.value)}
                         onBlur={() => void saveCategory(a)}
@@ -348,15 +348,15 @@ export default function AuthorCollection({ notify }: { notify: (text: string) =>
                       />
                     ) : (
                       <button
-                        className="rounded px-2 py-1 text-xs text-zinc-600 hover:bg-zinc-100"
+                        className="rounded px-2 py-1 text-xs text-slate-600 hover:bg-slate-100"
                         title="点击编辑品类"
                         onClick={() => { setEditingId(a.id); setEditVal(a.category ?? '') }}
                       >
-                        {a.category ?? <span className="text-zinc-300">未设置</span>}
+                        {a.category ?? <span className="text-slate-300">未设置</span>}
                       </button>
                     )}
                   </td>
-                  <td className="py-2 pr-2 text-zinc-500">{a.video_count}</td>
+                  <td className="py-2 pr-2 text-slate-500">{a.video_count}</td>
                   <td className="py-2">
                     <div className="flex items-center gap-1">
                       <button className={`${btnPrimary} !px-2 !py-1 !text-xs`} onClick={() => void crawlHome(a)}>爬主页</button>
@@ -370,7 +370,7 @@ export default function AuthorCollection({ notify }: { notify: (text: string) =>
           </table>
           {marquee && (
             <div
-              className="pointer-events-none absolute border border-blue-400 bg-blue-200/40"
+              className="pointer-events-none absolute border border-brand-400 bg-brand-200/40"
               style={{ left: marquee.x, top: marquee.y, width: marquee.w, height: marquee.h }}
             />
           )}

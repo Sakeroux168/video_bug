@@ -130,7 +130,7 @@ export default function FileManager({ notify }: { notify: (text: string) => void
   const allAuthors = authors.length > 0 && authors.every(a => selectedAuthors.has(a.name))
 
   const hintCls = 'rounded-md px-2 py-1 text-xs'
-  const delBtnCls = (n: number) => `${hintCls} ${n ? 'bg-red-50 text-red-500 hover:bg-red-100' : 'text-zinc-300'}`
+  const delBtnCls = (n: number) => `${hintCls} ${n ? 'bg-red-50 text-red-500 hover:bg-red-100' : 'text-slate-300'}`
 
   // —— 二级页：品类下的作者表格 ——
   if (current) {
@@ -138,13 +138,13 @@ export default function FileManager({ notify }: { notify: (text: string) => void
       <Card title="文件管理">
         <div className="mb-2 flex items-center gap-3 text-xs">
           <button
-            className="rounded-md border border-zinc-300 px-2 py-1 text-zinc-500 hover:bg-zinc-100"
+            className="rounded-md border border-slate-300 px-2 py-1 text-slate-500 hover:bg-slate-100"
             onClick={() => { setCurrent(null); setSelectedAuthors(new Set()) }}
           >
             ← 返回品类列表
           </button>
-          <span className="text-sm font-medium text-zinc-700">当前品类：{current}</span>
-          <span className="text-xs text-zinc-500">该品类共 {formatSize(cat?.size ?? 0)}</span>
+          <span className="text-sm font-medium text-slate-700">当前品类：{current}</span>
+          <span className="text-xs text-slate-500">该品类共 {formatSize(cat?.size ?? 0)}</span>
         </div>
         <div className="mb-2 flex items-center gap-3 text-xs">
           <button
@@ -154,11 +154,11 @@ export default function FileManager({ notify }: { notify: (text: string) => void
           >
             删除选中作者({selectedAuthors.size})
           </button>
-          <button className="rounded-md border border-zinc-300 px-2 py-1 text-zinc-500 hover:bg-zinc-100" onClick={() => void refresh()}>刷新</button>
-          <span className="text-zinc-300">提示：点行排他选中，Ctrl 点选切换，Shift 点选范围，点空白取消，按住左键拖动框选替换</span>
+          <button className="rounded-md border border-slate-300 px-2 py-1 text-slate-500 hover:bg-slate-100" onClick={() => void refresh()}>刷新</button>
+          <span className="text-slate-300">提示：点行排他选中，Ctrl 点选切换，Shift 点选范围，点空白取消，按住左键拖动框选替换</span>
         </div>
         {authors.length === 0 ? (
-          <span className="text-sm text-zinc-400">该品类下没有作者文件夹</span>
+          <span className="text-sm text-slate-400">该品类下没有作者文件夹</span>
         ) : (
           <div
             ref={containerRef} data-testid="files-author-table" className="relative select-none overflow-auto"
@@ -168,7 +168,7 @@ export default function FileManager({ notify }: { notify: (text: string) => void
           >
             <table className="w-full text-left text-sm">
               <thead>
-                <tr className="border-b border-zinc-200 text-xs text-zinc-400">
+                <tr className="border-b border-slate-200 text-xs text-slate-400">
                   <th className="w-8 py-2 pr-1 font-medium"><input type="checkbox" checked={allAuthors} onChange={() => setSelectedAuthors(allAuthors ? new Set() : new Set(authors.map(a => a.name)))} /></th>
                   <th className="py-2 pr-2 font-medium">作者</th>
                   <th className="py-2 pr-2 font-medium">视频数</th>
@@ -182,15 +182,15 @@ export default function FileManager({ notify }: { notify: (text: string) => void
                     key={a.name}
                     data-id={a.name}
                     data-selected={selectedAuthors.has(a.name) ? 'true' : undefined}
-                    className={`cursor-pointer border-b border-zinc-100 transition-colors hover:bg-zinc-50 ${selectedAuthors.has(a.name) ? 'bg-blue-50' : ''}`}
+                    className={`cursor-pointer border-b border-slate-100 transition-colors hover:bg-slate-50 ${selectedAuthors.has(a.name) ? 'bg-brand-50' : ''}`}
                     onClick={e => handleAuthorClick(a.name, e)}
                   >
                     <td className="py-2 pr-1"><input type="checkbox" checked={selectedAuthors.has(a.name)} onChange={() => setSelectedAuthors(rowClickAuthor(a.name, authors.map(x => x.name), selectedAuthors, {}))} /></td>
                     <td className="py-2 pr-2 font-medium">{a.name}</td>
-                    <td className="py-2 pr-2 text-zinc-500">{a.videoCount}</td>
-                    <td className="py-2 pr-2 text-zinc-500">{formatMB(a.size)}</td>
+                    <td className="py-2 pr-2 text-slate-500">{a.videoCount}</td>
+                    <td className="py-2 pr-2 text-slate-500">{formatMB(a.size)}</td>
                     <td className="py-2">
-                      <button className="rounded px-2 py-1 text-xs text-blue-500 hover:bg-blue-50" onClick={() => void locateDir(joinPath(downloadDir, current, a.name), `作者「${a.name}」`)}>定位</button>
+                      <button className="rounded px-2 py-1 text-xs text-brand-500 hover:bg-brand-50" onClick={() => void locateDir(joinPath(downloadDir, current, a.name), `作者「${a.name}」`)}>定位</button>
                       <button className="rounded px-2 py-1 text-xs text-red-400 hover:bg-red-50" onClick={() => void deleteAuthorNames([a.name])}>删除</button>
                     </td>
                   </tr>
@@ -199,7 +199,7 @@ export default function FileManager({ notify }: { notify: (text: string) => void
             </table>
             {marquee && (
               <div
-                className="pointer-events-none absolute border border-blue-400 bg-blue-200/40"
+                className="pointer-events-none absolute border border-brand-400 bg-brand-200/40"
                 style={{ left: marquee.x, top: marquee.y, width: marquee.w, height: marquee.h }}
               />
             )}
@@ -220,12 +220,12 @@ export default function FileManager({ notify }: { notify: (text: string) => void
         >
           删除选中品类({selectedCats.size})
         </button>
-        <button className="rounded-md border border-zinc-300 px-2 py-1 text-zinc-500 hover:bg-zinc-100" onClick={() => void refresh()}>刷新</button>
-        <span className="text-sm font-medium text-zinc-700">总大小：{formatSize(tree?.totalSize ?? 0)}</span>
-        <span className="text-zinc-300">提示：点品类行进入二级页，Ctrl 点选切换，Shift 点选范围，按住左键拖动框选替换</span>
+        <button className="rounded-md border border-slate-300 px-2 py-1 text-slate-500 hover:bg-slate-100" onClick={() => void refresh()}>刷新</button>
+        <span className="text-sm font-medium text-slate-700">总大小：{formatSize(tree?.totalSize ?? 0)}</span>
+        <span className="text-slate-300">提示：点品类行进入二级页，Ctrl 点选切换，Shift 点选范围，按住左键拖动框选替换</span>
       </div>
       {cats.length === 0 ? (
-        <span className="text-sm text-zinc-400">{tree === null ? '加载中…' : '下载目录还没有品类文件夹'}</span>
+        <span className="text-sm text-slate-400">{tree === null ? '加载中…' : '下载目录还没有品类文件夹'}</span>
       ) : (
         <div
           ref={containerRef} data-testid="files-category-table" className="relative select-none overflow-auto"
@@ -235,7 +235,7 @@ export default function FileManager({ notify }: { notify: (text: string) => void
         >
           <table className="w-full text-left text-sm">
             <thead>
-              <tr className="border-b border-zinc-200 text-xs text-zinc-400">
+              <tr className="border-b border-slate-200 text-xs text-slate-400">
                 <th className="w-8 py-2 pr-1 font-medium"><input type="checkbox" checked={allCats} onChange={() => setSelectedCats(allCats ? new Set() : new Set(cats.map(c => c.name)))} /></th>
                 <th className="py-2 pr-2 font-medium">品类</th>
                 <th className="py-2 pr-2 font-medium">视频数</th>
@@ -249,15 +249,15 @@ export default function FileManager({ notify }: { notify: (text: string) => void
                   key={c.name}
                   data-id={c.name}
                   data-selected={selectedCats.has(c.name) ? 'true' : undefined}
-                  className={`cursor-pointer border-b border-zinc-100 transition-colors hover:bg-zinc-50 ${selectedCats.has(c.name) ? 'bg-blue-50' : ''}`}
+                  className={`cursor-pointer border-b border-slate-100 transition-colors hover:bg-slate-50 ${selectedCats.has(c.name) ? 'bg-brand-50' : ''}`}
                   onClick={e => handleCatClick(c.name, e)}
                 >
                   <td className="py-2 pr-1"><input type="checkbox" checked={selectedCats.has(c.name)} onChange={() => setSelectedCats(rowClickCat(c.name, cats.map(x => x.name), selectedCats, {}))} /></td>
                   <td className="py-2 pr-2 font-medium">{c.name}</td>
-                  <td className="py-2 pr-2 text-zinc-500">{c.videoCount}</td>
-                  <td className="py-2 pr-2 text-zinc-500">{formatMB(c.size)}</td>
+                  <td className="py-2 pr-2 text-slate-500">{c.videoCount}</td>
+                  <td className="py-2 pr-2 text-slate-500">{formatMB(c.size)}</td>
                   <td className="py-2">
-                    <button className="rounded px-2 py-1 text-xs text-blue-500 hover:bg-blue-50" onClick={() => void locateDir(joinPath(downloadDir, c.name), `品类「${c.name}」`)}>定位</button>
+                    <button className="rounded px-2 py-1 text-xs text-brand-500 hover:bg-brand-50" onClick={() => void locateDir(joinPath(downloadDir, c.name), `品类「${c.name}」`)}>定位</button>
                     <button className="rounded px-2 py-1 text-xs text-red-400 hover:bg-red-50" onClick={() => void deleteCategories([c.name])}>删除</button>
                   </td>
                 </tr>
@@ -266,7 +266,7 @@ export default function FileManager({ notify }: { notify: (text: string) => void
           </table>
           {marquee && (
             <div
-              className="pointer-events-none absolute border border-blue-400 bg-blue-200/40"
+              className="pointer-events-none absolute border border-brand-400 bg-brand-200/40"
               style={{ left: marquee.x, top: marquee.y, width: marquee.w, height: marquee.h }}
             />
           )}

@@ -14,14 +14,14 @@ const STATUS_LABEL: Record<string, string> = {
 }
 
 const STATUS_CLASS: Record<string, string> = {
-  pending: 'text-zinc-500',
-  downloading: 'text-blue-600',
+  pending: 'text-slate-500',
+  downloading: 'text-sky-600',
   done: 'text-emerald-600',
   failed: 'text-red-500',
-  filtered: 'text-zinc-400',
+  filtered: 'text-slate-400',
   collected: 'text-amber-600',
-  cancelled: 'text-zinc-400',
-  paused: 'text-orange-500'
+  cancelled: 'text-slate-400',
+  paused: 'text-amber-500'
 }
 
 const PAGE_SIZE = 50
@@ -45,7 +45,7 @@ interface Derived {
   collectedIds: number[]
 }
 
-const btnSmall = 'rounded-md border border-zinc-300 px-2 py-1 text-xs text-zinc-600 hover:bg-zinc-100 disabled:opacity-40'
+const btnSmall = 'rounded-md border border-slate-300 px-2 py-1 text-xs text-slate-600 hover:bg-slate-100 disabled:opacity-40'
 
 function getLikes(v: VideoRow): number {
   try {
@@ -268,17 +268,17 @@ export default function TaskList({ notify }: { notify: (text: string) => void })
           >继续下载</button>
         ) : (
           <button
-            className="rounded-md border border-zinc-300 px-3 py-1.5 text-xs font-medium text-zinc-600 hover:bg-zinc-100"
+            className="rounded-md border border-slate-300 px-3 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-100"
             onClick={() => { void api.downloadPause().then(() => { refresh(); notify('已暂停下载') }) }}
           >暂停下载</button>
         )}
       </div>
       {tasks.length === 0 ? (
-        <div className="py-8 text-center text-sm text-zinc-400">暂无任务，先在上方「筛选条件」发起抓取</div>
+        <div className="py-8 text-center text-sm text-slate-400">暂无任务，先在上方「筛选条件」发起抓取</div>
       ) : (
         <table className="w-full border-collapse text-sm">
           <thead>
-            <tr className="border-b border-zinc-200 text-left text-xs text-zinc-500">
+            <tr className="border-b border-slate-200 text-left text-xs text-slate-500">
               <th className="w-8 py-2 pr-1 font-normal">
                 <input type="checkbox" disabled title="任务批量选择将在后续版本支持" />
               </th>
@@ -300,13 +300,13 @@ export default function TaskList({ notify }: { notify: (text: string) => void })
               return (
                 <React.Fragment key={t.id}>
                   <tr
-                    className={`cursor-pointer border-b border-zinc-100 transition-colors hover:bg-zinc-50 ${isOpen ? 'bg-blue-50/40' : ''}`}
+                    className={`cursor-pointer border-b border-slate-100 transition-colors hover:bg-slate-50 ${isOpen ? 'bg-brand-50/40' : ''}`}
                     onClick={() => void toggleExpand(t.id)}
                   >
                     <td className="py-2 pr-1" onClick={e => e.stopPropagation()}>
                       <input type="checkbox" disabled />
                     </td>
-                    <td className="whitespace-nowrap py-2 pr-3 text-zinc-500">{t.platform}/{t.type}</td>
+                    <td className="whitespace-nowrap py-2 pr-3 text-slate-500">{t.platform}/{t.type}</td>
                     <td className="max-w-0 py-2 pr-3 font-medium">
                       {/* 作者任务的 query 存的是 sec_uid（P1.5 归一化），直接显示是一串英文认不出是谁；
                           listTasks 已关联带出昵称。库里还没该作者时回落显示原值，不能空白。 */}
@@ -314,22 +314,22 @@ export default function TaskList({ notify }: { notify: (text: string) => void })
                     </td>
                     <td className="py-2 pr-3">
                       <div className="flex items-center gap-2">
-                        <span className="whitespace-nowrap text-xs text-zinc-500">{t.fetched_count}/{t.target_count}</span>
+                        <span className="whitespace-nowrap text-xs text-slate-500">{t.fetched_count}/{t.target_count}</span>
                         {/* R11 Task2：爬不动自救触发过重搜 → 蓝色小标签显示已重搜次数（reSearchCount 来自 progress 瞬时推送） */}
                         {reSearchCount[t.id] > 0 && (
-                          <span className="whitespace-nowrap rounded bg-blue-50 px-1 py-0.5 text-[10px] text-blue-600">
+                          <span className="whitespace-nowrap rounded bg-sky-50 px-1 py-0.5 text-[10px] text-sky-700">
                             已重搜 {reSearchCount[t.id]} 次
                           </span>
                         )}
-                        <div className="h-2 w-28 overflow-hidden rounded bg-zinc-200">
-                          <div className="h-full bg-blue-500" style={{ width: `${pct}%` }} />
+                        <div className="h-2 w-28 overflow-hidden rounded bg-slate-200">
+                          <div className="h-full bg-sky-500" style={{ width: `${pct}%` }} />
                         </div>
                       </div>
                     </td>
                     <td className="py-2 pr-3">
                       {s && s.total > 0 ? (
                         <div className="flex items-center gap-2">
-                          <span className="whitespace-nowrap text-xs text-zinc-500">
+                          <span className="whitespace-nowrap text-xs text-slate-500">
                             下载 {s.done}/{s.total}
                             {s.downloading > 0 ? `（下载中 ${s.downloading}）` : ''}
                             {s.failed > 0 ? `（失败 ${s.failed}）` : ''}
@@ -337,43 +337,43 @@ export default function TaskList({ notify }: { notify: (text: string) => void })
                             {s.cancelled > 0 ? `（已取消 ${s.cancelled}）` : ''}
                             {s.paused > 0 ? `（已暂停 ${s.paused}）` : ''}
                           </span>
-                          <div className="h-1.5 w-24 overflow-hidden rounded bg-zinc-200">
+                          <div className="h-1.5 w-24 overflow-hidden rounded bg-slate-200">
                             <div className="h-full bg-emerald-500" style={{ width: `${dp}%` }} />
                           </div>
                         </div>
                       ) : (
-                        <span className="text-xs text-zinc-400">—</span>
+                        <span className="text-xs text-slate-400">—</span>
                       )}
                     </td>
-                    <td className={`whitespace-nowrap py-2 pr-3 text-xs ${t.status === 'failed' ? 'text-red-500' : t.status === 'running' ? 'text-blue-600' : 'text-zinc-500'}`}>
+                    <td className={`whitespace-nowrap py-2 pr-3 text-xs ${t.status === 'failed' ? 'text-red-500' : t.status === 'running' ? 'text-sky-600' : 'text-slate-500'}`}>
                       {TASK_STATUS_LABEL[t.status]}
                     </td>
                     <td className="whitespace-nowrap py-2" onClick={e => e.stopPropagation()}>
                       <div className="flex items-center gap-2 text-xs">
                         {t.status === 'pending' && (
                           // R11-3：等待中的任务可手动启动（与「继续」同通道 task:resume → scheduler.run；run 对 pending 无阻碍）
-                          <button className="font-medium text-blue-600 hover:underline" onClick={() => { void api.resumeTask(t.id).then(refresh) }}>开始</button>
+                          <button className="font-medium text-brand-600 hover:underline" onClick={() => { void api.resumeTask(t.id).then(refresh) }}>开始</button>
                         )}
                         {t.status === 'running' && (
-                          <button className="text-zinc-400 hover:text-zinc-600" onClick={() => { void api.pauseTask(t.id).then(refresh) }}>暂停</button>
+                          <button className="text-slate-400 hover:text-slate-600" onClick={() => { void api.pauseTask(t.id).then(refresh) }}>暂停</button>
                         )}
                         {t.status === 'paused' && (
-                          <button className="text-zinc-400 hover:text-zinc-600" onClick={() => { void api.resumeTask(t.id).then(refresh) }}>继续</button>
+                          <button className="text-slate-400 hover:text-slate-600" onClick={() => { void api.resumeTask(t.id).then(refresh) }}>继续</button>
                         )}
                         <button className="text-red-400 hover:text-red-500" onClick={() => { void api.deleteTask(t.id).then(refresh) }}>删除</button>
-                        <button className="text-blue-500 hover:underline" onClick={() => void toggleExpand(t.id)}>{isOpen ? '收起' : '展开'}</button>
+                        <button className="text-brand-500 hover:underline" onClick={() => void toggleExpand(t.id)}>{isOpen ? '收起' : '展开'}</button>
                       </div>
                     </td>
                   </tr>
                   {t.status === 'paused' && t.error === 'stalled_verify' && (
-                    <tr className="border-b border-zinc-100 bg-amber-50/60">
+                    <tr className="border-b border-slate-100 bg-amber-50/60">
                       <td colSpan={7} className="px-2 py-1.5 text-xs text-amber-700">
                         任务可能触发验证，请到「内置浏览器」完成验证（滑块/扫码）后点「继续」
                       </td>
                     </tr>
                   )}
                   {isOpen && (
-                    <tr className="bg-zinc-50/60">
+                    <tr className="bg-slate-50/60">
                       <td colSpan={7} className="px-2 pb-3 pt-2 text-xs">
                         {d && s && s.collected > 0 && (
                           <div className="mb-2 flex items-center justify-between rounded bg-amber-50 px-3 py-1.5 text-amber-700">
@@ -437,9 +437,9 @@ export default function TaskList({ notify }: { notify: (text: string) => void })
                           </div>
                         )}
                         {!videos[t.id] ? (
-                          <div className="py-3 text-center text-zinc-400">加载中…</div>
+                          <div className="py-3 text-center text-slate-400">加载中…</div>
                         ) : videos[t.id].length === 0 ? (
-                          <div className="py-3 text-center text-zinc-400">（暂无视频）</div>
+                          <div className="py-3 text-center text-slate-400">（暂无视频）</div>
                         ) : d ? (
                           <TaskVideoTable
                             d={d}
@@ -520,7 +520,7 @@ function TaskVideoTable({
     return (
       <th className="whitespace-nowrap py-1 px-1 font-normal">
         <button
-          className={`${active ? 'text-zinc-800' : ''} hover:text-zinc-800`}
+          className={`${active ? 'text-slate-800' : ''} hover:text-slate-800`}
           onClick={() => onSort(key)}
         >
           {label}{arrow}
@@ -543,7 +543,7 @@ function TaskVideoTable({
       >
         <table className="w-full border-collapse">
           <thead>
-            <tr className="border-b border-zinc-200 text-left text-zinc-500">
+            <tr className="border-b border-slate-200 text-left text-slate-500">
               <th className="w-8 py-1 pr-1 font-normal">
                 <input
                   type="checkbox"
@@ -570,7 +570,7 @@ function TaskVideoTable({
                   key={v.id}
                   data-id={isFiltered ? undefined : v.id}
                   data-selected={!isFiltered && selected.has(v.id) ? 'true' : undefined}
-                  className={`border-b border-zinc-100 transition-colors ${isFiltered ? 'text-zinc-400' : 'cursor-pointer hover:bg-zinc-50'} ${!isFiltered && selected.has(v.id) ? 'bg-blue-50' : ''}`}
+                  className={`border-b border-slate-100 transition-colors ${isFiltered ? 'text-slate-400' : 'cursor-pointer hover:bg-slate-50'} ${!isFiltered && selected.has(v.id) ? 'bg-brand-50' : ''}`}
                   onClick={isFiltered ? undefined : e => handleRowClick(v, e)}
                 >
                   <td className="py-1 pr-1">
@@ -581,7 +581,7 @@ function TaskVideoTable({
                   <td className="whitespace-nowrap py-1 pr-2">{formatDuration(v.duration)}</td>
                   <td className="whitespace-nowrap py-1 pr-2">{formatDate(v.publish_time)}</td>
                   <td className="whitespace-nowrap py-1 pr-2">{formatLikes(getLikes(v))}</td>
-                  <td className={`py-1 pr-2 ${STATUS_CLASS[v.status] ?? 'text-zinc-500'}`}>
+                  <td className={`py-1 pr-2 ${STATUS_CLASS[v.status] ?? 'text-slate-500'}`}>
                     <span className="whitespace-nowrap">{STATUS_LABEL[v.status] ?? v.status}</span>
                     {v.status === 'failed' && (
                       <span className="ml-1 text-[10px] leading-tight text-red-400/90">·{describeError(v.error)}</span>
@@ -608,7 +608,7 @@ function TaskVideoTable({
                         {v.status === 'done' && v.local_path && (
                           <RowBtn label="定位" action="locate" onClick={() => void api.locateVideo(v.local_path!)} />
                         )}
-                        <a data-action="source" className="text-blue-500 hover:underline" href={`https://www.douyin.com/video/${v.aweme_id}`} target="_blank" rel="noreferrer">原视频</a>
+                        <a data-action="source" className="text-brand-500 hover:underline" href={`https://www.douyin.com/video/${v.aweme_id}`} target="_blank" rel="noreferrer">原视频</a>
                         <button data-action="delete" className="text-red-400 hover:text-red-500" onClick={() => onDeleteVideos([v.id])}>删除</button>
                       </div>
                     )}
@@ -620,20 +620,20 @@ function TaskVideoTable({
         </table>
         {marquee && (
           <div
-            className="pointer-events-none absolute border border-blue-400 bg-blue-200/40"
+            className="pointer-events-none absolute border border-brand-400 bg-brand-200/40"
             style={{ left: marquee.x, top: marquee.y, width: marquee.w, height: marquee.h }}
           />
         )}
       </div>
       <div className="mt-2 flex items-center justify-between">
-        <span className="text-zinc-400">共 {d.filtered.length} 条</span>
+        <span className="text-slate-400">共 {d.filtered.length} 条</span>
         <div className="flex items-center gap-2">
           <button
             className={btnSmall}
             disabled={d.curPage <= 1}
             onClick={() => onPageChange(d.curPage - 1)}
           >上一页</button>
-          <span className="text-zinc-500">第 {d.curPage} / {d.pageCount} 页</span>
+          <span className="text-slate-500">第 {d.curPage} / {d.pageCount} 页</span>
           <button
             className={btnSmall}
             disabled={d.curPage >= d.pageCount}
@@ -649,5 +649,5 @@ function TaskVideoTable({
  *  （文案另有一条契约测试单独锁）。必须保持原生 <button>：useMarqueeSelect 的
  *  closest('button, a, input') 守卫靠它区分「点按钮」与「点行/框选」。 */
 function RowBtn({ label, action, onClick }: { label: string; action: string; onClick: () => void }): React.ReactElement {
-  return <button data-action={action} className="text-blue-500 hover:underline" onClick={onClick}>{label}</button>
+  return <button data-action={action} className="text-brand-500 hover:underline" onClick={onClick}>{label}</button>
 }

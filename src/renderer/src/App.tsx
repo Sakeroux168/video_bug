@@ -50,20 +50,20 @@ export default function App(): JSX.Element {
   }, [])
 
   return (
-    <div className="flex h-screen flex-col bg-zinc-50 text-zinc-800">
-      <header className="flex items-center justify-between border-b border-zinc-200 bg-white px-4 py-2">
+    <div className="flex h-screen flex-col bg-slate-50 text-slate-800">
+      <header className="flex items-center justify-between border-b border-slate-200 bg-white px-4 py-2">
         <span className="text-base font-semibold">视频爬取工具</span>
         <div className="flex items-center gap-2">
           <button
             type="button"
-            className="rounded-md border border-zinc-300 px-2 py-0.5 text-xs text-zinc-500 hover:bg-zinc-100"
+            className="rounded-md border border-slate-300 px-2 py-0.5 text-xs text-slate-500 hover:bg-slate-100"
             onClick={() => void api.openBrowserDevtools()}
           >
             抖音调试控制台
           </button>
           <button
             type="button"
-            className="rounded-md border border-zinc-300 px-2 py-0.5 text-xs text-zinc-500 hover:bg-zinc-100"
+            className="rounded-md border border-slate-300 px-2 py-0.5 text-xs text-slate-500 hover:bg-slate-100"
             onClick={() => void refreshLog()}
           >
             查看拦截日志
@@ -79,15 +79,15 @@ export default function App(): JSX.Element {
         tabs={[{ key: 'tasks', label: '任务' }, { key: 'authors', label: '作者收藏' }, { key: 'files', label: '文件管理' }, { key: 'browser', label: '内置浏览器' }, { key: 'settings', label: '设置' }, { key: 'help', label: '使用说明' }]}
       />
       {showLog && (
-        <div className="border-b border-zinc-200 bg-zinc-50 p-3">
-          <div className="mb-1 flex items-center justify-between text-xs text-zinc-500">
+        <div className="border-b border-slate-200 bg-slate-50 p-3">
+          <div className="mb-1 flex items-center justify-between text-xs text-slate-500">
             <span>主进程收到的接口拦截 / 筛选日志（{rawLog.length} 条，最新在后）</span>
-            <button className="text-zinc-400 hover:text-zinc-600" onClick={() => setShowLog(false)}>收起</button>
+            <button className="text-slate-400 hover:text-slate-600" onClick={() => setShowLog(false)}>收起</button>
           </div>
           <div className="max-h-40 overflow-auto font-mono text-[11px] leading-5">
-            {rawLog.length === 0 && <span className="text-zinc-400">（空——还没有任何拦截/筛选日志）</span>}
+            {rawLog.length === 0 && <span className="text-slate-400">（空——还没有任何拦截/筛选日志）</span>}
             {rawLog.map((r, i) => (
-              <div key={i} className={r.filterLog ? 'text-sky-700' : r.handled ? 'text-emerald-700' : 'text-zinc-500'}>
+              <div key={i} className={r.filterLog ? 'text-sky-700' : r.handled ? 'text-emerald-700' : 'text-slate-500'}>
                 {r.at}{' '}
                 {r.filterLog !== undefined ? (
                   <span>[筛选] {r.filterLog}</span>
@@ -110,7 +110,7 @@ export default function App(): JSX.Element {
       )}
       {/* 固定右上角 toast：不随内容滚动，且在内置浏览器全屏（盖住面板）时也可见（位于顶部标题区） */}
       {toast && (
-        <div className="pointer-events-none fixed right-4 top-2 z-50 max-w-[70vw] rounded-lg bg-zinc-800/90 px-4 py-2 text-sm text-white shadow-lg">
+        <div className="pointer-events-none fixed right-4 top-2 z-50 max-w-[70vw] rounded-lg bg-slate-800/90 px-4 py-2 text-sm text-white shadow-lg">
           {toast.text}
         </div>
       )}
@@ -119,7 +119,7 @@ export default function App(): JSX.Element {
         <div className={tab === 'tasks' ? 'space-y-4' : 'hidden'}>
           <button
             type="button"
-            className="block text-xs text-zinc-500 hover:text-zinc-700 hover:underline"
+            className="block text-xs text-slate-500 hover:text-slate-700 hover:underline"
             onClick={() => { setTab('help'); void api.hideBrowser() }}
           >
             不知道怎么用？点上方「使用说明」

@@ -47,7 +47,7 @@ export default function FilterForm({ onSubmit }: { onSubmit: (t: CreateTaskInput
   return (
     <Card title="筛选条件">
       <div className="flex flex-wrap items-end gap-4">
-        <label htmlFor="filter-platform" className="flex flex-col gap-1 text-xs text-zinc-500">
+        <label htmlFor="filter-platform" className="flex flex-col gap-1 text-xs text-slate-500">
           平台
           <select id="filter-platform" className={inputCls} value={platform} onChange={e => setPlatform(e.target.value)}>
             {platforms.map(p => <option key={p.name} value={p.name}>{p.displayName}</option>)}
@@ -61,23 +61,23 @@ export default function FilterForm({ onSubmit }: { onSubmit: (t: CreateTaskInput
             </label>
           ))}
         </div>
-        <label htmlFor="filter-query" className="flex flex-1 flex-col gap-1 text-xs text-zinc-500 min-w-[200px]">
+        <label htmlFor="filter-query" className="flex flex-1 flex-col gap-1 text-xs text-slate-500 min-w-[200px]">
           {type === 'keyword' ? '关键词' : type === 'author' ? '作者主页链接或 ID' : '话题'}
           <input id="filter-query" className={inputCls} value={query} onChange={e => setQuery(e.target.value)} placeholder={type === 'author' ? 'https://www.douyin.com/user/xxx' : '输入内容'} />
         </label>
-        <label htmlFor="filter-timerange" className="flex flex-col gap-1 text-xs text-zinc-500">
+        <label htmlFor="filter-timerange" className="flex flex-col gap-1 text-xs text-slate-500">
           时间
           <select id="filter-timerange" className={inputCls} value={timeRange} onChange={e => setTimeRange(e.target.value as Filters['timeRange'])}>
             <option value="all">全部</option><option value="7d">近7天</option><option value="30d">近30天</option>
           </select>
         </label>
-        <label htmlFor="filter-duration" className="flex flex-col gap-1 text-xs text-zinc-500">
+        <label htmlFor="filter-duration" className="flex flex-col gap-1 text-xs text-slate-500">
           时长
           <select id="filter-duration" className={inputCls} value={duration} onChange={e => setDuration(e.target.value as Filters['duration'])}>
             <option value="all">全部</option><option value="short">短(&lt;1分钟)</option><option value="medium">中(1-5分钟)</option><option value="long">长(&gt;5分钟)</option>
           </select>
         </label>
-        <label htmlFor="filter-target" className="flex flex-col gap-1 text-xs text-zinc-500">
+        <label htmlFor="filter-target" className="flex flex-col gap-1 text-xs text-slate-500">
           目标数量
           <input id="filter-target" type="number" className={inputCls} value={target}
             onChange={e => setTarget(Number(e.target.value))} min={1} max={1000} />
@@ -100,7 +100,7 @@ export default function FilterForm({ onSubmit }: { onSubmit: (t: CreateTaskInput
         </label>
       </div>
       <div className="mt-3 flex flex-wrap items-center gap-6 text-sm">
-        <span className="text-xs text-zinc-500">下载方式</span>
+        <span className="text-xs text-slate-500">下载方式</span>
         <label className="flex items-center gap-1">
           <input type="radio" name="autoDownload" checked={autoDownload} onChange={() => setAutoDownload(true)} />
           自动下载
