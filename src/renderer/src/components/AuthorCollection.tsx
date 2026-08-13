@@ -126,12 +126,16 @@ export default function AuthorCollection({ notify }: { notify: (text: string) =>
    * 作者名/链接那两列变成框选的死区（它俩占了行宽大部分）——相当于用框选换复制。
    * 先框选、再一键复制，两个能力都保住。
    */
-  async function copySelected(): Promise<void> {
+  async function copySelected(what: 'both' | 'name' | 'url' = 'both'): Promise<void> {
     const rows = authors.filter(a => selected.has(a.id))
     if (rows.length === 0) return
-    const text = rows.map(a => `${a.nickname}\t${a.home_url ?? ''}`).join('\n')
-    await api.writeClipboard(text)
-    notify(`已复制 ${rows.length} 个作者（制表符分隔，可直接粘进表格）`)
+    const line = (a: AuthorRow): string =>
+      what === 'name' ? a.nickname
+        : what === 'url' ? (a.home_url ?? '')
+          : `${a.nickname}\t${a.home_url ?? ''}`
+    await api.writeClipboard(rows.map(line).join('\n'))
+    const label = what === 'name' ? '作者名' : what === 'url' ? '主页链接' : '作者与链接（制表符分隔，可直接粘进表格）'
+    notify(`已复制 ${rows.length} 条${label}`)
   }
 
   /**
@@ -200,6 +204,24 @@ export default function AuthorCollection({ notify }: { notify: (text: string) =>
             onClick={() => void copySelected()}
           >
             复制所选{selected.size > 0 ? `（${selected.size}）` : ''}
+          </button>
+        )}
+        {authors.length > 0 && (
+          <button
+            className={`rounded-md px-2 py-1 ${selected.size ? 'text-zinc-600 hover:bg-zinc-100' : 'text-zinc-300'}`}
+            disabled={selected.size === 0}
+            onClick={() => void copySelected('name')}
+          >
+            只复制作者
+          </button>
+        )}
+        {authors.length > 0 && (
+          <button
+            className={`rounded-md px-2 py-1 ${selected.size ? 'text-zinc-600 hover:bg-zinc-100' : 'text-zinc-300'}`}
+            disabled={selected.size === 0}
+            onClick={() => void copySelected('url')}
+          >
+            只复制链接
           </button>
         )}
         <button

@@ -308,7 +308,9 @@ export default function TaskList({ notify }: { notify: (text: string) => void })
                     </td>
                     <td className="whitespace-nowrap py-2 pr-3 text-zinc-500">{t.platform}/{t.type}</td>
                     <td className="max-w-0 py-2 pr-3 font-medium">
-                      <span className="block truncate">"{t.query}"</span>
+                      {/* 作者任务的 query 存的是 sec_uid（P1.5 归一化），直接显示是一串英文认不出是谁；
+                          listTasks 已关联带出昵称。库里还没该作者时回落显示原值，不能空白。 */}
+                      <span className="block truncate" title={t.query}>"{t.author_nickname ?? t.query}"</span>
                     </td>
                     <td className="py-2 pr-3">
                       <div className="flex items-center gap-2">

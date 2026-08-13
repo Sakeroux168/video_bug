@@ -123,7 +123,16 @@ export function finishTask(db: DatabaseSync, id: number): void {
 }
 
 export function listTasks(db: DatabaseSync): TaskRow[] {
-  return db.prepare('SELECT * FROM tasks ORDER BY id DESC').all() as unknown as TaskRow[]
+  // 带出作者昵称：P1.5 把 author 任务的 query 归一化成了 sec_uid，
+  // 任务列表直接显示 query 就是一串无意义的英文，用户认不出是谁。
+  // 限定 type='author' 才关联，否则关键词恰巧等于某个 sec_uid 时会误匹配。
+  return db.prepare(`
+    SELECT t.*, a.nickname AS author_nickname
+    FROM tasks t
+    LEFT JOIN authors a
+      ON t.type = 'author' AND a.platform = t.platform AND a.sec_uid = t.query
+    ORDER BY t.id DESC
+  `).all() as unknown as TaskRow[]
 }
 
 export function getRunningTasks(db: DatabaseSync): TaskRow[] {

@@ -31,6 +31,8 @@ export interface TaskRow {
   filters: string; status: TaskStatus; target_count: number; fetched_count: number
   auto_download: number
   error: string | null; created_at: string; finished_at: string | null
+  /** 仅 type='author' 时由 listTasks 关联带出；query 存的是 sec_uid，直接显示人认不出来 */
+  author_nickname?: string | null
 }
 
 /** 一个任务下视频按状态计数（进度展示 + 手动模式提示条） */

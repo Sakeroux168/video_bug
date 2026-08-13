@@ -304,4 +304,34 @@ describe('AuthorCollection 批量导入作者', () => {
     })
   })
 
+  // 用户实测：「复制所选」一次把作者+链接都给了，但有时只想要其中一列。
+  it('只复制作者 / 只复制链接：各自只给一列，换行分隔', async () => {
+    vi.mocked(window.api.listAuthors).mockResolvedValue([
+      makeAuthor({ id: 1, nickname: '张三', home_url: 'https://www.douyin.com/user/a' }),
+      makeAuthor({ id: 2, sec_uid: 'sec2', nickname: '李四', home_url: 'https://www.douyin.com/user/b' })
+    ] as never)
+    const { container } = render(<AuthorCollection notify={() => {}} />)
+    await screen.findByText('张三')
+
+    // 全选两行
+    const head = container.querySelector('thead input[type="checkbox"]') as HTMLInputElement
+    fireEvent.click(head)
+
+    fireEvent.click(screen.getByRole('button', { name: /只复制作者/ }))
+    await waitFor(() => expect(window.api.writeClipboard).toHaveBeenCalled())
+    expect(vi.mocked(window.api.writeClipboard).mock.calls.at(-1)![0]).toBe('张三\n李四')
+
+    fireEvent.click(screen.getByRole('button', { name: /只复制链接/ }))
+    await waitFor(() => expect(vi.mocked(window.api.writeClipboard).mock.calls.length).toBeGreaterThan(1))
+    expect(vi.mocked(window.api.writeClipboard).mock.calls.at(-1)![0])
+      .toBe('https://www.douyin.com/user/a\nhttps://www.douyin.com/user/b')
+  })
+
+  it('未选中时两个单列复制按钮都禁用', async () => {
+    render(<AuthorCollection notify={() => {}} />)
+    await screen.findByText('张三')
+    expect(screen.getByRole('button', { name: /只复制作者/ })).toBeDisabled()
+    expect(screen.getByRole('button', { name: /只复制链接/ })).toBeDisabled()
+  })
+
 })

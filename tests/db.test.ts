@@ -298,3 +298,23 @@ describe('作者校验状态（导入的作者需要校验名称与链接是否�
     expect(row.verify_state).toBe(null)
   })
 })
+
+describe('listTasks 带出作者昵称（任务列表不能只显示一串 sec_uid）', () => {
+  it('type=author 且库里有该作者 → 带出 nickname', () => {
+    insertAuthorIfAbsent(db, { platform: 'douyin', secUid: 'MS4wABC', nickname: '张三', homeUrl: 'u' })
+    createTask(db, { ...input, type: 'author', query: 'MS4wABC' })
+    const t = listTasks(db)[0]
+    expect(t.author_nickname).toBe('张三')
+  })
+
+  it('库里还没这个作者 → nickname 为 null（渲染层回落显示 query）', () => {
+    createTask(db, { ...input, type: 'author', query: 'MS4wNOBODY' })
+    expect(listTasks(db)[0].author_nickname).toBe(null)
+  })
+
+  it('关键词任务不误匹配作者（即使关键词恰巧等于某个 sec_uid）', () => {
+    insertAuthorIfAbsent(db, { platform: 'douyin', secUid: '美食', nickname: '不该出现', homeUrl: 'u' })
+    createTask(db, { ...input, type: 'keyword', query: '美食' })
+    expect(listTasks(db)[0].author_nickname).toBe(null)
+  })
+})

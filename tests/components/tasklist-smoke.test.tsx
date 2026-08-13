@@ -45,4 +45,22 @@ describe('TaskList 冒烟', () => {
 
     expect(screen.getByText('暂无任务，先在上方「筛选条件」发起抓取')).toBeInTheDocument()
   })
+  // 用户实测：爬作者时任务列表的「关键词」是一串英文（sec_uid），认不出是谁。
+  it('作者任务显示作者名而不是 sec_uid；库里没该作者时回落显示原值', async () => {
+    installFakeApi()
+    vi.mocked(window.api.onTaskProgress).mockReturnValue(() => {})
+    vi.mocked(window.api.getTaskStats).mockResolvedValue(emptyStats)
+    vi.mocked(window.api.listTaskVideos).mockResolvedValue([])
+    vi.mocked(window.api.listTasks).mockResolvedValue([
+      { ...makeTask(1), type: 'author', query: 'MS4wLjABAAAAxyz', author_nickname: '张三' },
+      { ...makeTask(2), type: 'author', query: 'MS4wLjABAAAAnobody', author_nickname: null }
+    ] as never)
+
+    const { container } = render(<TaskList notify={() => {}} />)
+    await screen.findByText(/张三/)
+    const text = container.textContent ?? ''
+    expect(text).not.toContain('MS4wLjABAAAAxyz')   // 有昵称就不再显示 sec_uid
+    expect(text).toContain('MS4wLjABAAAAnobody')    // 没昵称则回落原值，不能显示空白
+  })
+
 })
