@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { api } from '../api'
 import type { FilesTree, FilesTreeAuthor } from '../../../shared/types'
-import { Card } from './ui'
+import { Card, btn } from './ui'
 import { useMarqueeSelect } from './useMarqueeSelect'
 import { useTableSelection } from './useTableSelection'
 
@@ -138,7 +138,7 @@ export default function FileManager({ notify }: { notify: (text: string) => void
       <Card title="文件管理">
         <div className="mb-2 flex items-center gap-3 text-xs">
           <button
-            className="rounded-md border border-slate-300 px-2 py-1 text-slate-500 hover:bg-slate-100"
+            className={btn('secondary', 'sm')}
             onClick={() => { setCurrent(null); setSelectedAuthors(new Set()) }}
           >
             ← 返回品类列表
@@ -154,7 +154,7 @@ export default function FileManager({ notify }: { notify: (text: string) => void
           >
             删除选中作者({selectedAuthors.size})
           </button>
-          <button className="rounded-md border border-slate-300 px-2 py-1 text-slate-500 hover:bg-slate-100" onClick={() => void refresh()}>刷新</button>
+          <button className={btn('secondary', 'sm')} onClick={() => void refresh()}>刷新</button>
           <span className="text-slate-300">提示：点行排他选中，Ctrl 点选切换，Shift 点选范围，点空白取消，按住左键拖动框选替换</span>
         </div>
         {authors.length === 0 ? (
@@ -220,7 +220,7 @@ export default function FileManager({ notify }: { notify: (text: string) => void
         >
           删除选中品类({selectedCats.size})
         </button>
-        <button className="rounded-md border border-slate-300 px-2 py-1 text-slate-500 hover:bg-slate-100" onClick={() => void refresh()}>刷新</button>
+        <button className={btn('secondary', 'sm')} onClick={() => void refresh()}>刷新</button>
         <span className="text-sm font-medium text-slate-700">总大小：{formatSize(tree?.totalSize ?? 0)}</span>
         <span className="text-slate-300">提示：点品类行进入二级页，Ctrl 点选切换，Shift 点选范围，按住左键拖动框选替换</span>
       </div>

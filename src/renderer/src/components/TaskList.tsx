@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { api } from '../api'
 import type { TaskRow, VideoRow, TaskStats } from '../../../shared/types'
-import { Card, inputCls } from './ui'
+import { Card, inputClsSm, btn } from './ui'
 import { useMarqueeSelect } from './useMarqueeSelect'
 import { useTableSelection } from './useTableSelection'
 import { describeError } from '../errors'
@@ -389,7 +389,7 @@ export default function TaskList({ notify }: { notify: (text: string) => void })
                         {d && (
                           <div className="mb-2 flex flex-wrap items-center gap-2">
                             <input
-                              className={`${inputCls} !py-1 !text-xs`}
+                              className={inputClsSm}
                               placeholder="搜索标题/作者"
                               value={searchText[t.id] ?? ''}
                               onChange={e => {
@@ -428,7 +428,7 @@ export default function TaskList({ notify }: { notify: (text: string) => void })
                               onClick={() => handleDeleteVideos(d.selDeletable)}
                             >删除选中({d.selDeletable.length})</button>
                             <button
-                              className={`${btnSmall} ${onlyFailed[t.id] ? '!border-red-300 bg-red-50 !text-red-600 hover:!bg-red-100' : ''}`}
+                              className={onlyFailed[t.id] ? `${btn('secondary', 'sm')} border-danger-300 bg-danger-50 text-danger-600 hover:bg-danger-100` : btn('secondary', 'sm')}
                               onClick={() => {
                                 setOnlyFailed(prev => ({ ...prev, [t.id]: !(prev[t.id] ?? false) }))
                                 setPage(prev => ({ ...prev, [t.id]: 1 }))

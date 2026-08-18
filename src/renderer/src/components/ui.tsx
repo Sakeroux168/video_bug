@@ -22,15 +22,20 @@ export function Card({ title, children }: { title?: string; children: React.Reac
   )
 }
 
-export const inputCls = 'rounded-md border border-slate-300 px-3 py-1.5 text-sm outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500'
+const INPUT_BASE = 'rounded-md border border-slate-300 outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500'
+export const inputCls = `${INPUT_BASE} px-3 py-1.5 text-sm`
+/** 小号输入框（表格内搜索框等）。此前靠 `${inputCls} !py-1 !text-xs` 覆盖——
+ *  `!important` 的出现就是在说共享层缺一个 size 维度。 */
+export const inputClsSm = `${INPUT_BASE} px-2 py-1 text-xs`
 export const btnPrimary = 'rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-brand-700 disabled:opacity-40'
+// 注：btnPrimary 等价于 btn('primary', 'md')，保留具名导出以免改动面过大
 
 // ==========================
 // 基元
 // ==========================
 
 type BtnVariant = 'primary' | 'secondary' | 'ghost' | 'danger'
-type BtnSize = 'sm' | 'md'
+type BtnSize = 'xs' | 'sm' | 'md'
 
 const BTN_VARIANT: Record<BtnVariant, string> = {
   primary: 'bg-brand-600 text-white hover:bg-brand-700',
@@ -39,9 +44,23 @@ const BTN_VARIANT: Record<BtnVariant, string> = {
   danger: 'text-danger-500 hover:bg-danger-50'
 }
 const BTN_SIZE: Record<BtnSize, string> = {
+  xs: 'px-2 py-0.5 text-xs',
   sm: 'px-2 py-1 text-xs',
   md: 'px-4 py-2 text-sm'
 }
+
+const BTN_BASE = 'rounded-md font-medium transition-colors disabled:opacity-40'
+
+/**
+ * 按钮类字符串（与 Btn 组件同一真源）。
+ *
+ * 全站曾有 9 种手写按钮写法 + 3 处 `!important` 覆盖共享类——
+ * `!important` 的出现就是在说「共享层缺一个 size 维度」。
+ * 这里把 variant × size 补齐，调用处只换 className 字符串，**不动任何元素**——
+ * 因为 DOM 结构是框选与 28 条测试的命脉，不值得为了换个写法去动它。
+ */
+export const btn = (variant: BtnVariant = 'secondary', size: BtnSize = 'sm'): string =>
+  `${BTN_BASE} ${BTN_VARIANT[variant]} ${BTN_SIZE[size]}`
 
 /**
  * 统一按钮基元，替掉全站 9 种手写按钮样式与 3 处 `!important` 覆盖。
@@ -63,7 +82,7 @@ export function Btn({
     <button
       {...rest}
       data-action={action}
-      className={`rounded-md font-medium transition-colors disabled:opacity-40 ${BTN_VARIANT[variant]} ${BTN_SIZE[size]} ${className}`}
+      className={`${btn(variant, size)} ${className}`}
     >
       {children}
     </button>

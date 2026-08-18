@@ -1,5 +1,6 @@
 import React from 'react'
 import { api } from '../api'
+import { btn } from './ui'
 
 export default function BrowserPanel() {
   return (
@@ -10,14 +11,14 @@ export default function BrowserPanel() {
       <div className="mt-1 flex items-center gap-3">
         <button
           type="button"
-          className="rounded-md border border-slate-300 px-3 py-1.5 text-xs text-slate-600 hover:bg-slate-100"
+          className={btn('secondary', 'sm')}
           onClick={() => void api.showBrowser()}
         >
           打开抖音窗口
         </button>
         <button
           type="button"
-          className="rounded-md border border-slate-300 px-3 py-1.5 text-xs text-slate-600 hover:bg-slate-100"
+          className={btn('secondary', 'sm')}
           onClick={() => void api.openBrowserDevtools()}
         >
           打开调试控制台

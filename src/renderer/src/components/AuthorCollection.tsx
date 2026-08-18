@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { api } from '../api'
 import type { AuthorRow } from '../../../shared/types'
-import { Card, btnPrimary } from './ui'
+import { Card, btnPrimary, btn } from './ui'
 import { useMarqueeSelect } from './useMarqueeSelect'
 import { useTableSelection } from './useTableSelection'
 import { parsePastedAuthors } from './parsePastedAuthors'
@@ -225,7 +225,7 @@ export default function AuthorCollection({ notify }: { notify: (text: string) =>
           </button>
         )}
         <button
-          className="rounded-md px-2 py-1 text-slate-500 hover:bg-slate-100"
+          className={btn('ghost', 'sm')}
           onClick={toggleImportPanel}
         >
           导入作者
@@ -257,14 +257,14 @@ export default function AuthorCollection({ notify }: { notify: (text: string) =>
               <input type="file" accept=".csv,.xlsx,.xls,text/csv" className="hidden" onChange={e => void onPickCsv(e)} />
             </label>
             <button
-              className={`${btnPrimary} !px-3 !py-1.5 !text-xs`}
+              className={btn('primary', 'sm')}
               disabled={importing || importText.trim() === ''}
               onClick={() => void submitImport()}
             >
               确定导入
             </button>
             <button
-              className="rounded-md px-3 py-1.5 text-xs text-slate-500 hover:bg-slate-100"
+              className={btn('ghost', 'sm')}
               onClick={cancelImport}
             >
               取消
@@ -359,7 +359,7 @@ export default function AuthorCollection({ notify }: { notify: (text: string) =>
                   <td className="py-2 pr-2 text-slate-500">{a.video_count}</td>
                   <td className="py-2">
                     <div className="flex items-center gap-1">
-                      <button className={`${btnPrimary} !px-2 !py-1 !text-xs`} onClick={() => void crawlHome(a)}>爬主页</button>
+                      <button className={btn('primary', 'sm')} onClick={() => void crawlHome(a)}>爬主页</button>
                       <button className="rounded px-2 py-1 text-xs text-emerald-600 hover:bg-emerald-50" onClick={() => void organizeOne(a)}>整理</button>
                       <button className="rounded px-2 py-1 text-xs text-red-400 hover:bg-red-50" onClick={() => void deleteOne(a.id)}>删除</button>
                     </div>

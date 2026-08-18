@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { Tabs } from './components/ui'
+import { Tabs, btn } from './components/ui'
 import FilterForm from './components/FilterForm'
 import TaskList from './components/TaskList'
 import AuthorCollection from './components/AuthorCollection'
@@ -56,14 +56,14 @@ export default function App(): JSX.Element {
         <div className="flex items-center gap-2">
           <button
             type="button"
-            className="rounded-md border border-slate-300 px-2 py-0.5 text-xs text-slate-500 hover:bg-slate-100"
+            className={btn('secondary', 'xs')}
             onClick={() => void api.openBrowserDevtools()}
           >
             抖音调试控制台
           </button>
           <button
             type="button"
-            className="rounded-md border border-slate-300 px-2 py-0.5 text-xs text-slate-500 hover:bg-slate-100"
+            className={btn('secondary', 'xs')}
             onClick={() => void refreshLog()}
           >
             查看拦截日志
