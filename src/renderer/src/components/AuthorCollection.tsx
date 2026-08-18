@@ -356,7 +356,7 @@ export default function AuthorCollection({ notify }: { notify: (text: string) =>
                       </button>
                     )}
                   </td>
-                  <td className="py-2 pr-2 text-slate-500">{a.video_count}</td>
+                  <td className="py-2 pr-2 tabular-nums text-slate-500">{a.video_count}</td>
                   <td className="py-2">
                     <div className="flex items-center gap-1">
                       <button className={btn('primary', 'sm')} onClick={() => void crawlHome(a)}>爬主页</button>

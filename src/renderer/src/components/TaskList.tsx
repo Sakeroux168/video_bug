@@ -24,6 +24,25 @@ const STATUS_CLASS: Record<string, string> = {
   paused: 'text-amber-500'
 }
 
+/**
+ * P4 签名元素：行首状态色条。
+ *
+ * **只映射 3 档**，不是 8 个状态各一色——一屏 50 行出现六种左边框不是签名，是噪音，
+ * 而且状态文字本来就带色，色条会变成纯冗余。它只回答一个问题：这行需要我注意吗。
+ *
+ * **必须是完整字面量 Record**，绝不可写成 `border-${x}-400`——
+ * 拼接类名会被 Tailwind purge 掉，而那是「测试全绿 + build 成功 + 打包后界面丢色」
+ * 的唯一失败模式（交付形态是绿色版发员工，出问题时对方没 DevTools）。
+ */
+const ROW_BAR: Record<string, string> = {
+  failed: 'border-danger-400',
+  downloading: 'border-sky-400',
+  pending: 'border-sky-400',
+  done: 'border-success-400'
+}
+/** 无状态也必须渲染 border-l-2：条件性加边框会让第一列在状态变化时横移 2px，进度刷新时表格会抖 */
+const rowBar = (status: string): string => `border-l-2 ${ROW_BAR[status] ?? 'border-transparent'}`
+
 const PAGE_SIZE = 50
 
 type SortKey = 'title' | 'author' | 'duration' | 'publish_time' | 'likes'
@@ -314,7 +333,7 @@ export default function TaskList({ notify }: { notify: (text: string) => void })
                     </td>
                     <td className="py-2 pr-3">
                       <div className="flex items-center gap-2">
-                        <span className="whitespace-nowrap text-xs text-slate-500">{t.fetched_count}/{t.target_count}</span>
+                        <span className="whitespace-nowrap text-xs tabular-nums text-slate-500">{t.fetched_count}/{t.target_count}</span>
                         {/* R11 Task2：爬不动自救触发过重搜 → 蓝色小标签显示已重搜次数（reSearchCount 来自 progress 瞬时推送） */}
                         {reSearchCount[t.id] > 0 && (
                           <span className="whitespace-nowrap rounded bg-sky-50 px-1 py-0.5 text-[10px] text-sky-700">
@@ -573,14 +592,14 @@ function TaskVideoTable({
                   className={`border-b border-slate-100 transition-colors ${isFiltered ? 'text-slate-400' : 'cursor-pointer hover:bg-slate-50'} ${!isFiltered && selected.has(v.id) ? 'bg-brand-50' : ''}`}
                   onClick={isFiltered ? undefined : e => handleRowClick(v, e)}
                 >
-                  <td className="py-1 pr-1">
+                  <td className={`${rowBar(v.status)} py-1 pl-1 pr-1`}>
                     <input type="checkbox" disabled={isFiltered} checked={selected.has(v.id)} onChange={() => onSelectRows(rowClick(v.id, d.selectableIds, selected, {}))} />
                   </td>
                   <td className="max-w-0 py-1 pr-2"><span className="block truncate">{v.title || '（无标题）'}</span></td>
                   <td className="whitespace-nowrap py-1 pr-2">{v.author_nickname ?? '—'}</td>
-                  <td className="whitespace-nowrap py-1 pr-2">{formatDuration(v.duration)}</td>
-                  <td className="whitespace-nowrap py-1 pr-2">{formatDate(v.publish_time)}</td>
-                  <td className="whitespace-nowrap py-1 pr-2">{formatLikes(getLikes(v))}</td>
+                  <td className="whitespace-nowrap py-1 pr-2 tabular-nums">{formatDuration(v.duration)}</td>
+                  <td className="whitespace-nowrap py-1 pr-2 tabular-nums">{formatDate(v.publish_time)}</td>
+                  <td className="whitespace-nowrap py-1 pr-2 tabular-nums">{formatLikes(getLikes(v))}</td>
                   <td className={`py-1 pr-2 ${STATUS_CLASS[v.status] ?? 'text-slate-500'}`}>
                     <span className="whitespace-nowrap">{STATUS_LABEL[v.status] ?? v.status}</span>
                     {v.status === 'failed' && (
@@ -626,14 +645,14 @@ function TaskVideoTable({
         )}
       </div>
       <div className="mt-2 flex items-center justify-between">
-        <span className="text-slate-400">共 {d.filtered.length} 条</span>
+        <span className="tabular-nums text-slate-400">共 {d.filtered.length} 条</span>
         <div className="flex items-center gap-2">
           <button
             className={btnSmall}
             disabled={d.curPage <= 1}
             onClick={() => onPageChange(d.curPage - 1)}
           >上一页</button>
-          <span className="text-slate-500">第 {d.curPage} / {d.pageCount} 页</span>
+          <span className="tabular-nums text-slate-500">第 {d.curPage} / {d.pageCount} 页</span>
           <button
             className={btnSmall}
             disabled={d.curPage >= d.pageCount}

@@ -37,7 +37,9 @@ const MUST = [
   // 只失败态才用到的组合
   'border-danger-300', 'bg-danger-50', 'text-danger-600',
   // 细节
-  'text-[10px]'
+  'text-[10px]', 'tabular-nums',
+  // P4 签名元素：行首状态色条
+  'border-l-2', 'border-danger-400', 'border-sky-400', 'border-success-400', 'border-transparent'
   // 注：'tabular-nums' 属于 P4（数值等宽对齐），那一步落地时再加进来
 ]
 const GONE = ['text-zinc-500', 'bg-blue-50', 'text-blue-600', 'text-green-600', 'text-orange-500']

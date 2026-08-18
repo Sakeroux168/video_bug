@@ -131,3 +131,36 @@ describe('DOM 契约：任务页常驻挂载（R1）', () => {
     expect(unsubscribe).not.toHaveBeenCalled()
   })
 })
+
+describe('签名元素：行首状态色条（P4）', () => {
+  it('**每一行**的第一个 td 都带 border-l-2——无状态时用透明，否则状态变化时整列会横移 2px 发抖', async () => {
+    const c = await setup([
+      makeVideo(1, { status: 'failed' }),
+      makeVideo(2, { status: 'downloading' }),
+      makeVideo(3, { status: 'done' }),
+      makeVideo(4, { status: 'collected' }),
+      makeVideo(5, { status: 'filtered' })
+    ])
+    const rows = Array.from(c.querySelectorAll('tbody tr')).filter(r => r.querySelector('td'))
+    expect(rows.length).toBeGreaterThan(0)
+    for (const r of rows) {
+      expect((r.querySelector('td') as HTMLElement).className).toContain('border-l-2')
+    }
+  })
+
+  it('只映射 3 档：失败红 / 进行中 sky / 完成 emerald / 其余透明', async () => {
+    const c = await setup([
+      makeVideo(1, { status: 'failed' }),
+      makeVideo(2, { status: 'downloading' }),
+      makeVideo(3, { status: 'done' }),
+      makeVideo(4, { status: 'collected' })
+    ])
+    const td = (id: number): string =>
+      ((c.querySelector(`tbody tr[data-id="${id}"] td`)) as HTMLElement).className
+    expect(td(1)).toContain('border-danger-400')
+    expect(td(2)).toContain('border-sky-400')
+    expect(td(3)).toContain('border-success-400')
+    // collected 不在 3 档里 → 透明（不能满屏彩虹，状态文字本来就带色）
+    expect(td(4)).toContain('border-transparent')
+  })
+})

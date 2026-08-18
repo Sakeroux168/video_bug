@@ -144,7 +144,7 @@ export default function FileManager({ notify }: { notify: (text: string) => void
             ← 返回品类列表
           </button>
           <span className="text-sm font-medium text-slate-700">当前品类：{current}</span>
-          <span className="text-xs text-slate-500">该品类共 {formatSize(cat?.size ?? 0)}</span>
+          <span className="text-xs tabular-nums text-slate-500">该品类共 {formatSize(cat?.size ?? 0)}</span>
         </div>
         <div className="mb-2 flex items-center gap-3 text-xs">
           <button
@@ -221,7 +221,7 @@ export default function FileManager({ notify }: { notify: (text: string) => void
           删除选中品类({selectedCats.size})
         </button>
         <button className={btn('secondary', 'sm')} onClick={() => void refresh()}>刷新</button>
-        <span className="text-sm font-medium text-slate-700">总大小：{formatSize(tree?.totalSize ?? 0)}</span>
+        <span className="text-sm font-medium tabular-nums text-slate-700">总大小：{formatSize(tree?.totalSize ?? 0)}</span>
         <span className="text-slate-300">提示：点品类行进入二级页，Ctrl 点选切换，Shift 点选范围，按住左键拖动框选替换</span>
       </div>
       {cats.length === 0 ? (
