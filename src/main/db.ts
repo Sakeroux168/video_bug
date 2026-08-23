@@ -1,6 +1,6 @@
 import type { DatabaseSync, SQLInputValue } from 'node:sqlite'
 import { sep } from 'path'
-import type { CreateTaskInput, TaskRow, TaskStatus, VideoRow, AuthorRow, VideoStatus } from '../shared/types'
+import type { CreateTaskInput, TaskRow, TaskStatus, VideoRow, AuthorRow, VideoStatus, GlobalStats, RecentDownload } from '../shared/types'
 import type { VideoItem } from './adapters/types'
 
 const SCHEMA = `
@@ -181,6 +181,51 @@ export function insertAuthorIfAbsent(
 export function setAuthorVerify(db: DatabaseSync, id: number, state: 'pending' | 'ok' | 'failed', error?: string): void {
   db.prepare('UPDATE authors SET verify_state = ?, verify_error = ? WHERE id = ?')
     .run(state, state === 'ok' ? null : (error ?? null), id)
+}
+
+/**
+ * 全站聚合计数（概览页用）。
+ *
+ * 两条 GROUP BY 代替原来的 1 + N 次调用（listTasks 再对每个任务 getTaskStats）。
+ * 任务一多就是几十次 IPC，而且会在每次事件风暴里重复。
+ * 缺失的状态补 0——概览页不能显示 undefined/NaN。
+ */
+export function globalStats(db: DatabaseSync): GlobalStats {
+  const zero = (): Record<string, number> => ({})
+  const roll = (rows: Array<{ status: string; c: number }>): Record<string, number> & { total: number } => {
+    const out = zero()
+    let total = 0
+    for (const r of rows) { out[r.status] = r.c; total += r.c }
+    return { ...out, total } as Record<string, number> & { total: number }
+  }
+  const videos = db.prepare('SELECT status, COUNT(*) c FROM videos GROUP BY status').all() as unknown as Array<{ status: string; c: number }>
+  const tasks = db.prepare('SELECT status, COUNT(*) c FROM tasks GROUP BY status').all() as unknown as Array<{ status: string; c: number }>
+  const fill = (o: Record<string, number> & { total: number }, keys: string[]): never => {
+    for (const k of keys) if (o[k] === undefined) o[k] = 0
+    return undefined as never
+  }
+  const v = roll(videos); fill(v, ['pending', 'downloading', 'done', 'failed', 'filtered', 'collected', 'cancelled', 'paused'])
+  const t = roll(tasks); fill(t, ['pending', 'running', 'done', 'paused', 'failed'])
+  return { videos: v as GlobalStats['videos'], tasks: t as GlobalStats['tasks'] }
+}
+
+/**
+ * 最近完成的下载（概览页的「活」的那一块）。
+ *
+ * 刻意用 DB 查询而不是监听 video:status 事件流：
+ * 事件载荷里**没有标题**（只有 id），渲染出来是「#412 下载完成」用户不认识；
+ * 并发 3 时每秒好几条滚过去人眼也读不了。查库有标题有作者有时间，
+ * 而且重启程序后仍在——事件流一重挂就空白。
+ */
+export function recentDownloads(db: DatabaseSync, limit = 8): RecentDownload[] {
+  return db.prepare(`
+    SELECT v.id, v.title, v.downloaded_at, a.nickname AS author_nickname
+    FROM videos v
+    LEFT JOIN authors a ON a.id = v.author_id
+    WHERE v.status = 'done' AND v.downloaded_at IS NOT NULL
+    ORDER BY v.downloaded_at DESC
+    LIMIT ?
+  `).all(limit) as unknown as RecentDownload[]
 }
 
 export function updateAuthorCategory(db: DatabaseSync, id: number, category: string): void {

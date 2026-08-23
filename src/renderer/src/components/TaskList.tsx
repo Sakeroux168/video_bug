@@ -4,6 +4,7 @@ import type { TaskRow, VideoRow, TaskStats } from '../../../shared/types'
 import { Card, inputClsSm, btn } from './ui'
 import { useMarqueeSelect } from './useMarqueeSelect'
 import { useTableSelection } from './useTableSelection'
+import { useCoalescedRefresh } from './useCoalescedRefresh'
 import { describeError } from '../errors'
 
 const TASK_STATUS_LABEL: Record<string, string> = { pending: '等待中', running: '进行中', done: '完成', paused: '已暂停', failed: '失败' }
@@ -127,20 +128,24 @@ export default function TaskList({ notify }: { notify: (text: string) => void })
   }
 
   // 用 ref 持有最新 refresh，避免 onTaskProgress 闭包捕获过期 expanded
+  const coalescedRefresh = useCoalescedRefresh(() => refreshRef.current(), 800)
   const refreshRef = useRef(refresh)
   useEffect(() => { refreshRef.current = refresh })
 
   useEffect(() => {
     refreshRef.current()
-    // R11 Task2：progress 瞬时推送带 reSearchCount → 先更新徽标计数再照常刷新任务行
+    // R11 Task2：progress 瞬时推送带 reSearchCount → 先更新徽标计数再照常刷新任务行。
+    // R17：徽标计数**不进节流**——它只是一次 setState，且用户需要立刻看到重搜次数变化；
+    // 真正昂贵的是下面那次全量重拉（listTasks + N 次 getTaskStats + 展开任务的全部视频），
+    // 那个走合并：下载器每个视频至少 emit 3 次，500 个视频 ≈ 1500 次事件。
     const off = api.onTaskProgress(e => {
       if (e.type === 'task:progress' && typeof e.reSearchCount === 'number') {
         setReSearchCount(prev => ({ ...prev, [e.taskId]: e.reSearchCount as number }))
       }
-      refreshRef.current()
+      coalescedRefresh()
     })
     return off
-  }, [])
+  }, [coalescedRefresh])
 
   async function toggleExpand(id: number): Promise<void> {
     const next = new Set(expanded)

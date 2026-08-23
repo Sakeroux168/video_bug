@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react'
 import { SideNav, btn, type NavItem } from './components/ui'
+import Overview from './components/Overview'
 import FilterForm from './components/FilterForm'
 import TaskList from './components/TaskList'
 import AuthorCollection from './components/AuthorCollection'
@@ -12,6 +13,7 @@ import type { CreateTaskInput } from '../../shared/types'
 
 /** 导航项。图标名来自 icons.tsx 的字面量 Record，写错名字 TS 会报。 */
 const NAV: NavItem[] = [
+  { key: 'overview', label: '概览', icon: 'overview' },
   { key: 'tasks', label: '任务', icon: 'tasks' },
   { key: 'authors', label: '作者收藏', icon: 'authors' },
   { key: 'files', label: '文件管理', icon: 'files' },
@@ -22,7 +24,9 @@ const NAV: NavItem[] = [
 const PAGE_TITLE: Record<string, string> = Object.fromEntries(NAV.map(n => [n.key, n.label]))
 
 export default function App(): JSX.Element {
-  const [tab, setTab] = useState('tasks')
+  // 默认落地页 = 概览。已核查：两个渲染 <App/> 的测试用 getByText/getByPlaceholderText，
+  // 不过滤可见性，任务页 hidden 时元素仍在 DOM 且可点击，改默认不影响它们。
+  const [tab, setTab] = useState('overview')
 
   // 拖音窗口显隐：由 tab **推导**，而不是散在每个点击回调里手动调。
   // 此前 Tabs.onChange 一处、引导条另手抄一处（因为它绕过 onChange 直接 setTab）——
@@ -152,6 +156,7 @@ export default function App(): JSX.Element {
           <FilterForm onSubmit={startTask} />
           <TaskList notify={notify} />
         </div>
+        {tab === 'overview' && <Overview onGoto={setTab} />}
         {tab === 'authors' && <AuthorCollection notify={notify} />}
         {tab === 'files' && <FileManager notify={notify} />}
         {tab === 'browser' && <BrowserPanel />}

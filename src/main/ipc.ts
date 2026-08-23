@@ -1,6 +1,6 @@
 import { ipcMain, BrowserWindow, dialog, shell, clipboard } from 'electron'
 import type { DatabaseSync } from 'node:sqlite'
-import { createTask, listTasks, listVideos, listAuthors, setTaskStatus, setVideoStatus, updateAuthorCategory, deleteAuthors, taskStats, insertAuthorIfAbsent } from './db'
+import { createTask, listTasks, listVideos, listAuthors, setTaskStatus, setVideoStatus, updateAuthorCategory, deleteAuthors, taskStats, insertAuthorIfAbsent, globalStats, recentDownloads } from './db'
 import { getSettings, saveSettings } from './settings'
 import { deleteVideoRows } from './videoDelete'
 import { scanFilesTree, deleteFileCategory, deleteFileAuthor, locateFileDir } from './fileManager'
@@ -112,6 +112,10 @@ export function registerIpc(deps: IpcDeps): void {
   // 渲染层已过滤空行/纯空白，这里仍对 nickname 兜底校验；reason 词表逐字返回，供渲染层逐行展示。
   // 走主进程写剪贴板：打包后页面是 file:// 协议，navigator.clipboard 在部分环境下不可用，
   // 而 Electron 的 clipboard 模块无这个顾虑。
+  // 概览页：两条聚合查询代替原来的 1 + N 次调用
+  ipcMain.handle('stats:global', () => globalStats(db))
+  ipcMain.handle('stats:recent', (_e, limit?: number) => recentDownloads(db, limit ?? 8))
+
   ipcMain.handle('clipboard:write', (_e, text: string) => { clipboard.writeText(String(text ?? '')) })
 
   ipcMain.handle('authors:import', (_e, items: Array<{ nickname: string; url: string }>) => {

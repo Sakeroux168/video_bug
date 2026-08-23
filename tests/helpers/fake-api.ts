@@ -36,6 +36,11 @@ function freshApi(): Api {
     listAuthors: vi.fn(async () => []),
     updateAuthorCategory: vi.fn(async () => true),
     deleteAuthors: vi.fn(async () => true),
+    getGlobalStats: vi.fn(async () => ({
+      videos: { total: 0, pending: 0, downloading: 0, done: 0, failed: 0, filtered: 0, collected: 0, cancelled: 0, paused: 0 },
+      tasks: { total: 0, pending: 0, running: 0, done: 0, paused: 0, failed: 0 }
+    })),
+    getRecentDownloads: vi.fn(async () => []),
     writeClipboard: vi.fn(async () => {}),
     importAuthors: vi.fn(async () => ({ created: 0, results: [] })),
     organizeAuthor: vi.fn(async () => ({ ok: true })),

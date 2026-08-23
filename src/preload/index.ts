@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { CreateTaskInput, AppSettings, TaskRow, VideoRow, AuthorRow, TaskStats, AsrStatus, AsrProgress, FilesTree, FileDeleteResult, TaskProgressEvent } from '../shared/types'
+import type { CreateTaskInput, AppSettings, TaskRow, VideoRow, AuthorRow, TaskStats, AsrStatus, AsrProgress, FilesTree, FileDeleteResult, TaskProgressEvent, GlobalStats, RecentDownload } from '../shared/types'
 
 const api = {
   ping: () => ipcRenderer.sendSync('api:ping') as string,
@@ -23,6 +23,8 @@ const api = {
   listAuthors: (): Promise<AuthorRow[]> => ipcRenderer.invoke('authors:list'),
   updateAuthorCategory: (id: number, category: string): Promise<boolean> => ipcRenderer.invoke('authors:updateCategory', id, category),
   deleteAuthors: (ids: number[]): Promise<boolean> => ipcRenderer.invoke('authors:delete', ids),
+  getGlobalStats: (): Promise<GlobalStats> => ipcRenderer.invoke('stats:global'),
+  getRecentDownloads: (limit?: number): Promise<RecentDownload[]> => ipcRenderer.invoke('stats:recent', limit),
   writeClipboard: (text: string): Promise<void> => ipcRenderer.invoke('clipboard:write', text),
   importAuthors: (items: Array<{ nickname: string; url: string }>): Promise<{ created: number; results: Array<{ line: number; raw: string; ok: boolean; reason?: string }> }> => ipcRenderer.invoke('authors:import', items),
   organizeAuthor: (id: number): Promise<{ ok: boolean; moved?: number; category?: string; state?: string; error?: string }> => ipcRenderer.invoke('authors:organize', id),

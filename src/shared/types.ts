@@ -138,3 +138,17 @@ export const ERROR = {
   LOGIN_EXPIRED: 'login_expired', DISK: 'disk', PARSE_ERROR: 'parse_error',
   AI_AUTH: 'ai_auth', AI_QUOTA: 'ai_quota', AI_TIMEOUT: 'ai_timeout'
 } as const
+
+/** 概览页：全站聚合计数（两条 GROUP BY，代替 1 + N 次调用） */
+export interface GlobalStats {
+  videos: { total: number; pending: number; downloading: number; done: number; failed: number; filtered: number; collected: number; cancelled: number; paused: number }
+  tasks: { total: number; pending: number; running: number; done: number; paused: number; failed: number }
+}
+
+/** 概览页：最近完成的下载一行 */
+export interface RecentDownload {
+  id: number
+  title: string
+  downloaded_at: string | null
+  author_nickname: string | null
+}

@@ -117,6 +117,13 @@ describe('DOM 契约：任务页常驻挂载（R1）', () => {
     vi.mocked(window.api.onTaskProgress).mockReturnValue(unsubscribe)
     render(<App />)
 
+    // R17：默认落地页改成了概览，而概览页也订阅 onTaskProgress。
+    // 它是条件渲染的，切走时**合法卸载并退订**——这会污染 unsubscribe 计数。
+    // 所以先切到任务页把概览页退场，**再取基准**，之后的切换里任何新增的退订
+    // 都只能来自 TaskList。断言强度不变：仍然是「TaskList 绝不能被 remount」。
+    fireEvent.click(screen.getByRole('button', { name: '任务' }))
+    const baseline = unsubscribe.mock.calls.length
+
     const input = screen.getByPlaceholderText('输入内容') as HTMLInputElement
     fireEvent.change(input, { target: { value: '美食' } })
     expect(input.value).toBe('美食')
@@ -127,8 +134,8 @@ describe('DOM 契约：任务页常驻挂载（R1）', () => {
 
     // 被卸载重挂的话 value 会回到空串
     expect((screen.getByPlaceholderText('输入内容') as HTMLInputElement).value).toBe('美食')
-    // 卸载会触发 effect cleanup → 退订
-    expect(unsubscribe).not.toHaveBeenCalled()
+    // 卸载会触发 effect cleanup → 退订。基准之后不得新增。
+    expect(unsubscribe.mock.calls.length).toBe(baseline)
   })
 })
 
