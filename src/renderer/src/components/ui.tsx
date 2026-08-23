@@ -1,15 +1,72 @@
 import React from 'react'
+import { Icon, type IconName } from './icons'
 
-export function Tabs({ tabs, active, onChange }: { tabs: Array<{ key: string; label: string }>; active: string; onChange: (k: string) => void }) {
+export interface NavItem {
+  key: string
+  label: string
+  icon: IconName
+  /** 可选徽标数字。**必须 aria-hidden**，否则可访问名会变成「使用说明 3」，
+   *  而现有测试用 getByRole('button', { name: '使用说明' }) 整串匹配，会直接挂 */
+  badge?: number
+}
+
+/**
+ * 左侧导航。
+ *
+ * 三条硬约束（都是功能依赖，不是风格偏好）：
+ *  1. **必须是原生 `<button>`** —— 现有测试靠 getByRole('button', {name}) 定位，
+ *     且全站多处 `closest('button, a, input')` 守卫依赖真实标签名。
+ *  2. **`aria-label` 把可访问名钉死**为 label —— aria-label 优先级高于内容，
+ *     所以里面塞图标、塞徽标都不会污染它。这是比「徽标加 aria-hidden」更硬的保险。
+ *  3. **激活与非激活都要 `border-l-2`**（非激活用 `border-transparent`）——
+ *     条件性加边框会让整列在切换时横移 2px，同 TaskList 的 ROW_BAR 教训。
+ *
+ * 刻意用 `transition-colors` 而非 `transition-all`：后者会把将来任何 transform
+ * 也纳入过渡，而 transform 会让框选遮罩画歪、让 fixed 定位的 toast 换包含块。
+ * 同理**不做折叠动画** —— 桌面窗口折叠省不出有意义的空间，却是这两个坑唯一现实的触发场景。
+ */
+export function SideNav({ items, active, onChange }: {
+  items: NavItem[]
+  active: string
+  onChange: (k: string) => void
+}): React.ReactElement {
   return (
-    <div className="flex gap-1 border-b border-slate-200 bg-white px-4">
-      {tabs.map(t => (
-        <button key={t.key} onClick={() => onChange(t.key)}
-          className={`px-4 py-3 text-sm font-medium transition-colors ${active === t.key ? 'border-b-2 border-brand-600 text-brand-600' : 'text-slate-500 hover:text-slate-800'}`}>
-          {t.label}
-        </button>
-      ))}
-    </div>
+    <aside className="fixed left-0 top-0 z-30 flex h-screen w-56 flex-col border-r border-slate-200 bg-white">
+      <div className="flex shrink-0 items-center gap-2 px-4 py-4">
+        <span className="flex h-7 w-7 items-center justify-center rounded-md bg-brand-600 text-white">
+          <Icon name="download" className="h-4 w-4" />
+        </span>
+        <span className="text-sm font-semibold text-slate-800">视频爬取工具</span>
+      </div>
+
+      <nav className="min-h-0 flex-1 overflow-y-auto px-2 py-1">
+        {items.map(it => {
+          const on = active === it.key
+          return (
+            <button
+              key={it.key}
+              type="button"
+              aria-label={it.label}
+              aria-current={on ? 'page' : undefined}
+              onClick={() => onChange(it.key)}
+              className={`flex w-full items-center gap-2.5 rounded-r-md border-l-2 px-3 py-2 text-sm transition-colors ${
+                on
+                  ? 'border-brand-600 bg-brand-50 font-medium text-brand-600'
+                  : 'border-transparent text-slate-500 hover:bg-slate-50 hover:text-slate-800'
+              }`}
+            >
+              <Icon name={it.icon} className="h-4 w-4 shrink-0" />
+              <span className="flex-1 text-left">{it.label}</span>
+              {it.badge != null && it.badge > 0 && (
+                <span aria-hidden="true" className="rounded-full bg-slate-100 px-1.5 text-[11px] tabular-nums text-slate-500">
+                  {it.badge}
+                </span>
+              )}
+            </button>
+          )
+        })}
+      </nav>
+    </aside>
   )
 }
 

@@ -38,6 +38,9 @@ const MUST = [
   'border-danger-300', 'bg-danger-50', 'text-danger-600',
   // 细节
   'text-[10px]', 'tabular-nums',
+  // P5 外壳（侧边栏）——结构金丝雀：有人拆掉侧边栏或改宽度，这里立刻响。
+  // 注：border-brand-600 的用途已从「顶部 tab 下划线」改为「侧边栏激活左竖条」，条目不动。
+  'pl-56', 'w-56', 'bg-brand-50',
   // P4 签名元素：行首状态色条
   'border-l-2', 'border-danger-400', 'border-sky-400', 'border-success-400', 'border-transparent'
   // 注：'tabular-nums' 属于 P4（数值等宽对齐），那一步落地时再加进来

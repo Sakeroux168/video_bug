@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react'
-import { Tabs, btn } from './components/ui'
+import { SideNav, btn, type NavItem } from './components/ui'
 import FilterForm from './components/FilterForm'
 import TaskList from './components/TaskList'
 import AuthorCollection from './components/AuthorCollection'
@@ -9,6 +9,17 @@ import SettingsPanel from './components/SettingsPanel'
 import HelpPanel from './components/HelpPanel'
 import { api } from './api'
 import type { CreateTaskInput } from '../../shared/types'
+
+/** 导航项。图标名来自 icons.tsx 的字面量 Record，写错名字 TS 会报。 */
+const NAV: NavItem[] = [
+  { key: 'tasks', label: '任务', icon: 'tasks' },
+  { key: 'authors', label: '作者收藏', icon: 'authors' },
+  { key: 'files', label: '文件管理', icon: 'files' },
+  { key: 'browser', label: '内置浏览器', icon: 'browser' },
+  { key: 'settings', label: '设置', icon: 'settings' },
+  { key: 'help', label: '使用说明', icon: 'help' }
+]
+const PAGE_TITLE: Record<string, string> = Object.fromEntries(NAV.map(n => [n.key, n.label]))
 
 export default function App(): JSX.Element {
   const [tab, setTab] = useState('tasks')
@@ -64,9 +75,17 @@ export default function App(): JSX.Element {
   }, [])
 
   return (
-    <div className="flex h-screen flex-col bg-slate-50 text-slate-800">
-      <header className="flex items-center justify-between border-b border-slate-200 bg-white px-4 py-2">
-        <span className="text-base font-semibold">视频爬取工具</span>
+    <>
+      {/* fixed 脱离文档流：**不是 main 的祖先**，所以高度链、min-h-0 陷阱、
+          框选遮罩坐标系、fixed toast 的包含块全部不受影响——风险是被结构性消灭的，
+          而不是靠「记得写 min-h-0」。z-30 < toast 的 z-50。 */}
+      <SideNav items={NAV} active={tab} onChange={setTab} />
+
+      {/* 除了 pl-56，根容器一字未改：flex h-screen flex-col 仍是全站唯一定高来源 */}
+      <div className="flex h-screen flex-col bg-slate-50 pl-56 text-slate-800">
+        {/* shrink-0：此前没有，只是因为 main 的 flex-basis 为 0 而恰好没触发 */}
+        <header className="flex shrink-0 items-center justify-between border-b border-slate-200 bg-white px-4 py-2">
+          <span className="text-sm font-medium text-slate-700">{PAGE_TITLE[tab] ?? ''}</span>
         <div className="flex items-center gap-2">
           <button
             type="button"
@@ -84,12 +103,8 @@ export default function App(): JSX.Element {
           </button>
         </div>
       </header>
-      <Tabs
-        active={tab} onChange={setTab}
-        tabs={[{ key: 'tasks', label: '任务' }, { key: 'authors', label: '作者收藏' }, { key: 'files', label: '文件管理' }, { key: 'browser', label: '内置浏览器' }, { key: 'settings', label: '设置' }, { key: 'help', label: '使用说明' }]}
-      />
       {showLog && (
-        <div className="border-b border-slate-200 bg-slate-50 p-3">
+        <div className="shrink-0 border-b border-slate-200 bg-slate-50 p-3">
           <div className="mb-1 flex items-center justify-between text-xs text-slate-500">
             <span>主进程收到的接口拦截 / 筛选日志（{rawLog.length} 条，最新在后）</span>
             <button className="text-slate-400 hover:text-slate-600" onClick={() => setShowLog(false)}>收起</button>
@@ -132,7 +147,7 @@ export default function App(): JSX.Element {
             className="block text-xs text-slate-500 hover:text-slate-700 hover:underline"
             onClick={() => setTab('help')}
           >
-            不知道怎么用？点上方「使用说明」
+            不知道怎么用？点左侧「使用说明」
           </button>
           <FilterForm onSubmit={startTask} />
           <TaskList notify={notify} />
@@ -142,7 +157,8 @@ export default function App(): JSX.Element {
         {tab === 'browser' && <BrowserPanel />}
         {tab === 'settings' && <SettingsPanel />}
         {tab === 'help' && <HelpPanel />}
-      </main>
-    </div>
+        </main>
+      </div>
+    </>
   )
 }
