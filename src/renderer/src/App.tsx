@@ -12,6 +12,20 @@ import type { CreateTaskInput } from '../../shared/types'
 
 export default function App(): JSX.Element {
   const [tab, setTab] = useState('tasks')
+
+  // 拖音窗口显隐：由 tab **推导**，而不是散在每个点击回调里手动调。
+  // 此前 Tabs.onChange 一处、引导条另手抄一处（因为它绕过 onChange 直接 setTab）——
+  // 每新增一条程序化导航就要手抄一遍，漏抄不报错、不挂测试，
+  // 只在真机表现为「切走了拖音窗口还挂着」。
+  //
+  // **刻意不写 cleanup**：main.tsx 有 StrictMode，加 cleanup 会让切到浏览器页变成
+  // show→hide→show。无 cleanup 时挂载多发一次 hideBrowser 行为等价：
+  // 主进程的 `taskRunning || forceBrowserFull` 分支会兜住恢复中的任务，
+  // 而未曾 show 过的窗口 hide 是空操作。
+  useEffect(() => {
+    if (tab === 'browser') void api.showBrowser()
+    else void api.hideBrowser()
+  }, [tab])
   const [rawLog, setRawLog] = useState<Array<{
     at: string
     url?: string
@@ -71,11 +85,7 @@ export default function App(): JSX.Element {
         </div>
       </header>
       <Tabs
-        active={tab} onChange={k => {
-          setTab(k)
-          if (k === 'browser') void api.showBrowser()
-          else void api.hideBrowser()
-        }}
+        active={tab} onChange={setTab}
         tabs={[{ key: 'tasks', label: '任务' }, { key: 'authors', label: '作者收藏' }, { key: 'files', label: '文件管理' }, { key: 'browser', label: '内置浏览器' }, { key: 'settings', label: '设置' }, { key: 'help', label: '使用说明' }]}
       />
       {showLog && (
@@ -120,7 +130,7 @@ export default function App(): JSX.Element {
           <button
             type="button"
             className="block text-xs text-slate-500 hover:text-slate-700 hover:underline"
-            onClick={() => { setTab('help'); void api.hideBrowser() }}
+            onClick={() => setTab('help')}
           >
             不知道怎么用？点上方「使用说明」
           </button>

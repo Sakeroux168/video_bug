@@ -10,7 +10,8 @@
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "test": "vitest run",
     "dist": "electron-vite build && electron-builder",
-    "check:css": "node scripts/check-css.mjs"
+    "check:css": "node scripts/check-css.mjs",
+    "verify": "npm run typecheck && npm test && npm run build && npm run check:css"
   },
   "dependencies": {
     "react": "^18.3.0",
