@@ -42,8 +42,10 @@ const MUST = [
   // 注：border-brand-600 的用途已从「顶部 tab 下划线」改为「侧边栏激活左竖条」，条目不动。
   'pl-56', 'w-56', 'bg-brand-50',
   // P4 签名元素：行首状态色条
-  'border-l-2', 'border-danger-400', 'border-sky-400', 'border-success-400', 'border-transparent'
-  // 注：'tabular-nums' 属于 P4（数值等宽对齐），那一步落地时再加进来
+  'border-l-2', 'border-danger-400', 'border-sky-400', 'border-success-400', 'border-transparent',
+  // P4 下载统计徽标：状态色必须使用完整字面量，防止绿色版产物被 Tailwind purge 掉
+  'bg-success-50', 'text-success-700', 'text-sky-700', 'text-danger-700',
+  'bg-warning-50', 'bg-warning-100', 'text-warning-700'
 ]
 const GONE = ['text-zinc-500', 'bg-blue-50', 'text-blue-600', 'text-green-600', 'text-orange-500']
 

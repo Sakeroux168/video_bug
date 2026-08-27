@@ -25,6 +25,17 @@ const STATUS_CLASS: Record<string, string> = {
   paused: 'text-amber-500'
 }
 
+const DOWNLOAD_BADGES: Array<{ key: keyof TaskStats; label: string; className: string }> = [
+  { key: 'pending', label: '等待', className: 'bg-slate-100 text-slate-600' },
+  { key: 'done', label: '完成', className: 'bg-success-50 text-success-700' },
+  { key: 'downloading', label: '下载中', className: 'bg-sky-50 text-sky-700' },
+  { key: 'failed', label: '失败', className: 'bg-danger-50 text-danger-700' },
+  { key: 'collected', label: '待下载', className: 'bg-warning-50 text-warning-700' },
+  { key: 'filtered', label: '已过滤', className: 'bg-slate-50 text-slate-500' },
+  { key: 'cancelled', label: '已取消', className: 'bg-slate-100 text-slate-600' },
+  { key: 'paused', label: '已暂停', className: 'bg-warning-100 text-warning-700' }
+]
+
 /**
  * P4 签名元素：行首状态色条。
  *
@@ -303,9 +314,6 @@ export default function TaskList({ notify }: { notify: (text: string) => void })
         <table className="w-full border-collapse text-sm">
           <thead>
             <tr className="border-b border-slate-200 text-left text-xs text-slate-500">
-              <th className="w-8 py-2 pr-1 font-normal">
-                <input type="checkbox" disabled title="任务批量选择将在后续版本支持" />
-              </th>
               <th className="whitespace-nowrap py-2 pr-3 font-normal">平台/类型</th>
               <th className="py-2 pr-3 font-normal">关键词</th>
               <th className="w-52 py-2 pr-3 font-normal">进度</th>
@@ -318,7 +326,6 @@ export default function TaskList({ notify }: { notify: (text: string) => void })
             {tasks.map(t => {
               const pct = t.target_count ? Math.min(100, Math.round((t.fetched_count / t.target_count) * 100)) : 0
               const s = stats[t.id]
-              const dp = s && s.total ? Math.min(100, Math.round((s.done / s.total) * 100)) : 0
               const d = derived[t.id]
               const isOpen = expanded.has(t.id)
               return (
@@ -327,9 +334,6 @@ export default function TaskList({ notify }: { notify: (text: string) => void })
                     className={`cursor-pointer border-b border-slate-100 transition-colors hover:bg-slate-50 ${isOpen ? 'bg-brand-50/40' : ''}`}
                     onClick={() => void toggleExpand(t.id)}
                   >
-                    <td className="py-2 pr-1" onClick={e => e.stopPropagation()}>
-                      <input type="checkbox" disabled />
-                    </td>
                     <td className="whitespace-nowrap py-2 pr-3 text-slate-500">{t.platform}/{t.type}</td>
                     <td className="max-w-0 py-2 pr-3 font-medium">
                       {/* 作者任务的 query 存的是 sec_uid（P1.5 归一化），直接显示是一串英文认不出是谁；
@@ -352,18 +356,16 @@ export default function TaskList({ notify }: { notify: (text: string) => void })
                     </td>
                     <td className="py-2 pr-3">
                       {s && s.total > 0 ? (
-                        <div className="flex items-center gap-2">
-                          <span className="whitespace-nowrap text-xs text-slate-500">
-                            下载 {s.done}/{s.total}
-                            {s.downloading > 0 ? `（下载中 ${s.downloading}）` : ''}
-                            {s.failed > 0 ? `（失败 ${s.failed}）` : ''}
-                            {s.collected > 0 ? `（待下载 ${s.collected}）` : ''}
-                            {s.cancelled > 0 ? `（已取消 ${s.cancelled}）` : ''}
-                            {s.paused > 0 ? `（已暂停 ${s.paused}）` : ''}
-                          </span>
-                          <div className="h-1.5 w-24 overflow-hidden rounded bg-slate-200">
-                            <div className="h-full bg-emerald-500" style={{ width: `${dp}%` }} />
-                          </div>
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          {DOWNLOAD_BADGES.map(badge => s[badge.key] > 0 && (
+                            <span
+                              key={badge.key}
+                              data-badge={badge.key}
+                              className={`whitespace-nowrap rounded-full px-2 py-0.5 text-[11px] font-medium tabular-nums ${badge.className}`}
+                            >
+                              {badge.label} {s[badge.key]}
+                            </span>
+                          ))}
                         </div>
                       ) : (
                         <span className="text-xs text-slate-400">—</span>
@@ -391,14 +393,14 @@ export default function TaskList({ notify }: { notify: (text: string) => void })
                   </tr>
                   {t.status === 'paused' && t.error === 'stalled_verify' && (
                     <tr className="border-b border-slate-100 bg-amber-50/60">
-                      <td colSpan={7} className="px-2 py-1.5 text-xs text-amber-700">
+                      <td colSpan={6} className="px-2 py-1.5 text-xs text-amber-700">
                         任务可能触发验证，请到「内置浏览器」完成验证（滑块/扫码）后点「继续」
                       </td>
                     </tr>
                   )}
                   {isOpen && (
                     <tr className="bg-slate-50/60">
-                      <td colSpan={7} className="px-2 pb-3 pt-2 text-xs">
+                      <td colSpan={6} className="px-2 pb-3 pt-2 text-xs">
                         {d && s && s.collected > 0 && (
                           <div className="mb-2 flex items-center justify-between rounded bg-amber-50 px-3 py-1.5 text-amber-700">
                             <span>已抓取 {s.collected} 条，尚未下载</span>
