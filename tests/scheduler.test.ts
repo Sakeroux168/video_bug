@@ -111,7 +111,12 @@ const rawJson = {
     desc: '测试视频标题',
     create_time: 1710000000,
     author: { sec_uid: 'SEC_001', nickname: '作者一号' },
-    video: { play_addr: { url_list: ['https://cdn.test/v1.mp4'] } },
+    video: {
+      play_addr: { url_list: ['https://cdn.test/v1.mp4'] },
+      origin_cover: { url_list: ['https://cdn.test/v1.jpg'] },
+      width: 1080,
+      height: 1920
+    },
     statistics: { digg_count: 42 },
     duration: 8000
   }]
@@ -202,10 +207,16 @@ describe('handleRaw 入库与作者（I4）+ pendingVideoIds 清理（I1）', ()
     expect(authors).toHaveLength(1)
     expect(authors[0].sec_uid).toBe('SEC_001')
 
-    const videos = db.prepare('SELECT * FROM videos WHERE task_id=?').all(taskId) as Array<{ id: number; author_id: number | null; aweme_id: string }>
+    const videos = db.prepare('SELECT * FROM videos WHERE task_id=?').all(taskId) as Array<{
+      id: number; author_id: number | null; aweme_id: string
+      cover_url: string | null; video_width: number; video_height: number
+    }>
     expect(videos).toHaveLength(1)
     expect(videos[0].aweme_id).toBe('7330000000000000001')
     expect(videos[0].author_id).toBe(authors[0].id)
+    expect(videos[0].cover_url).toBe('https://cdn.test/v1.jpg')
+    expect(videos[0].video_width).toBe(1080)
+    expect(videos[0].video_height).toBe(1920)
     expect(dl.enqueued).toContain(videos[0].id)
     expect((s as any).pendingVideoIds).toEqual([videos[0].id])
 
@@ -220,6 +231,36 @@ describe('handleRaw 入库与作者（I4）+ pendingVideoIds 清理（I1）', ()
     browser.releaseLoad()
     await p
     expect(db.prepare('SELECT status, error FROM tasks WHERE id=?').get(taskId)).toEqual({ status: 'paused', error: 'stalled' })
+  }, 10000)
+
+  it('AI 过滤的视频也保留封面与宽高元数据', async () => {
+    const db = newDb()
+    const taskId = createTask(db, { ...input, aiFilterEnabled: true })
+    const browser = new FakeBrowser()
+    const downloader = new FakeDownloader()
+    const analyzer = {
+      judgeFilter: vi.fn(async () => ({ pass: false }))
+    } as unknown as import('../src/main/analyzer').Analyzer
+    const s = new Scheduler({
+      db, browser, analyzer, downloader, emit: () => {},
+      getScrollParams: () => ({ scrollSpeed: 'slow' as const, scrollPageWaitMs: 8000, scrollIntervalMs: 1 }),
+      getStallThresholdSec: () => 0.01
+    })
+    browser.blockNextLoad()
+    const running = s.run(taskId)
+    await new Promise(r => setTimeout(r, 10))
+
+    await s.handleRaw(douyinAdapter, rawUrl, rawJson)
+    expect(db.prepare(
+      'SELECT status, cover_url, video_width, video_height FROM videos WHERE task_id=?'
+    ).get(taskId)).toEqual({
+      status: 'filtered', cover_url: 'https://cdn.test/v1.jpg', video_width: 1080, video_height: 1920
+    })
+    expect(downloader.enqueued).toHaveLength(0)
+
+    browser.releaseLoad()
+    await s.pause()
+    await running
   }, 10000)
 })
 

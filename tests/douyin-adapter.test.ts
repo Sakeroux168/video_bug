@@ -22,8 +22,45 @@ describe('douyinAdapter.parseApiJson', () => {
       authorSecUid: 'MS4wLjABAAAA1', authorNickname: '探店小王',
       authorHomeUrl: 'https://www.douyin.com/user/MS4wLjABAAAA1',
       playUrl: 'https://v.douyin.com/xxx/playwm/?foo=bar',
+      coverUrl: '', width: 0, height: 0,
       durationSec: 45, publishTime: 1710000000, likes: 1234
     })
+  })
+
+  it('解析封面地址与视频宽高，优先使用 origin_cover', () => {
+    const aweme = {
+      ...AWEME,
+      video: {
+        ...AWEME.video,
+        origin_cover: { url_list: ['https://cdn.test/origin.jpg'] },
+        cover: { url_list: ['https://cdn.test/cover.jpg'] },
+        dynamic_cover: { url_list: ['https://cdn.test/dynamic.webp'] },
+        width: 1080,
+        height: 1920
+      }
+    }
+    const [item] = douyinAdapter.parseApiJson('https://x/', { aweme_list: [aweme] })
+    expect(item.coverUrl).toBe('https://cdn.test/origin.jpg')
+    expect(item.width).toBe(1080)
+    expect(item.height).toBe(1920)
+  })
+
+  it('封面逐级回退；无效宽高归一为 0', () => {
+    const aweme = {
+      ...AWEME,
+      video: {
+        ...AWEME.video,
+        origin_cover: { url_list: [] },
+        cover: { url_list: ['https://cdn.test/cover.jpg'] },
+        dynamic_cover: { url_list: ['https://cdn.test/dynamic.webp'] },
+        width: -1,
+        height: 'unknown'
+      }
+    }
+    const [item] = douyinAdapter.parseApiJson('https://x/', { aweme_list: [aweme] })
+    expect(item.coverUrl).toBe('https://cdn.test/cover.jpg')
+    expect(item.width).toBe(0)
+    expect(item.height).toBe(0)
   })
 
   it('解析作者主页接口结构（顶层 aweme_list）', () => {

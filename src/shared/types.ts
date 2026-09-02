@@ -55,6 +55,8 @@ export interface TaskProgressEvent {
 export interface VideoRow {
   id: number; platform: string; task_id: number; aweme_id: string; title: string
   author_id: number | null; play_addr: string | null; duration: number
+  cover_url: string | null; cover_path: string | null
+  video_width: number; video_height: number
   publish_time: string | null; stats: string; ai_verdict: 'pass' | 'filtered' | null
   ai_tags: string | null; status: VideoStatus; local_path: string | null
   file_size: number | null; error: string | null; retry_count: number

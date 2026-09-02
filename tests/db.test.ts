@@ -21,6 +21,7 @@ const input: CreateTaskInput = {
 const item = (over: Partial<VideoItem> = {}): VideoItem => ({
   awemeId: 'AW1', title: '标题1', authorSecUid: 'SEC1', authorNickname: '作者1',
   authorHomeUrl: 'https://www.douyin.com/user/SEC1', playUrl: 'https://v/play/1',
+  coverUrl: 'https://img.test/cover.jpg', width: 1080, height: 1920,
   durationSec: 60, publishTime: 1710000000, likes: 10, ...over
 })
 
@@ -38,6 +39,38 @@ describe('db', () => {
     expect(insertVideos(db, [item()], id, 'douyin')).toBe(1)
     expect(insertVideos(db, [item()], id, 'douyin')).toBe(0)
     expect(listVideos(db, id)).toHaveLength(1)
+  })
+
+  it('insertVideos 保存封面地址与视频宽高', () => {
+    const id = createTask(db, input)
+    insertVideos(db, [item()], id, 'douyin')
+    const [video] = listVideos(db, id)
+    expect(video.cover_url).toBe('https://img.test/cover.jpg')
+    expect(video.cover_path).toBeNull()
+    expect(video.video_width).toBe(1080)
+    expect(video.video_height).toBe(1920)
+  })
+
+  it('老库迁移：videos 表自动补封面与宽高列，已有行保留', () => {
+    const old = new DatabaseSync(':memory:')
+    old.exec(`CREATE TABLE videos (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      platform TEXT NOT NULL DEFAULT 'douyin', task_id INTEGER NOT NULL,
+      aweme_id TEXT NOT NULL, title TEXT NOT NULL DEFAULT '', author_id INTEGER,
+      play_addr TEXT, duration INTEGER NOT NULL DEFAULT 0, publish_time TEXT,
+      stats TEXT NOT NULL DEFAULT '{}', ai_verdict TEXT, ai_tags TEXT,
+      status TEXT NOT NULL DEFAULT 'pending', local_path TEXT, file_size INTEGER,
+      error TEXT, retry_count INTEGER NOT NULL DEFAULT 0, fetched_at TEXT NOT NULL,
+      downloaded_at TEXT, UNIQUE(platform, aweme_id)
+    );
+    INSERT INTO videos (task_id, aweme_id, fetched_at) VALUES (1, 'OLD1', '2026-01-01');`)
+    initDb(old)
+    const columns = old.prepare('PRAGMA table_info(videos)').all() as Array<{ name: string }>
+    expect(columns.map(c => c.name)).toEqual(expect.arrayContaining([
+      'cover_url', 'cover_path', 'video_width', 'video_height'
+    ]))
+    expect(old.prepare('SELECT aweme_id, video_width, video_height FROM videos').get())
+      .toEqual({ aweme_id: 'OLD1', video_width: 0, video_height: 0 })
   })
 
   it('upsertAuthor 幂等，video_count 累加', () => {

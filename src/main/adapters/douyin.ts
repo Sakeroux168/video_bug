@@ -35,6 +35,16 @@ function asObj(v: unknown): Record<string, any> {
   return v && typeof v === 'object' ? (v as Record<string, any>) : {}
 }
 
+function firstUrl(obj: unknown): string {
+  const p = asObj(obj)
+  return Array.isArray(p.url_list) && p.url_list.length > 0 ? String(p.url_list[0]) : ''
+}
+
+function positiveInteger(v: unknown): number {
+  const n = Number(v)
+  return Number.isInteger(n) && n > 0 ? n : 0
+}
+
 /** 时长多候选解析（抖音接口为毫秒 → 取整秒）：顶层 duration → video.duration → 0。
  *  真实接口时长字段位置不定（可能在 video 下），做兜底；候选值为字符串数字也兼容（Number 转换）。 */
 function pickDurationSec(o: Record<string, any>): number {
@@ -65,10 +75,6 @@ function parseAweme(a: unknown, diags: DurationDiag[]): VideoItem | null {
   const nickname = String(author.nickname ?? '')
   const video = asObj(o.video)
   // 播放地址可能出现在多个字段：play_addr / play_url / play_addr_h264/265 / bit_rate[].play_addr
-  const firstUrl = (obj: unknown): string => {
-    const p = asObj(obj)
-    return Array.isArray(p.url_list) && p.url_list.length > 0 ? String(p.url_list[0]) : ''
-  }
   let playRaw = firstUrl(video.play_addr) || firstUrl(video.play_url)
     || firstUrl(video.play_addr_h264) || firstUrl(video.play_addr_265)
   if (!playRaw && Array.isArray(video.bit_rate)) {
@@ -90,6 +96,9 @@ function parseAweme(a: unknown, diags: DurationDiag[]): VideoItem | null {
     authorHomeUrl: secUid ? `https://www.douyin.com/user/${secUid}` : '',
     // 优先用原始地址（网页播放器即用它，通常已是无水印）；转换留作下载失败时的回退变体
     playUrl: playRaw,
+    coverUrl: firstUrl(video.origin_cover) || firstUrl(video.cover) || firstUrl(video.dynamic_cover),
+    width: positiveInteger(video.width),
+    height: positiveInteger(video.height),
     durationSec,
     publishTime: Number(o.create_time ?? 0),
     likes: Number(stats.digg_count ?? 0)

@@ -556,8 +556,9 @@ export class Scheduler {
           const v = await this.deps.analyzer.judgeFilter(text, filters.aiFilterRule ?? '', `${item.awemeId}:filter`)
           if (!v.pass) {
             const insertedId = db.prepare(
-              "INSERT OR IGNORE INTO videos (platform,task_id,aweme_id,title,play_addr,duration,publish_time,status,ai_verdict,fetched_at) VALUES (?,?,?,?,?,?,?,'filtered','filtered',?)"
-            ).run(adapter.name, this.taskId, item.awemeId, item.title, item.playUrl, item.durationSec,
+              "INSERT OR IGNORE INTO videos (platform,task_id,aweme_id,title,play_addr,cover_url,video_width,video_height,duration,publish_time,status,ai_verdict,fetched_at) VALUES (?,?,?,?,?,?,?,?,?,?,'filtered','filtered',?)"
+            ).run(adapter.name, this.taskId, item.awemeId, item.title, item.playUrl,
+                 item.coverUrl || null, item.width, item.height, item.durationSec,
                  new Date(item.publishTime * 1000).toISOString(), new Date().toISOString())
             if (insertedId.changes > 0) {
               this.fetched++
@@ -576,10 +577,11 @@ export class Scheduler {
       // Task5 下载方式：自动下载 → 入 pending 并交给下载器；手动 → 仅收集（collected），不进下载队列
       const status = this.autoDownload ? 'pending' : 'collected'
       const info = db.prepare(
-        `INSERT OR IGNORE INTO videos (platform,task_id,aweme_id,title,author_id,play_addr,duration,publish_time,stats,status,ai_verdict,fetched_at)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`
+        `INSERT OR IGNORE INTO videos (platform,task_id,aweme_id,title,author_id,play_addr,cover_url,video_width,video_height,duration,publish_time,stats,status,ai_verdict,fetched_at)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
       ).run(adapter.name, this.taskId, item.awemeId, item.title, author.id, item.playUrl,
-           item.durationSec, new Date(item.publishTime * 1000).toISOString(), JSON.stringify({ likes: item.likes }),
+           item.coverUrl || null, item.width, item.height, item.durationSec,
+           new Date(item.publishTime * 1000).toISOString(), JSON.stringify({ likes: item.likes }),
            status, 'pass', new Date().toISOString())
       if (info.changes > 0) {
         this.fetched++

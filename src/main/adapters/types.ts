@@ -8,6 +8,9 @@ export interface VideoItem {
   authorNickname: string
   authorHomeUrl: string
   playUrl: string
+  coverUrl: string
+  width: number
+  height: number
   durationSec: number
   publishTime: number // unix 秒
   likes: number

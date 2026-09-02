@@ -45,6 +45,10 @@ CREATE TABLE IF NOT EXISTS videos (
   title TEXT NOT NULL DEFAULT '',
   author_id INTEGER,
   play_addr TEXT,
+  cover_url TEXT,
+  cover_path TEXT,
+  video_width INTEGER NOT NULL DEFAULT 0,
+  video_height INTEGER NOT NULL DEFAULT 0,
   duration INTEGER NOT NULL DEFAULT 0,
   publish_time TEXT,
   stats TEXT NOT NULL DEFAULT '{}',
@@ -80,6 +84,10 @@ export function initDb(db: DatabaseSync): void {
   addColumnIfMissing(db, 'authors', 'ai_classified_at', 'TEXT')
   addColumnIfMissing(db, 'authors', 'verify_state', 'TEXT')
   addColumnIfMissing(db, 'authors', 'verify_error', 'TEXT')
+  addColumnIfMissing(db, 'videos', 'cover_url', 'TEXT')
+  addColumnIfMissing(db, 'videos', 'cover_path', 'TEXT')
+  addColumnIfMissing(db, 'videos', 'video_width', 'INTEGER NOT NULL DEFAULT 0')
+  addColumnIfMissing(db, 'videos', 'video_height', 'INTEGER NOT NULL DEFAULT 0')
 }
 
 /** 老库迁移：表缺列时补列（ALTER TABLE ADD COLUMN 不能带 NOT NULL 无默认值的约束，故用 DEFAULT） */
@@ -250,15 +258,16 @@ export function insertVideos(db: DatabaseSync, items: VideoItem[], taskId: numbe
   const now = new Date().toISOString()
   const stmt = db.prepare(
     `INSERT OR IGNORE INTO videos
-       (platform, task_id, aweme_id, title, author_id, play_addr, duration, publish_time, stats, fetched_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+       (platform, task_id, aweme_id, title, author_id, play_addr, cover_url, video_width, video_height, duration, publish_time, stats, fetched_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   )
   const bumpAuthorStmt = db.prepare('UPDATE authors SET video_count = video_count + 1 WHERE id = ?')
   for (const it of items) {
     const { id: authorId, created } = upsertAuthor(db, it, platform)
     const info = stmt.run(
       platform, taskId, it.awemeId, it.title, authorId, it.playUrl,
-      it.durationSec, new Date(it.publishTime * 1000).toISOString(), JSON.stringify({ likes: it.likes }), now
+      it.coverUrl || null, it.width, it.height, it.durationSec,
+      new Date(it.publishTime * 1000).toISOString(), JSON.stringify({ likes: it.likes }), now
     )
     if (info.changes > 0) {
       inserted++
@@ -353,7 +362,7 @@ export function setAuthorOrganizeState(db: DatabaseSync, id: number, state: 'pen
 export function setVideoStatus(db: DatabaseSync, id: number, status: VideoStatus, patch: Partial<VideoRow> = {}): void {
   const sets = ['status = ?']
   const vals: unknown[] = [status]
-  for (const k of ['error', 'local_path', 'file_size', 'retry_count', 'downloaded_at', 'ai_verdict', 'ai_tags'] as const) {
+  for (const k of ['error', 'local_path', 'cover_path', 'video_width', 'video_height', 'file_size', 'retry_count', 'downloaded_at', 'ai_verdict', 'ai_tags'] as const) {
     if (k in patch && patch[k] !== undefined) { sets.push(`${k} = ?`); vals.push(patch[k]) }
   }
   vals.push(id)
