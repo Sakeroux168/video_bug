@@ -15,8 +15,13 @@ export function matchTimeRange(tsSec: number, range: TimeRange, start?: string, 
   return true
 }
 
-export function matchDuration(durSec: number, d: DurationFilter): boolean {
+export function matchDuration(durSec: number, d: DurationFilter, minSec?: number, maxSec?: number): boolean {
   if (d === 'all') return true
+  if (d === 'under30') return durSec > 0 && durSec <= 30
+  if (d === 'custom') {
+    if (!Number.isInteger(minSec) || !Number.isInteger(maxSec) || minSec! < 1 || maxSec! < minSec!) return false
+    return durSec >= minSec! && durSec <= maxSec!
+  }
   if (d === 'short') return durSec < 60
   if (d === 'medium') return durSec >= 60 && durSec <= 300
   return durSec > 300
@@ -25,7 +30,7 @@ export function matchDuration(durSec: number, d: DurationFilter): boolean {
 export function filterVideos(items: VideoItem[], filters: Filters, now: number = Date.now() / 1000): VideoItem[] {
   return items.filter(i =>
     matchTimeRange(i.publishTime, filters.timeRange, filters.startDate, filters.endDate, now) &&
-    matchDuration(i.durationSec, filters.duration)
+    matchDuration(i.durationSec, filters.duration, filters.durationMinSec, filters.durationMaxSec)
   )
 }
 

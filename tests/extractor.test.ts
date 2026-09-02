@@ -28,6 +28,20 @@ describe('matchTimeRange', () => {
 })
 
 describe('matchDuration', () => {
+  it('30秒内排除未知时长和31秒，包含29秒与30秒边界', () => {
+    expect(matchDuration(0, 'under30')).toBe(false)
+    expect(matchDuration(29, 'under30')).toBe(true)
+    expect(matchDuration(30, 'under30')).toBe(true)
+    expect(matchDuration(31, 'under30')).toBe(false)
+  })
+  it('自定义10-20秒包含两端，排除范围外与非法边界', () => {
+    expect(matchDuration(10, 'custom', 10, 20)).toBe(true)
+    expect(matchDuration(20, 'custom', 10, 20)).toBe(true)
+    expect(matchDuration(9, 'custom', 10, 20)).toBe(false)
+    expect(matchDuration(21, 'custom', 10, 20)).toBe(false)
+    expect(matchDuration(15, 'custom', 20, 10)).toBe(false)
+    expect(matchDuration(15, 'custom')).toBe(false)
+  })
   it('短 <60s', () => { expect(matchDuration(30, 'short')).toBe(true); expect(matchDuration(90, 'short')).toBe(false) })
   it('中 60-300s', () => { expect(matchDuration(120, 'medium')).toBe(true); expect(matchDuration(30, 'medium')).toBe(false) })
   it('长 >300s', () => { expect(matchDuration(600, 'long')).toBe(true); expect(matchDuration(120, 'long')).toBe(false) })
@@ -38,6 +52,11 @@ describe('filterVideos', () => {
     const filters: Filters = { ...baseFilters, timeRange: '7d', duration: 'short' }
     const items = [item({ durationSec: 30, publishTime: NOW - day }), item({ durationSec: 500, publishTime: NOW - day })]
     expect(filterVideos(items, filters, NOW)).toHaveLength(1)
+  })
+  it('把自定义秒数边界传给时长过滤器', () => {
+    const filters: Filters = { ...baseFilters, duration: 'custom', durationMinSec: 10, durationMaxSec: 20 }
+    const items = [9, 10, 15, 20, 21].map((durationSec, index) => item({ awemeId: String(index), durationSec }))
+    expect(filterVideos(items, filters, NOW).map(video => video.durationSec)).toEqual([10, 15, 20])
   })
 })
 

@@ -2,13 +2,15 @@ export type TaskType = 'keyword' | 'author' | 'hashtag'
 export type TaskStatus = 'pending' | 'running' | 'done' | 'paused' | 'failed'
 export type VideoStatus = 'pending' | 'downloading' | 'done' | 'failed' | 'filtered' | 'collected' | 'cancelled' | 'paused'
 export type TimeRange = 'all' | '7d' | '30d' | 'custom'
-export type DurationFilter = 'all' | 'short' | 'medium' | 'long'
+export type DurationFilter = 'all' | 'under30' | 'short' | 'medium' | 'long' | 'custom'
 
 export interface Filters {
   timeRange: TimeRange
   startDate?: string // ISO date，timeRange='custom' 时必填
   endDate?: string
   duration: DurationFilter
+  durationMinSec?: number
+  durationMaxSec?: number
   targetCount: number
   aiFilterRule?: string
   aiFilterEnabled?: boolean // createTask 会把它序列化进 filters JSON 列（Task 6）

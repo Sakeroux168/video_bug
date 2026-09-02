@@ -10,6 +10,8 @@ export default function FilterForm({ onSubmit }: { onSubmit: (t: CreateTaskInput
   const [query, setQuery] = useState('')
   const [timeRange, setTimeRange] = useState<Filters['timeRange']>('all')
   const [duration, setDuration] = useState<Filters['duration']>('all')
+  const [durationMinSec, setDurationMinSec] = useState('')
+  const [durationMaxSec, setDurationMaxSec] = useState('')
   const [target, setTarget] = useState(200)
   const [aiFilter, setAiFilter] = useState(false)
   const [aiRule, setAiRule] = useState('')
@@ -26,16 +28,27 @@ export default function FilterForm({ onSubmit }: { onSubmit: (t: CreateTaskInput
 
   // 目标数量自由设置 1-1000（默认 200）
   const targetValid = target >= 1 && target <= 1000
+  const customMin = Number(durationMinSec)
+  const customMax = Number(durationMaxSec)
+  const customDurationValid = duration !== 'custom' || (
+    durationMinSec.trim() !== '' && durationMaxSec.trim() !== '' &&
+    Number.isInteger(customMin) && Number.isInteger(customMax) &&
+    customMin >= 1 && customMax >= customMin
+  )
 
   async function submit(): Promise<void> {
     if (!query.trim()) { setErr('请输入关键词/作者/话题'); return }
     if (!targetValid) { setErr('目标数量需在 1-1000 之间'); return }
+    if (!customDurationValid) { setErr('自定义时长需为正整数，且最长秒数不能小于最短秒数'); return }
     if (aiFilter && !aiRule.trim()) { setErr('开启先审后下需填写筛选规则'); return }
     setErr('')
     const r = await onSubmit({
       platform, type, query: query.trim(),
       filters: {
-        timeRange, duration, targetCount: target, aiFilterRule: aiFilter ? aiRule.trim() : undefined
+        timeRange, duration,
+        durationMinSec: duration === 'custom' ? customMin : undefined,
+        durationMaxSec: duration === 'custom' ? customMax : undefined,
+        targetCount: target, aiFilterRule: aiFilter ? aiRule.trim() : undefined
       },
       aiFilterEnabled: aiFilter, aiOrganizeEnabled: aiOrganize,
       autoDownload,
@@ -74,17 +87,34 @@ export default function FilterForm({ onSubmit }: { onSubmit: (t: CreateTaskInput
         <label htmlFor="filter-duration" className="flex flex-col gap-1 text-xs text-slate-500">
           时长
           <select id="filter-duration" className={inputCls} value={duration} onChange={e => setDuration(e.target.value as Filters['duration'])}>
-            <option value="all">全部</option><option value="short">短(&lt;1分钟)</option><option value="medium">中(1-5分钟)</option><option value="long">长(&gt;5分钟)</option>
+            <option value="all">全部</option><option value="under30">30秒内（≤30秒）</option><option value="short">短(&lt;1分钟)</option><option value="medium">中(1-5分钟)</option><option value="long">长(&gt;5分钟)</option><option value="custom">自定义</option>
           </select>
         </label>
+        {duration === 'custom' && (
+          <>
+            <label htmlFor="filter-duration-min" className="flex flex-col gap-1 text-xs text-slate-500">
+              最短秒数
+              <input id="filter-duration-min" type="number" min={1} step={1} className={`${inputCls} w-24`}
+                value={durationMinSec} onChange={e => setDurationMinSec(e.target.value)} />
+            </label>
+            <label htmlFor="filter-duration-max" className="flex flex-col gap-1 text-xs text-slate-500">
+              最长秒数
+              <input id="filter-duration-max" type="number" min={1} step={1} className={`${inputCls} w-24`}
+                value={durationMaxSec} onChange={e => setDurationMaxSec(e.target.value)} />
+            </label>
+          </>
+        )}
         <label htmlFor="filter-target" className="flex flex-col gap-1 text-xs text-slate-500">
           目标数量
           <input id="filter-target" type="number" className={inputCls} value={target}
             onChange={e => setTarget(Number(e.target.value))} min={1} max={1000} />
           {!targetValid && <span className="text-red-500">需在 1-1000</span>}
         </label>
-        <button className={btnPrimary} onClick={submit} disabled={!targetValid}>开始抓取</button>
+        <button className={btnPrimary} onClick={submit} disabled={!targetValid || !customDurationValid}>开始抓取</button>
       </div>
+      {duration === 'custom' && !customDurationValid && (
+        <p className="mt-2 text-xs text-red-500">自定义时长需为正整数，且最长秒数不能小于最短秒数</p>
+      )}
       <div className="mt-3 flex items-center gap-6 text-sm">
         <label className="flex items-center gap-1">
           <input type="checkbox" checked={aiFilter} onChange={e => setAiFilter(e.target.checked)} />

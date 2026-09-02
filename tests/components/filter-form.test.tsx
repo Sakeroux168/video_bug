@@ -40,3 +40,45 @@ describe('目标数量 1-1000 自由设置', () => {
     }
   })
 })
+
+describe('视频时长筛选', () => {
+  it('提供30秒内选项并按 under30 提交', async () => {
+    const onSubmit = setup()
+    fireEvent.change(screen.getByPlaceholderText('输入内容'), { target: { value: '美食' } })
+    fireEvent.change(screen.getByLabelText('时长'), { target: { value: 'under30' } })
+    fireEvent.click(screen.getByText('开始抓取'))
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({
+      filters: expect.objectContaining({ duration: 'under30' })
+    })))
+  })
+
+  it('自定义10-20秒显示两个输入框并提交包含边界', async () => {
+    const onSubmit = setup()
+    fireEvent.change(screen.getByPlaceholderText('输入内容'), { target: { value: '美食' } })
+    fireEvent.change(screen.getByLabelText('时长'), { target: { value: 'custom' } })
+    fireEvent.change(screen.getByLabelText('最短秒数'), { target: { value: '10' } })
+    fireEvent.change(screen.getByLabelText('最长秒数'), { target: { value: '20' } })
+    fireEvent.click(screen.getByText('开始抓取'))
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({
+      filters: expect.objectContaining({ duration: 'custom', durationMinSec: 10, durationMaxSec: 20 })
+    })))
+  })
+
+  it.each([
+    ['', '20'],
+    ['10', ''],
+    ['20', '10'],
+    ['0', '20'],
+    ['10.5', '20']
+  ])('自定义范围 %s-%s 无效时提示并禁止抓取', (min, max) => {
+    setup()
+    fireEvent.change(screen.getByLabelText('时长'), { target: { value: 'custom' } })
+    fireEvent.change(screen.getByLabelText('最短秒数'), { target: { value: min } })
+    fireEvent.change(screen.getByLabelText('最长秒数'), { target: { value: max } })
+
+    expect(screen.getByText('自定义时长需为正整数，且最长秒数不能小于最短秒数')).toBeInTheDocument()
+    expect(screen.getByText('开始抓取')).toBeDisabled()
+  })
+})
