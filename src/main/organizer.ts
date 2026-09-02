@@ -1,10 +1,11 @@
 import type { DatabaseSync } from 'node:sqlite'
 import { mkdirSync } from 'fs'
 import { rename } from 'fs/promises'
-import { join, basename, dirname, resolve } from 'path'
+import { join, basename, dirname, resolve, extname } from 'path'
 import type { AuthorRow, VideoRow } from '../shared/types'
 import { listAuthorVideos, setAuthorOrganizeState } from './db'
-import { ensureUniqueName } from './filename'
+import { ensureUniqueStem } from './filename'
+import { probeVideoDimensions, screenBucket, type VideoDimensions } from './videoMeta'
 
 /** 分类名清洗为合法目录名（Windows 非法字符替换，限长 32，空回落"未分类"）——与 scheduler 现有逻辑一致 */
 export function sanitizeCategory(category: string): string {
@@ -44,11 +45,13 @@ export interface OrganizerDeps {
   db: DatabaseSync
   downloadDir: string
   resolveCategory: ResolveCategoryFn
+  /** 元数据缺失时探测本地文件；注入点用于不依赖本机工具的测试。 */
+  probeDimensions?: (file: string) => Promise<VideoDimensions | null>
   /** 每归档完一个作者回调一次，供上层汇报进度 */
   onProgress?: (info: { authorId: number; authorName: string; moved: number; category: string; state: 'done' | 'failed' }) => void
 }
 
-/** 按作者归档：把已下载视频从平铺目录移动成 `下载目录\{品类}\{作者昵称}\{一分钟内|一分钟外}\视频`（时长分桶） */
+/** 按作者归档：平铺视频与封面 → 品类/作者/方向/时长，同主体名称成对移动。 */
 export class Organizer {
   constructor(private deps: OrganizerDeps) {}
 
@@ -96,12 +99,45 @@ export class Organizer {
     for (const v of videos) {
       if (!v.local_path) continue
       try {
-        const destDir = join(this.deps.downloadDir, category, authorDir, durBucket(v.duration))
+        let width = v.video_width
+        let height = v.video_height
+        if (screenBucket(width, height) === '未识别') {
+          try {
+            const dimensions = await (this.deps.probeDimensions ?? probeVideoDimensions)(v.local_path)
+            if (dimensions && screenBucket(dimensions.width, dimensions.height) !== '未识别') {
+              width = dimensions.width
+              height = dimensions.height
+            }
+          } catch { /* 探测失败不影响归档，进入未识别目录 */ }
+        }
+        const destDir = join(this.deps.downloadDir, category, authorDir, screenBucket(width, height), durBucket(v.duration))
         mkdirSync(destDir, { recursive: true })
-        const finalName = ensureUniqueName(destDir, basename(v.local_path))
-        const dest = join(destDir, finalName)
-        await rename(v.local_path, dest)
-        db.prepare('UPDATE videos SET local_path = ? WHERE id = ?').run(dest, v.id)
+        const videoExt = extname(v.local_path)
+        const coverExt = v.cover_path ? extname(v.cover_path) : '.jpg'
+        const stem = ensureUniqueStem(destDir, basename(v.local_path, videoExt), [videoExt, '.jpg', '.jpeg', '.png', '.webp', coverExt])
+        const destVideo = join(destDir, `${stem}${videoExt}`)
+        const destCover = v.cover_path ? join(destDir, `${stem}${coverExt}`) : null
+        await rename(v.local_path, destVideo)
+        let coverMoved = false
+        try {
+          if (v.cover_path && destCover) {
+            await rename(v.cover_path, destCover)
+            coverMoved = true
+          }
+          db.exec('BEGIN')
+          try {
+            db.prepare('UPDATE videos SET local_path=?, cover_path=?, video_width=?, video_height=? WHERE id=?')
+              .run(destVideo, destCover, width, height, v.id)
+            db.exec('COMMIT')
+          } catch (error) {
+            db.exec('ROLLBACK')
+            throw error
+          }
+        } catch (error) {
+          if (coverMoved && destCover && v.cover_path) await rename(destCover, v.cover_path).catch(() => undefined)
+          await rename(destVideo, v.local_path).catch(() => undefined)
+          throw error
+        }
         moved++
       } catch {
         failedMoves++ // 源文件缺失/权限等 → 单条失败，整作者记 failed
