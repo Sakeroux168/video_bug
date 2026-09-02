@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { safeFilename, ensureUniqueName } from '../src/main/filename'
+import { safeFilename, ensureUniqueName, ensureUniqueStem } from '../src/main/filename'
 import { mkdtempSync, writeFileSync, rmSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
@@ -26,6 +26,19 @@ describe('ensureUniqueName', () => {
     const dir = mkdtempSync(join(tmpdir(), 'fn-'))
     writeFileSync(join(dir, 'a.mp4'), '')
     expect(ensureUniqueName(dir, 'a.mp4')).toBe('a_1.mp4')
+    rmSync(dir, { recursive: true, force: true })
+  })
+})
+
+describe('ensureUniqueStem', () => {
+  it('视频或孤立封面占用名称时，为整对文件追加相同序号', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'stem-'))
+    const extensions = ['.mp4', '.jpg', '.png', '.webp']
+    writeFileSync(join(dir, '标题.mp4'), 'old')
+    expect(ensureUniqueStem(dir, '标题', extensions)).toBe('标题_1')
+    rmSync(join(dir, '标题.mp4'))
+    writeFileSync(join(dir, '标题.webp'), 'orphan')
+    expect(ensureUniqueStem(dir, '标题', extensions)).toBe('标题_1')
     rmSync(dir, { recursive: true, force: true })
   })
 })

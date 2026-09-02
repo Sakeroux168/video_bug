@@ -266,7 +266,7 @@ export function insertVideos(db: DatabaseSync, items: VideoItem[], taskId: numbe
     const { id: authorId, created } = upsertAuthor(db, it, platform)
     const info = stmt.run(
       platform, taskId, it.awemeId, it.title, authorId, it.playUrl,
-      it.coverUrl || null, it.width, it.height, it.durationSec,
+      it.coverUrl || null, it.width || 0, it.height || 0, it.durationSec,
       new Date(it.publishTime * 1000).toISOString(), JSON.stringify({ likes: it.likes }), now
     )
     if (info.changes > 0) {

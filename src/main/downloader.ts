@@ -1,5 +1,5 @@
 import type { DatabaseSync } from 'node:sqlite'
-import { createWriteStream, mkdirSync, readdirSync, existsSync, rmSync } from 'fs'
+import { createWriteStream, mkdirSync, rmSync } from 'fs'
 import { pipeline } from 'stream/promises'
 import { Readable } from 'stream'
 import { join } from 'path'
@@ -8,7 +8,8 @@ import { findBin } from './ffbin'
 import type { AppSettings, VideoRow, VideoStatus } from '../shared/types'
 import { ERROR } from '../shared/types'
 import { classifyDownloadError, AddressPolicy } from './errors'
-import { safeFilename, ensureUniqueName } from './filename'
+import { safeFilename, ensureUniqueStem } from './filename'
+import { downloadCover } from './cover'
 import { setVideoStatus } from './db'
 
 export function buildUserAgent(_platform: string): string {
@@ -159,8 +160,8 @@ export class Downloader {
   private emit(e: DlEvent): void { for (const l of this.listeners) l(e) }
 
   /** AbortError 收尾：删半成品 + 标状态（error 清空）+ 发事件 */
-  private finishAbort(id: number, status: VideoStatus, dest: string | null): void {
-    if (dest) try { rmSync(dest, { force: true }) } catch { /* ignore */ }
+  private finishAbort(id: number, status: VideoStatus, paths: string[]): void {
+    for (const path of paths) try { rmSync(path, { force: true }) } catch { /* ignore */ }
     this.db.prepare("UPDATE videos SET status=?, error=NULL WHERE id=?").run(status, id)
     this.emit({ type: 'video:status', id, status })
   }
@@ -187,7 +188,7 @@ export class Downloader {
     // 每个在途任务一个 AbortController，cancel(ids) 用它掐断 fetch / pipeline 写盘
     const aborter = new AbortController()
     this.aborters.set(id, aborter)
-    let dest: string | null = null
+    const cleanupPaths: string[] = []
     try {
       // 下载前判地址过期：源地址超过 TTL 视为失效，直接标失败，不浪费请求
       const policy = new AddressPolicy(this.settings.addressTtlMin)
@@ -203,9 +204,13 @@ export class Downloader {
         ? (this.db.prepare('SELECT nickname FROM authors WHERE id = ?').get(row.author_id) as { nickname: string } | undefined)
         : undefined
       const name = safeFilename(row.title, author?.nickname ?? 'unknown', row.aweme_id)
-      const finalName = ensureUniqueName(this.settings.downloadDir, `${name}.mp4`)
-      const target = join(this.settings.downloadDir, finalName)
-      dest = target // 供取消分支删半成品
+      const stem = ensureUniqueStem(this.settings.downloadDir, name, ['.mp4', '.jpg', '.jpeg', '.png', '.webp'])
+      const target = join(this.settings.downloadDir, `${stem}.mp4`)
+      cleanupPaths.push(target) // 供暂停/取消分支清理完整视频或半成品
+      const headers = {
+        'user-agent': buildUserAgent(row.platform),
+        referer: `https://www.${row.platform}.com/`
+      }
 
       // 候选下载地址：原始地址优先（网页播放器即用，通常无水印）；失败/坏文件则回退 playwm→play 无水印变体
       const candidates = [row.play_addr]
@@ -215,7 +220,7 @@ export class Downloader {
       for (const url of candidates) {
         const res = await this.fetchImpl(url!, {
           signal: aborter.signal,
-          headers: { 'user-agent': buildUserAgent(row.platform), referer: `https://www.${row.platform}.com/` }
+          headers
         })
         if (!res.ok || !res.body) { lastErr = new Error(`http_${res.status}`); continue }
         // Response.body 是 Web ReadableStream，不是 Node 流，需经 Readable.fromWeb 转成 Node Readable；
@@ -235,9 +240,24 @@ export class Downloader {
       // 文件已完整落盘但 runOne 会继续提交 done → 行已删时留孤儿 mp4。提交 done 前再查一次信号，
       // 已 abort 则抛错走既有 aborted 收尾（rmSync 半成品 + 标 cancelled + 清 fetching）。
       if (aborter.signal.aborted) throw new Error('AbortError')
+      const coverPart = join(this.settings.downloadDir, `${stem}.cover.part`)
+      cleanupPaths.push(coverPart)
+      const coverPath = row.cover_url
+        ? await downloadCover({
+            url: row.cover_url,
+            dir: this.settings.downloadDir,
+            stem,
+            fetchImpl: this.fetchImpl,
+            signal: aborter.signal,
+            headers
+          })
+        : null
+      if (coverPath) cleanupPaths.push(coverPath)
+      else if (row.cover_url) console.warn(`[downloader] 封面下载失败，视频继续完成: id=${id}`)
+      if (aborter.signal.aborted) throw new Error('AbortError')
       const downloadedAt = new Date().toISOString()
-      this.db.prepare("UPDATE videos SET status='done', local_path=?, file_size=?, downloaded_at=?, error=NULL WHERE id=?")
-        .run(target, size, downloadedAt, id)
+      this.db.prepare("UPDATE videos SET status='done', local_path=?, cover_path=?, file_size=?, downloaded_at=?, error=NULL WHERE id=?")
+        .run(target, coverPath, size, downloadedAt, id)
       this.emit({ type: 'video:status', id, status: 'done', localPath: target })
     } catch (err) {
       // 取消分支（signal 已 abort，真实 AbortError 是 DOMException、非 Error，用 signal.aborted 判）：
@@ -252,26 +272,26 @@ export class Downloader {
         if (reason === 'paused') {
           if (this.pausedIds.has(id)) {
             // 单条暂停（全局继续未发生过）：标 paused，继续后手动恢复
-            this.finishAbort(id, 'paused', dest)
+            this.finishAbort(id, 'paused', cleanupPaths)
           } else if (cur?.status !== 'cancelled') {
             // 全局暂停（回调时无论是否已 resume）：标回 pending 重新入队，drain 自然续下；
             // 已取消项不再覆盖为 pending 重排
-            this.finishAbort(id, 'pending', dest)
+            this.finishAbort(id, 'pending', cleanupPaths)
             this.queue.push(id)
           } else {
-            this.finishAbort(id, 'cancelled', dest)
+            this.finishAbort(id, 'cancelled', cleanupPaths)
           }
         } else if (reason === 'cancelled') {
-          this.finishAbort(id, 'cancelled', dest)
+          this.finishAbort(id, 'cancelled', cleanupPaths)
         } else {
           // 无快照（兜底）：按当下状态判断——单条暂停 / 全局暂停 / 用户取消
           if (this.pausedIds.has(id)) {
-            this.finishAbort(id, 'paused', dest)
+            this.finishAbort(id, 'paused', cleanupPaths)
           } else if (this.paused && cur?.status !== 'cancelled') {
-            this.finishAbort(id, 'pending', dest)
+            this.finishAbort(id, 'pending', cleanupPaths)
             this.queue.push(id)
           } else {
-            this.finishAbort(id, 'cancelled', dest)
+            this.finishAbort(id, 'cancelled', cleanupPaths)
           }
         }
         return

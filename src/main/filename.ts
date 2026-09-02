@@ -19,3 +19,13 @@ export function ensureUniqueName(dir: string, name: string): string {
   while (existsSync(join(dir, `${stem}_${i}${ext}`))) i++
   return `${stem}_${i}${ext}`
 }
+
+/** 为同一视频的 MP4 与封面选择一个共同且未占用的文件名主体。 */
+export function ensureUniqueStem(dir: string, stem: string, extensions: string[]): string {
+  const occupied = (candidate: string): boolean =>
+    extensions.some(ext => existsSync(join(dir, `${candidate}${ext}`)))
+  if (!occupied(stem)) return stem
+  let i = 1
+  while (occupied(`${stem}_${i}`)) i++
+  return `${stem}_${i}`
+}

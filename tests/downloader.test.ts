@@ -2,8 +2,8 @@ import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { DatabaseSync } from 'node:sqlite'
 import { initDb, createTask, insertVideos, listVideos, setVideoStatus } from '../src/main/db'
 import { Downloader, buildUserAgent } from '../src/main/downloader'
-import { mkdtempSync, readFileSync, rmSync, existsSync, readdirSync } from 'fs'
-import { join } from 'path'
+import { mkdtempSync, readFileSync, rmSync, existsSync, readdirSync, writeFileSync } from 'fs'
+import { basename, extname, join } from 'path'
 import { tmpdir } from 'os'
 import type { CreateTaskInput } from '../src/shared/types'
 import type { VideoItem } from '../src/main/adapters/types'
@@ -25,9 +25,10 @@ const input: CreateTaskInput = {
   aiFilterEnabled: false, aiOrganizeEnabled: false,
   autoDownload: true
 }
-const item = (awemeId = 'AW001'): VideoItem => ({
+const item = (awemeId = 'AW001', over: Partial<VideoItem> = {}): VideoItem => ({
   awemeId, title: '标题', authorSecUid: 'SEC', authorNickname: '作者',
-  authorHomeUrl: 'h', playUrl: 'https://cdn.test/v.mp4', durationSec: 10, publishTime: 1710000000, likes: 0
+  authorHomeUrl: 'h', playUrl: 'https://cdn.test/v.mp4', coverUrl: '', width: 0, height: 0,
+  durationSec: 10, publishTime: 1710000000, likes: 0, ...over
 })
 
 describe('buildUserAgent', () => {
@@ -65,6 +66,103 @@ describe('Downloader', () => {
     expect(existsSync(row.local_path!)).toBe(true)
     expect(readFileSync(row.local_path!)).toEqual(mp4)
     expect(events).toContain('video:status:done')
+  })
+
+  it('视频与封面下载成功：保存为完全相同的文件名主体', async () => {
+    const taskId = createTask(db, input)
+    insertVideos(db, [item('PAIR1', { coverUrl: 'https://img.test/c' })], taskId, 'douyin')
+    const [v] = listVideos(db, taskId)
+    const mp4 = Buffer.alloc(2048)
+    mp4.writeUInt32BE(0x18, 0)
+    mp4.write('ftypisom', 4)
+    const cover = new Uint8Array([9, 8, 7])
+    const fetchImpl = (async (url: unknown) => String(url).includes('img.test')
+      ? new Response(cover, { status: 200, headers: { 'content-type': 'image/webp' } })
+      : new Response(mp4, { status: 200, headers: { 'content-type': 'video/mp4' } })) as typeof fetch
+    const dl = new Downloader(db, { downloadDir: dir, downloadConcurrency: 1, addressTtlMin: 30 }, fetchImpl, { validator: async () => true })
+
+    dl.enqueue(v.id)
+    await new Promise(r => setTimeout(r, 80))
+
+    const row = listVideos(db, taskId)[0]
+    expect(row.status).toBe('done')
+    expect(extname(row.cover_path!)).toBe('.webp')
+    expect(basename(row.local_path!, '.mp4')).toBe(basename(row.cover_path!, '.webp'))
+    expect(readFileSync(row.cover_path!)).toEqual(Buffer.from(cover))
+  })
+
+  it('孤立旧封面占名时，视频与新封面共同使用 _1 后缀', async () => {
+    const taskId = createTask(db, input)
+    insertVideos(db, [item('AW001', { coverUrl: 'https://img.test/c' })], taskId, 'douyin')
+    const [v] = listVideos(db, taskId)
+    writeFileSync(join(dir, '标题_作者_AW001.webp'), 'old')
+    const mp4 = Buffer.alloc(2048)
+    mp4.writeUInt32BE(0x18, 0)
+    mp4.write('ftypisom', 4)
+    const fetchImpl = (async (url: unknown) => String(url).includes('img.test')
+      ? new Response(new Uint8Array([1]), { status: 200, headers: { 'content-type': 'image/jpeg' } })
+      : new Response(mp4, { status: 200 })) as typeof fetch
+    const dl = new Downloader(db, { downloadDir: dir, downloadConcurrency: 1, addressTtlMin: 30 }, fetchImpl, { validator: async () => true })
+
+    dl.enqueue(v.id)
+    await new Promise(r => setTimeout(r, 80))
+
+    const row = listVideos(db, taskId)[0]
+    expect(basename(row.local_path!)).toBe('标题_作者_AW001_1.mp4')
+    expect(basename(row.cover_path!)).toBe('标题_作者_AW001_1.jpg')
+  })
+
+  it('封面 HTTP 失败不阻断视频完成，cover_path 保持空', async () => {
+    const taskId = createTask(db, input)
+    insertVideos(db, [item('PAIR2', { coverUrl: 'https://img.test/missing' })], taskId, 'douyin')
+    const [v] = listVideos(db, taskId)
+    const mp4 = Buffer.alloc(2048)
+    mp4.writeUInt32BE(0x18, 0)
+    mp4.write('ftypisom', 4)
+    const fetchImpl = (async (url: unknown) => String(url).includes('img.test')
+      ? new Response(null, { status: 503 })
+      : new Response(mp4, { status: 200 })) as typeof fetch
+    const dl = new Downloader(db, { downloadDir: dir, downloadConcurrency: 1, addressTtlMin: 30 }, fetchImpl, { validator: async () => true })
+
+    dl.enqueue(v.id)
+    await new Promise(r => setTimeout(r, 80))
+
+    const row = listVideos(db, taskId)[0]
+    expect(row.status).toBe('done')
+    expect(row.local_path).toBeTruthy()
+    expect(row.cover_path).toBeNull()
+  })
+
+  it('封面下载途中取消：状态 cancelled，并清理 MP4 与封面半成品', async () => {
+    const taskId = createTask(db, input)
+    insertVideos(db, [item('PAIR3', { coverUrl: 'https://img.test/slow' })], taskId, 'douyin')
+    const [v] = listVideos(db, taskId)
+    const mp4 = Buffer.alloc(2048)
+    mp4.writeUInt32BE(0x18, 0)
+    mp4.write('ftypisom', 4)
+    let coverStarted!: () => void
+    const started = new Promise<void>(resolve => { coverStarted = resolve })
+    const fetchImpl = (async (url: unknown, init?: RequestInit) => {
+      if (!String(url).includes('img.test')) return new Response(mp4, { status: 200 })
+      const signal = init?.signal!
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new Uint8Array([1, 2]))
+          coverStarted()
+          signal.addEventListener('abort', () => controller.error(new Error('aborted')))
+        }
+      })
+      return new Response(stream, { status: 200, headers: { 'content-type': 'image/png' } })
+    }) as typeof fetch
+    const dl = new Downloader(db, { downloadDir: dir, downloadConcurrency: 1, addressTtlMin: 30 }, fetchImpl, { validator: async () => true })
+
+    dl.enqueue(v.id)
+    await started
+    dl.cancel([v.id])
+    await new Promise(r => setTimeout(r, 50))
+
+    expect(listVideos(db, taskId)[0].status).toBe('cancelled')
+    expect(readdirSync(dir)).toHaveLength(0)
   })
 
   it('下载内容是坏文件（无 ftyp）→ 标记 failed + parse_error，删除坏文件', async () => {

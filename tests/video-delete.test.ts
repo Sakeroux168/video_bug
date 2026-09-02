@@ -23,6 +23,7 @@ const input: CreateTaskInput = {
 const item = (awemeId: string): VideoItem => ({
   awemeId, title: `标题${awemeId}`, authorSecUid: 'SEC1', authorNickname: '作者1',
   authorHomeUrl: 'https://www.douyin.com/user/SEC1', playUrl: 'https://v/play/1',
+  coverUrl: '', width: 0, height: 0,
   durationSec: 60, publishTime: 1710000000, likes: 10
 })
 
@@ -65,6 +66,24 @@ describe('deleteVideoRows（ipc video:delete 编排）', () => {
     expect(listAuthors(db)[0].video_count).toBe(0) // 2 条全删 → 计数归 0
   })
 
+  it('视频和封面路径都安全时，两份文件一起删除后再删数据库行', async () => {
+    setupVideos(1)
+    const [video] = listVideos(db, 1)
+    const videoPath = join(tmp, 'pair.mp4')
+    const coverPath = join(tmp, 'pair.webp')
+    writeFileSync(videoPath, 'video')
+    writeFileSync(coverPath, 'cover')
+    db.prepare('UPDATE videos SET local_path=?, cover_path=? WHERE id=?')
+      .run(videoPath, coverPath, video.id)
+
+    const result = await deleteVideoRows({ db, downloader: { cancel: vi.fn() }, downloadDir: tmp }, [video.id])
+
+    expect(result).toEqual({ ok: true, deleted: 1 })
+    expect(existsSync(videoPath)).toBe(false)
+    expect(existsSync(coverPath)).toBe(false)
+    expect(listVideos(db, 1)).toHaveLength(0)
+  })
+
   it('部分成功：一条文件删成功（文件消失+行删），一条 unlink 失败（报错+保留行）', async () => {
     setupVideos(2)
     const vs = listVideos(db, 1)
@@ -88,14 +107,34 @@ describe('deleteVideoRows（ipc video:delete 编排）', () => {
     expect(listAuthors(db)[0].video_count).toBe(1)
   })
 
-  it('路径不安全（downloadDir 外）→ 跳过该条，不删文件不删行不报错', async () => {
+  it('路径不安全（downloadDir 外）→ 不删任何资源，保留数据库行并报告错误', async () => {
     setupVideos(1)
     const v = listVideos(db, 1)[0]
     const outside = join(tmp, '..', 'evil.mp4') // 穿越路径
     db.prepare('UPDATE videos SET local_path = ? WHERE id = ?').run(outside, v.id)
 
     const r = await deleteVideoRows({ db, downloader: { cancel: vi.fn() }, downloadDir: tmp }, [v.id])
-    expect(r).toEqual({ ok: true, deleted: 0 })
+    expect(r.ok).toBe(false)
+    expect(r.deleted).toBe(0)
+    expect(r.error).toContain('不在下载目录内')
+    expect(listVideos(db, 1)).toHaveLength(1)
+  })
+
+  it('封面路径在下载目录外时，不先删安全的 MP4，保留数据库行并报告错误', async () => {
+    setupVideos(1)
+    const [video] = listVideos(db, 1)
+    const videoPath = join(tmp, 'safe.mp4')
+    const outsideCover = join(tmp, '..', 'outside.webp')
+    writeFileSync(videoPath, 'video')
+    db.prepare('UPDATE videos SET local_path=?, cover_path=? WHERE id=?')
+      .run(videoPath, outsideCover, video.id)
+
+    const result = await deleteVideoRows({ db, downloader: { cancel: vi.fn() }, downloadDir: tmp }, [video.id])
+
+    expect(result.ok).toBe(false)
+    expect(result.deleted).toBe(0)
+    expect(result.error).toContain('不在下载目录内')
+    expect(existsSync(videoPath)).toBe(true)
     expect(listVideos(db, 1)).toHaveLength(1)
   })
 
