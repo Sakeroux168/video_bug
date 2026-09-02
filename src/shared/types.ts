@@ -57,6 +57,7 @@ export interface VideoRow {
   author_id: number | null; play_addr: string | null; duration: number
   cover_url: string | null; cover_path: string | null
   video_width: number; video_height: number
+  organize_retry?: number // 成对移动回滚失败：路径记录实际位置，后续整理仍需重试
   publish_time: string | null; stats: string; ai_verdict: 'pass' | 'filtered' | null
   ai_tags: string | null; status: VideoStatus; local_path: string | null
   file_size: number | null; error: string | null; retry_count: number

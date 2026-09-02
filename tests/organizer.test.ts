@@ -3,6 +3,7 @@ import { DatabaseSync } from 'node:sqlite'
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, readdirSync, renameSync, readFileSync } from 'fs'
 import { join, basename, dirname } from 'path'
 import { tmpdir } from 'os'
+import { rename } from 'fs/promises'
 import { initDb, createTask, insertVideos, listVideos, setVideoStatus } from '../src/main/db'
 import { Organizer, sanitizeCategory, sanitizeDirName, authorDirName } from '../src/main/organizer'
 import type { CreateTaskInput } from '../src/shared/types'
@@ -272,6 +273,34 @@ describe('横竖屏与封面成对归档', () => {
     expect(existsSync(vids[0].src)).toBe(true)
     expect(db.prepare('SELECT local_path, cover_path FROM videos WHERE id=?').get(vids[0].id))
       .toEqual({ local_path: vids[0].src, cover_path: missingCover })
+  })
+
+  it('封面移动和视频回滚都被占用阻止时，记录实际位置，重建整理器后仍能重试成功', async () => {
+    const { authorId, vids } = authorWithDoneVideos('LOCKED', '占用', 1)
+    const coverPath = join(dir, 'LOCKED_0.webp')
+    writeFileSync(coverPath, 'cover')
+    setVideoStatus(db, vids[0].id, 'done', { cover_path: coverPath })
+    const org = new Organizer({
+      db, downloadDir: dir, resolveCategory: async () => '美食',
+      renameFile: async (from, to) => {
+        if (from === coverPath || to === vids[0].src) throw Object.assign(new Error('file locked'), { code: 'EPERM' })
+        await rename(from, to)
+      }
+    })
+    expect(await org.organizeAuthor(authorId)).toMatchObject({ moved: 0, state: 'failed' })
+    const partial = db.prepare('SELECT * FROM videos WHERE id=?').get(vids[0].id) as any
+    expect(partial.organize_retry).toBe(1)
+    expect(existsSync(partial.local_path)).toBe(true)
+    expect(existsSync(partial.cover_path)).toBe(true)
+    expect(partial.local_path).not.toBe(vids[0].src)
+    // 模拟进程重启/文件解除占用；恢复不依赖旧 Organizer 的内存。
+    expect(await organizer().organizeAuthor(authorId)).toMatchObject({ moved: 1, state: 'done' })
+    const complete = db.prepare('SELECT * FROM videos WHERE id=?').get(vids[0].id) as any
+    expect(complete.organize_retry).toBe(0)
+    expect(dirname(complete.local_path)).toBe(dirname(complete.cover_path))
+    expect(basename(complete.local_path, '.mp4')).toBe(basename(complete.cover_path, '.webp'))
+    expect(existsSync(complete.local_path)).toBe(true)
+    expect(existsSync(complete.cover_path)).toBe(true)
   })
 
   it('旧结构中已归档的视频保持原位置，不自动搬迁', async () => {

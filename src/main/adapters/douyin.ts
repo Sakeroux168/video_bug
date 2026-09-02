@@ -45,11 +45,11 @@ function positiveInteger(v: unknown): number {
   return Number.isInteger(n) && n > 0 ? n : 0
 }
 
-/** 时长多候选解析（抖音接口为毫秒 → 取整秒）：顶层 duration → video.duration → 0。
+/** 时长多候选解析（抖音接口毫秒 → 精确秒数）：顶层 duration → video.duration → 0。
  *  真实接口时长字段位置不定（可能在 video 下），做兜底；候选值为字符串数字也兼容（Number 转换）。 */
 function pickDurationSec(o: Record<string, any>): number {
   const ms = Number(o.duration ?? (asObj(o.video).duration ?? 0))
-  return Number.isFinite(ms) ? Math.round(ms / 1000) : 0
+  return Number.isFinite(ms) && ms > 0 ? ms / 1000 : 0
 }
 
 /** 0 时长诊断：解析出有效条目但时长多候选仍取不到（durationSec === 0）时，记录该条目顶层字段名，

@@ -189,6 +189,8 @@ export class Downloader {
     const aborter = new AbortController()
     this.aborters.set(id, aborter)
     const cleanupPaths: string[] = []
+    // 当前下载固定一个目录，设置热更新只影响下一条，避免封面与视频分离或覆盖旧封面。
+    const downloadDir = this.settings.downloadDir
     try {
       // 下载前判地址过期：源地址超过 TTL 视为失效，直接标失败，不浪费请求
       const policy = new AddressPolicy(this.settings.addressTtlMin)
@@ -204,8 +206,8 @@ export class Downloader {
         ? (this.db.prepare('SELECT nickname FROM authors WHERE id = ?').get(row.author_id) as { nickname: string } | undefined)
         : undefined
       const name = safeFilename(row.title, author?.nickname ?? 'unknown', row.aweme_id)
-      const stem = ensureUniqueStem(this.settings.downloadDir, name, ['.mp4', '.jpg', '.jpeg', '.png', '.webp'])
-      const target = join(this.settings.downloadDir, `${stem}.mp4`)
+      const stem = ensureUniqueStem(downloadDir, name, ['.mp4', '.jpg', '.jpeg', '.png', '.webp'])
+      const target = join(downloadDir, `${stem}.mp4`)
       cleanupPaths.push(target) // 供暂停/取消分支清理完整视频或半成品
       const headers = {
         'user-agent': buildUserAgent(row.platform),
@@ -240,12 +242,12 @@ export class Downloader {
       // 文件已完整落盘但 runOne 会继续提交 done → 行已删时留孤儿 mp4。提交 done 前再查一次信号，
       // 已 abort 则抛错走既有 aborted 收尾（rmSync 半成品 + 标 cancelled + 清 fetching）。
       if (aborter.signal.aborted) throw new Error('AbortError')
-      const coverPart = join(this.settings.downloadDir, `${stem}.cover.part`)
+      const coverPart = join(downloadDir, `${stem}.cover.part`)
       cleanupPaths.push(coverPart)
       const coverPath = row.cover_url
         ? await downloadCover({
             url: row.cover_url,
-            dir: this.settings.downloadDir,
+            dir: downloadDir,
             stem,
             fetchImpl: this.fetchImpl,
             signal: aborter.signal,

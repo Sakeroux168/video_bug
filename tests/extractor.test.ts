@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { filterVideos, matchTimeRange, matchDuration, dedupeVideos } from '../src/main/extractor'
 import type { VideoItem } from '../src/main/adapters/types'
 import type { Filters } from '../src/shared/types'
+import { douyinAdapter } from '../src/main/adapters/douyin'
 
 const NOW = 1720000000 // 基准时间
 const day = 86400
@@ -48,6 +49,16 @@ describe('matchDuration', () => {
 })
 
 describe('filterVideos', () => {
+  it('接口毫秒精度保留：9.6/20.4 秒不通过10-20范围，30.4秒不通过30秒内', () => {
+    const items = douyinAdapter.parseApiJson('https://x/', { aweme_list: [9600, 10000, 20000, 20400, 30000, 30400].map(ms => ({
+      aweme_id: String(ms), desc: '边界测试', duration: ms,
+      video: { play_addr: { url_list: ['https://cdn.test/v.mp4'] } }
+    })) })
+    expect(filterVideos(items, { ...baseFilters, duration: 'custom', durationMinSec: 10, durationMaxSec: 20 }).map(v => v.awemeId))
+      .toEqual(['10000', '20000'])
+    expect(filterVideos(items, { ...baseFilters, duration: 'under30' }).map(v => v.awemeId))
+      .toEqual(['9600', '10000', '20000', '20400', '30000'])
+  })
   it('时间+时长联合过滤', () => {
     const filters: Filters = { ...baseFilters, timeRange: '7d', duration: 'short' }
     const items = [item({ durationSec: 30, publishTime: NOW - day }), item({ durationSec: 500, publishTime: NOW - day })]

@@ -67,10 +67,10 @@ describe('db', () => {
     initDb(old)
     const columns = old.prepare('PRAGMA table_info(videos)').all() as Array<{ name: string }>
     expect(columns.map(c => c.name)).toEqual(expect.arrayContaining([
-      'cover_url', 'cover_path', 'video_width', 'video_height'
+      'cover_url', 'cover_path', 'video_width', 'video_height', 'organize_retry'
     ]))
-    expect(old.prepare('SELECT aweme_id, video_width, video_height FROM videos').get())
-      .toEqual({ aweme_id: 'OLD1', video_width: 0, video_height: 0 })
+    expect(old.prepare('SELECT aweme_id, video_width, video_height, organize_retry FROM videos').get())
+      .toEqual({ aweme_id: 'OLD1', video_width: 0, video_height: 0, organize_retry: 0 })
   })
 
   it('upsertAuthor 幂等，video_count 累加', () => {

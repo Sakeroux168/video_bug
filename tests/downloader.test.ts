@@ -3,7 +3,7 @@ import { DatabaseSync } from 'node:sqlite'
 import { initDb, createTask, insertVideos, listVideos, setVideoStatus } from '../src/main/db'
 import { Downloader, buildUserAgent } from '../src/main/downloader'
 import { mkdtempSync, readFileSync, rmSync, existsSync, readdirSync, writeFileSync } from 'fs'
-import { basename, extname, join } from 'path'
+import { basename, dirname, extname, join } from 'path'
 import { tmpdir } from 'os'
 import type { CreateTaskInput } from '../src/shared/types'
 import type { VideoItem } from '../src/main/adapters/types'
@@ -110,6 +110,31 @@ describe('Downloader', () => {
     const row = listVideos(db, taskId)[0]
     expect(basename(row.local_path!)).toBe('标题_作者_AW001_1.mp4')
     expect(basename(row.cover_path!)).toBe('标题_作者_AW001_1.jpg')
+  })
+
+  it('下载中修改目录时，当前视频与封面仍使用启动目录且不覆盖新目录旧封面', async () => {
+    const taskId = createTask(db, input)
+    insertVideos(db, [item('SWITCH', { coverUrl: 'https://img.test/c' })], taskId, 'douyin')
+    const [v] = listVideos(db, taskId)
+    const newDir = mkdtempSync(join(dir, 'switched-'))
+    const orphan = join(newDir, '标题_作者_SWITCH.jpg')
+    writeFileSync(orphan, 'old cover')
+    const fetchImpl = (async (url: unknown) => String(url).includes('img.test')
+      ? new Response(new Uint8Array([1]), { headers: { 'content-type': 'image/jpeg' } })
+      : new Response(Buffer.alloc(2048))) as typeof fetch
+    const dl = new Downloader(db, { downloadDir: dir, downloadConcurrency: 1, addressTtlMin: 30 }, fetchImpl, {
+      validator: async () => {
+        dl.updateSettings({ downloadDir: newDir, downloadConcurrency: 1, addressTtlMin: 30 })
+        return true
+      }
+    })
+    dl.enqueue(v.id)
+    await vi.waitFor(() => expect(dl.isIdle()).toBe(true))
+    const row = listVideos(db, taskId)[0]
+    expect(row.status).toBe('done')
+    expect(dirname(row.local_path!)).toBe(dir)
+    expect(dirname(row.cover_path!)).toBe(dir)
+    expect(readFileSync(orphan, 'utf8')).toBe('old cover')
   })
 
   it('封面 HTTP 失败不阻断视频完成，cover_path 保持空', async () => {

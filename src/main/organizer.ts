@@ -47,6 +47,7 @@ export interface OrganizerDeps {
   resolveCategory: ResolveCategoryFn
   /** 元数据缺失时探测本地文件；注入点用于不依赖本机工具的测试。 */
   probeDimensions?: (file: string) => Promise<VideoDimensions | null>
+  renameFile?: (from: string, to: string) => Promise<void>
   /** 每归档完一个作者回调一次，供上层汇报进度 */
   onProgress?: (info: { authorId: number; authorName: string; moved: number; category: string; state: 'done' | 'failed' }) => void
 }
@@ -60,11 +61,15 @@ export class Organizer {
     return !!v.local_path && dirname(resolve(v.local_path)) === resolve(this.deps.downloadDir)
   }
 
+  private needsOrganize(v: VideoRow): boolean {
+    return this.isFlat(v) || v.organize_retry === 1
+  }
+
   /** 下载完成事件调用：该作者存在 ≥1 条 done 且仍平铺在下载目录根的视频时才置 'pending'。
    *  用视频状态佐证，不因 organize_state='done' 永久挡死 —— 分批下载时上一批归档后作者为 done，
    *  新下载完成的视频仍会把它再次置 pending 供归档。 */
   markAuthorPending(authorId: number): void {
-    const hasFlatDone = listAuthorVideos(this.deps.db, authorId, 'done').some(v => this.isFlat(v))
+    const hasFlatDone = listAuthorVideos(this.deps.db, authorId, 'done').some(v => this.needsOrganize(v))
     if (hasFlatDone) setAuthorOrganizeState(this.deps.db, authorId, 'pending')
   }
 
@@ -75,7 +80,7 @@ export class Organizer {
     if (!author) return { moved: 0, category: '未分类', state: 'failed' }
 
     // 只归档仍平铺在下载目录根（未归档）的 done 视频；已在 {品类}/{作者}/{时长分桶} 子目录里的跳过，保证重复整理幂等、分批安全
-    const videos = listAuthorVideos(db, authorId, 'done').filter(v => this.isFlat(v))
+    const videos = listAuthorVideos(db, authorId, 'done').filter(v => this.needsOrganize(v))
     if (!videos.length) {
       // 没有待归档的平铺视频：作者已全部归档或本就无 done → 标记完成，不算失败
       setAuthorOrganizeState(db, authorId, 'done')
@@ -94,6 +99,7 @@ export class Organizer {
 
     // 作者目录名（重名后缀在昵称层）+ 时长分桶（每条视频各自进桶，目标目录逐条 mkdir）
     const authorDir = authorDirName(author, db)
+    const moveFile = this.deps.renameFile ?? rename
     let moved = 0
     let failedMoves = 0
     for (const v of videos) {
@@ -117,16 +123,16 @@ export class Organizer {
         const stem = ensureUniqueStem(destDir, basename(v.local_path, videoExt), [videoExt, '.jpg', '.jpeg', '.png', '.webp', coverExt])
         const destVideo = join(destDir, `${stem}${videoExt}`)
         const destCover = v.cover_path ? join(destDir, `${stem}${coverExt}`) : null
-        await rename(v.local_path, destVideo)
+        await moveFile(v.local_path, destVideo)
         let coverMoved = false
         try {
           if (v.cover_path && destCover) {
-            await rename(v.cover_path, destCover)
+            await moveFile(v.cover_path, destCover)
             coverMoved = true
           }
           db.exec('BEGIN')
           try {
-            db.prepare('UPDATE videos SET local_path=?, cover_path=?, video_width=?, video_height=? WHERE id=?')
+            db.prepare('UPDATE videos SET local_path=?, cover_path=?, video_width=?, video_height=?, organize_retry=0 WHERE id=?')
               .run(destVideo, destCover, width, height, v.id)
             db.exec('COMMIT')
           } catch (error) {
@@ -134,8 +140,18 @@ export class Organizer {
             throw error
           }
         } catch (error) {
-          if (coverMoved && destCover && v.cover_path) await rename(destCover, v.cover_path).catch(() => undefined)
-          await rename(destVideo, v.local_path).catch(() => undefined)
+          let actualVideo = destVideo
+          let actualCover = coverMoved ? destCover : v.cover_path
+          if (coverMoved && destCover && v.cover_path) {
+            try { await moveFile(destCover, v.cover_path); actualCover = v.cover_path } catch { /* 下方记录实际位置 */ }
+          }
+          try { await moveFile(destVideo, v.local_path); actualVideo = v.local_path } catch { /* 下方记录实际位置 */ }
+          if (actualVideo !== v.local_path || actualCover !== v.cover_path) {
+            // 文件占用可能让回滚也失败。持久化真实路径和重试标记，避免下一次仍找不存在的源文件。
+            db.prepare('UPDATE videos SET local_path=?, cover_path=?, organize_retry=1 WHERE id=?')
+              .run(actualVideo, actualCover, v.id)
+            console.warn(`[organizer] 归档回滚未完成，已记录实际位置等待重试: id=${v.id}`)
+          }
           throw error
         }
         moved++
