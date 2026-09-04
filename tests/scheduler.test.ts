@@ -117,7 +117,7 @@ const rawJson = {
       width: 1080,
       height: 1920
     },
-    statistics: { digg_count: 42 },
+    statistics: { digg_count: 42, comment_count: 17 },
     duration: 8000
   }]
 }
@@ -210,6 +210,7 @@ describe('handleRaw 入库与作者（I4）+ pendingVideoIds 清理（I1）', ()
     const videos = db.prepare('SELECT * FROM videos WHERE task_id=?').all(taskId) as Array<{
       id: number; author_id: number | null; aweme_id: string
       cover_url: string | null; video_width: number; video_height: number
+      source_url: string | null; stats: string
     }>
     expect(videos).toHaveLength(1)
     expect(videos[0].aweme_id).toBe('7330000000000000001')
@@ -217,6 +218,8 @@ describe('handleRaw 入库与作者（I4）+ pendingVideoIds 清理（I1）', ()
     expect(videos[0].cover_url).toBe('https://cdn.test/v1.jpg')
     expect(videos[0].video_width).toBe(1080)
     expect(videos[0].video_height).toBe(1920)
+    expect(videos[0].source_url).toBe('https://www.douyin.com/video/7330000000000000001')
+    expect(JSON.parse(videos[0].stats)).toEqual({ likes: 42, comments: 17 })
     expect(dl.enqueued).toContain(videos[0].id)
     expect((s as any).pendingVideoIds).toEqual([videos[0].id])
 
@@ -233,7 +236,7 @@ describe('handleRaw 入库与作者（I4）+ pendingVideoIds 清理（I1）', ()
     expect(db.prepare('SELECT status, error FROM tasks WHERE id=?').get(taskId)).toEqual({ status: 'paused', error: 'stalled' })
   }, 10000)
 
-  it('AI 过滤的视频也保留封面与宽高元数据', async () => {
+  it('AI 过滤的视频也保留封面、宽高、评论与作品链接元数据', async () => {
     const db = newDb()
     const taskId = createTask(db, { ...input, aiFilterEnabled: true })
     const browser = new FakeBrowser()
@@ -252,9 +255,11 @@ describe('handleRaw 入库与作者（I4）+ pendingVideoIds 清理（I1）', ()
 
     await s.handleRaw(douyinAdapter, rawUrl, rawJson)
     expect(db.prepare(
-      'SELECT status, cover_url, video_width, video_height FROM videos WHERE task_id=?'
+      'SELECT status, cover_url, video_width, video_height, source_url, stats FROM videos WHERE task_id=?'
     ).get(taskId)).toEqual({
-      status: 'filtered', cover_url: 'https://cdn.test/v1.jpg', video_width: 1080, video_height: 1920
+      status: 'filtered', cover_url: 'https://cdn.test/v1.jpg', video_width: 1080, video_height: 1920,
+      source_url: 'https://www.douyin.com/video/7330000000000000001',
+      stats: JSON.stringify({ likes: 42, comments: 17 })
     })
     expect(downloader.enqueued).toHaveLength(0)
 

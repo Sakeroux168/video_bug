@@ -54,7 +54,7 @@ export interface TaskProgressEvent {
 
 export interface VideoRow {
   id: number; platform: string; task_id: number; aweme_id: string; title: string
-  author_id: number | null; play_addr: string | null; duration: number
+  author_id: number | null; play_addr: string | null; source_url: string | null; duration: number
   cover_url: string | null; cover_path: string | null
   video_width: number; video_height: number
   organize_retry?: number // 成对移动回滚失败：路径记录实际位置，后续整理仍需重试

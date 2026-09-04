@@ -22,7 +22,8 @@ const item = (over: Partial<VideoItem> = {}): VideoItem => ({
   awemeId: 'AW1', title: '标题1', authorSecUid: 'SEC1', authorNickname: '作者1',
   authorHomeUrl: 'https://www.douyin.com/user/SEC1', playUrl: 'https://v/play/1',
   coverUrl: 'https://img.test/cover.jpg', width: 1080, height: 1920,
-  durationSec: 60, publishTime: 1710000000, likes: 10, ...over
+  durationSec: 60, publishTime: 1710000000, likes: 10, comments: 45,
+  sourceUrl: 'https://www.douyin.com/video/AW1', ...over
 })
 
 describe('db', () => {
@@ -51,6 +52,14 @@ describe('db', () => {
     expect(video.video_height).toBe(1920)
   })
 
+  it('insertVideos 保存评论数和作品页链接，真实0不丢失', () => {
+    const id = createTask(db, input)
+    insertVideos(db, [item({ comments: 0 })], id, 'douyin')
+    const [video] = listVideos(db, id)
+    expect(video.source_url).toBe('https://www.douyin.com/video/AW1')
+    expect(JSON.parse(video.stats)).toEqual({ likes: 10, comments: 0 })
+  })
+
   it('老库迁移：videos 表自动补封面与宽高列，已有行保留', () => {
     const old = new DatabaseSync(':memory:')
     old.exec(`CREATE TABLE videos (
@@ -67,10 +76,12 @@ describe('db', () => {
     initDb(old)
     const columns = old.prepare('PRAGMA table_info(videos)').all() as Array<{ name: string }>
     expect(columns.map(c => c.name)).toEqual(expect.arrayContaining([
-      'cover_url', 'cover_path', 'video_width', 'video_height', 'organize_retry'
+      'cover_url', 'cover_path', 'video_width', 'video_height', 'organize_retry', 'source_url'
     ]))
     expect(old.prepare('SELECT aweme_id, video_width, video_height, organize_retry FROM videos').get())
       .toEqual({ aweme_id: 'OLD1', video_width: 0, video_height: 0, organize_retry: 0 })
+    expect(old.prepare('SELECT source_url FROM videos WHERE aweme_id=?').get('OLD1'))
+      .toEqual({ source_url: null })
   })
 
   it('upsertAuthor 幂等，video_count 累加', () => {
