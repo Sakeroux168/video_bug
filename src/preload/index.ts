@@ -26,6 +26,7 @@ const api = {
   getGlobalStats: (): Promise<GlobalStats> => ipcRenderer.invoke('stats:global'),
   getRecentDownloads: (limit?: number): Promise<RecentDownload[]> => ipcRenderer.invoke('stats:recent', limit),
   writeClipboard: (text: string): Promise<void> => ipcRenderer.invoke('clipboard:write', text),
+  openVideoSource: (id: number): Promise<{ ok: boolean; url?: string; error?: string }> => ipcRenderer.invoke('video:source:open', id),
   importAuthors: (items: Array<{ nickname: string; url: string }>): Promise<{ created: number; results: Array<{ line: number; raw: string; ok: boolean; reason?: string }> }> => ipcRenderer.invoke('authors:import', items),
   organizeAuthor: (id: number): Promise<{ ok: boolean; moved?: number; category?: string; state?: string; error?: string }> => ipcRenderer.invoke('authors:organize', id),
   organizeAll: (): Promise<{ ok: boolean; count?: number; error?: string }> => ipcRenderer.invoke('organize:all'),

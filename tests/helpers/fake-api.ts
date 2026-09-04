@@ -42,6 +42,7 @@ function freshApi(): Api {
     })),
     getRecentDownloads: vi.fn(async () => []),
     writeClipboard: vi.fn(async () => {}),
+    openVideoSource: vi.fn(async () => ({ ok: true })),
     importAuthors: vi.fn(async () => ({ created: 0, results: [] })),
     organizeAuthor: vi.fn(async () => ({ ok: true })),
     organizeAll: vi.fn(async () => ({ ok: true })),

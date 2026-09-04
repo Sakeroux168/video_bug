@@ -13,6 +13,7 @@ import type { VideoBrowser } from './browser'
 import type { Organizer } from './organizer'
 import { status as modelsStatus, ensureModels } from './asr/models'
 import type { EnsureProgress } from './asr/models'
+import { resolveVideoSourceUrl } from './videoSource'
 
 export interface IpcDeps {
   db: DatabaseSync
@@ -67,7 +68,10 @@ export function registerIpc(deps: IpcDeps): void {
   })
 
   ipcMain.handle('task:list', () => listTasks(db))
-  ipcMain.handle('task:video:list', (_e, taskId: number) => listVideos(db, taskId))
+  ipcMain.handle('task:video:list', (_e, taskId: number) => listVideos(db, taskId).map(video => ({
+    ...video,
+    source_url: resolveVideoSourceUrl(video.platform, video.aweme_id, video.source_url)
+  })))
   ipcMain.handle('task:stats', (_e, taskId: number) => taskStats(db, taskId))
   // A1：先等 scheduler.pause()（run 完全退出）再置状态，避免渲染层立刻看到 paused 而 run 还在收尾
   ipcMain.handle('task:pause', async (_e, id: number) => { await scheduler.pause(); setTaskStatus(db, id, 'paused', 'user') })
@@ -117,6 +121,20 @@ export function registerIpc(deps: IpcDeps): void {
   ipcMain.handle('stats:recent', (_e, limit?: number) => recentDownloads(db, limit ?? 8))
 
   ipcMain.handle('clipboard:write', (_e, text: string) => { clipboard.writeText(String(text ?? '')) })
+
+  ipcMain.handle('video:source:open', async (_e, id: number) => {
+    const row = db.prepare('SELECT platform, aweme_id, source_url FROM videos WHERE id=?').get(id) as
+      { platform: string; aweme_id: string; source_url: string | null } | undefined
+    if (!row) return { ok: false, error: '视频记录不存在' }
+    const url = resolveVideoSourceUrl(row.platform, row.aweme_id, row.source_url)
+    if (!url) return { ok: false, error: '作品链接不安全或不受支持' }
+    try {
+      await shell.openExternal(url)
+      return { ok: true, url }
+    } catch {
+      return { ok: false, error: '无法打开原视频' }
+    }
+  })
 
   ipcMain.handle('authors:import', (_e, items: Array<{ nickname: string; url: string }>) => {
     const adapter = getAdapter('douyin')
