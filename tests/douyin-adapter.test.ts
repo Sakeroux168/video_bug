@@ -9,7 +9,7 @@ const AWEME = {
   video: { play_addr: { url_list: ['https://v.douyin.com/xxx/playwm/?foo=bar'] } },
   duration: 45000, // ms
   create_time: 1710000000,
-  statistics: { digg_count: 1234 }
+  statistics: { digg_count: 1234, comment_count: 0 }
 }
 
 describe('douyinAdapter.parseApiJson', () => {
@@ -23,8 +23,32 @@ describe('douyinAdapter.parseApiJson', () => {
       authorHomeUrl: 'https://www.douyin.com/user/MS4wLjABAAAA1',
       playUrl: 'https://v.douyin.com/xxx/playwm/?foo=bar',
       coverUrl: '', width: 0, height: 0,
-      durationSec: 45, publishTime: 1710000000, likes: 1234
+      durationSec: 45, publishTime: 1710000000, likes: 1234,
+      comments: 0,
+      sourceUrl: 'https://www.douyin.com/video/7300000000000000001'
     })
+  })
+
+  it('评论数保留真实0与非零值，缺失或非法值归一为null', () => {
+    const parse = (comment_count: unknown, include = true): number | null => {
+      const statistics = include ? { digg_count: 1, comment_count } : { digg_count: 1 }
+      return douyinAdapter.parseApiJson('https://x/', {
+        aweme_list: [{ ...AWEME, statistics }]
+      })[0].comments
+    }
+    expect(parse(0)).toBe(0)
+    expect(parse(45)).toBe(45)
+    expect(parse('45')).toBe(45)
+    expect(parse(undefined, false)).toBeNull()
+    expect(parse(-1)).toBeNull()
+    expect(parse(1.5)).toBeNull()
+    expect(parse('bad')).toBeNull()
+  })
+
+  it('作品链接和允许主机由适配器声明', () => {
+    expect(douyinAdapter.buildVideoUrl('7300000000000000001'))
+      .toBe('https://www.douyin.com/video/7300000000000000001')
+    expect(douyinAdapter.sourceHosts).toEqual(['www.douyin.com'])
   })
 
   it('解析封面地址与视频宽高，优先使用 origin_cover', () => {

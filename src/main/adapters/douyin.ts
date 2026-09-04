@@ -45,6 +45,15 @@ function positiveInteger(v: unknown): number {
   return Number.isInteger(n) && n > 0 ? n : 0
 }
 
+function nonNegativeIntegerOrNull(v: unknown): number | null {
+  const n = Number(v)
+  return Number.isInteger(n) && n >= 0 ? n : null
+}
+
+function buildVideoUrl(workId: string): string {
+  return `https://www.douyin.com/video/${encodeURIComponent(workId)}`
+}
+
 /** 时长多候选解析（抖音接口毫秒 → 精确秒数）：顶层 duration → video.duration → 0。
  *  真实接口时长字段位置不定（可能在 video 下），做兜底；候选值为字符串数字也兼容（Number 转换）。 */
 function pickDurationSec(o: Record<string, any>): number {
@@ -101,7 +110,9 @@ function parseAweme(a: unknown, diags: DurationDiag[]): VideoItem | null {
     height: positiveInteger(video.height),
     durationSec,
     publishTime: Number(o.create_time ?? 0),
-    likes: Number(stats.digg_count ?? 0)
+    likes: Number(stats.digg_count ?? 0),
+    comments: nonNegativeIntegerOrNull(stats.comment_count),
+    sourceUrl: buildVideoUrl(id)
   }
 }
 
@@ -136,11 +147,13 @@ export function parseAuthorInput(raw: string): string | null {
 export const douyinAdapter: PlatformAdapter = {
   name: 'douyin',
   displayName: '抖音',
+  sourceHosts: ['www.douyin.com'],
   sessionPartition: 'persist:douyin',
   apiUrlPatterns: [/aweme\/v1\/web\//, /aweme\/v1\/app\//],
   buildSearchUrl: (q: string) => `https://www.douyin.com/search/${encodeURIComponent(q)}`,
   buildAuthorUrl: (secUid: string) => `https://www.douyin.com/user/${secUid}`,
   buildHashtagUrl: (q: string) => `https://www.douyin.com/search/%23${encodeURIComponent(q)}`,
+  buildVideoUrl,
   parseAuthorInput,
   parseApiJson: (_url: string, json: unknown) => {
     const diags: DurationDiag[] = []

@@ -14,12 +14,16 @@ export interface VideoItem {
   durationSec: number
   publishTime: number // unix 秒
   likes: number
+  comments: number | null
+  sourceUrl: string
 }
 
 /** 平台适配器契约：核心模块只认这个接口，平台差异全部封在里面 */
 export interface PlatformAdapter {
   name: string
   displayName: string
+  /** 可由主进程打开的作品页精确主机白名单 */
+  sourceHosts: readonly string[]
   /** 登录态分区，如 'persist:douyin' */
   sessionPartition: string
   /** 挂钩脚本需要转发的接口 URL 特征 */
@@ -27,6 +31,7 @@ export interface PlatformAdapter {
   buildSearchUrl(query: string, filters: Filters): string
   buildAuthorUrl(secUid: string): string
   buildHashtagUrl(query: string): string
+  buildVideoUrl(workId: string): string
   /** 解析用户粘贴的作者输入（完整主页 URL 或裸 sec_uid），返回归一化后的 sec_uid；
    *  无法识别（短链/非本平台域名/空串/非法字符）返回 null。纯字符串处理，不联网、不解析短链跳转。 */
   parseAuthorInput(raw: string): string | null
