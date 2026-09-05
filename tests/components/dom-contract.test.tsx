@@ -97,7 +97,7 @@ describe('DOM 契约：行内交互元素必须是原生 button/a（R4）', () =
     clickRow(c, 1)
     expect(selectedIds(c)).toEqual([1])
 
-    // done 行提供「定位 / 原视频 / 删除」，逐个点过去，选中集合必须纹丝不动
+    // done 行提供「定位 / 打开原视频 / 复制链接 / 复制作者名 / 删除」，逐个点过去，选中集合必须纹丝不动
     const row = rowEl(c, 1)
     const controls = Array.from(row.querySelectorAll('button, a'))
     expect(controls.length).toBeGreaterThan(0)

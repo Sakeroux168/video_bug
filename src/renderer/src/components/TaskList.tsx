@@ -57,7 +57,7 @@ const rowBar = (status: string): string => `border-l-2 ${ROW_BAR[status] ?? 'bor
 
 const PAGE_SIZE = 50
 
-type SortKey = 'title' | 'author' | 'duration' | 'publish_time' | 'likes'
+type SortKey = 'title' | 'author' | 'duration' | 'publish_time' | 'likes' | 'comments'
 
 interface Derived {
   filtered: VideoRow[]
@@ -78,18 +78,36 @@ interface Derived {
 
 const btnSmall = 'rounded-md border border-slate-300 px-2 py-1 text-xs text-slate-600 hover:bg-slate-100 disabled:opacity-40'
 
-function getLikes(v: VideoRow): number {
+interface VideoStats {
+  likes: number
+  comments: number | null
+}
+
+function getVideoStats(v: VideoRow): VideoStats {
   try {
-    const o = JSON.parse(v.stats || '{}') as { likes?: number }
-    return typeof o.likes === 'number' ? o.likes : 0
+    const o = JSON.parse(v.stats || '{}') as Record<string, unknown>
+    return {
+      likes: typeof o.likes === 'number' && Number.isFinite(o.likes) ? o.likes : 0,
+      comments: typeof o.comments === 'number' && Number.isInteger(o.comments) && o.comments >= 0
+        ? o.comments
+        : null
+    }
   } catch {
-    return 0
+    return { likes: 0, comments: null }
   }
 }
 
-function formatLikes(n: number): string {
+function formatCount(n: number): string {
   if (n >= 10000) return `${(n / 10000).toFixed(1)}w`
   return String(n)
+}
+
+function formatSourceUrl(sourceUrl: string): string {
+  try {
+    return `${new URL(sourceUrl).hostname} · ${sourceUrl}`
+  } catch {
+    return sourceUrl
+  }
 }
 
 function formatDuration(sec: number): string {
@@ -255,7 +273,15 @@ export default function TaskList({ notify }: { notify: (text: string) => void })
             case 'author': r = (a.author_nickname ?? '').localeCompare(b.author_nickname ?? '', 'zh'); break
             case 'duration': r = a.duration - b.duration; break
             case 'publish_time': r = (a.publish_time ?? '').localeCompare(b.publish_time ?? ''); break
-            case 'likes': r = getLikes(a) - getLikes(b); break
+            case 'likes': r = getVideoStats(a).likes - getVideoStats(b).likes; break
+            case 'comments': {
+              const ac = getVideoStats(a).comments
+              const bc = getVideoStats(b).comments
+              if (ac === null) return bc === null ? 0 : 1
+              if (bc === null) return -1
+              r = ac - bc
+              break
+            }
           }
           return r * srt.dir
         })
@@ -540,6 +566,41 @@ function TaskVideoTable({
     onSelectRows(rowClick(v.id, d.selectableIds, selected, { ctrlKey: e.ctrlKey, shiftKey: e.shiftKey }))
   }
 
+  async function copySourceUrl(v: VideoRow): Promise<void> {
+    if (!v.source_url) {
+      notify('作品链接不可用')
+      return
+    }
+    try {
+      await api.writeClipboard(v.source_url)
+      notify('链接已复制')
+    } catch {
+      notify('复制链接失败')
+    }
+  }
+
+  async function copyAuthorName(v: VideoRow): Promise<void> {
+    if (!v.author_nickname) {
+      notify('作者名不可用')
+      return
+    }
+    try {
+      await api.writeClipboard(v.author_nickname)
+      notify('作者名已复制')
+    } catch {
+      notify('复制作者名失败')
+    }
+  }
+
+  async function openSourceVideo(v: VideoRow): Promise<void> {
+    try {
+      const result = await api.openVideoSource(v.id)
+      if (!result.ok) notify(result.error ?? '无法打开原视频')
+    } catch {
+      notify('无法打开原视频')
+    }
+  }
+
   function sortHeader(key: SortKey, label: string): React.ReactNode {
     const active = sort?.key === key
     const arrow = active ? (sort!.dir === 1 ? ' ↑' : ' ↓') : ''
@@ -584,6 +645,7 @@ function TaskVideoTable({
               {sortHeader('duration', '时长')}
               {sortHeader('publish_time', '发布')}
               {sortHeader('likes', '点赞')}
+              {sortHeader('comments', '评论')}
               <th className="w-24 py-1 px-1 font-normal">状态</th>
               <th className="py-1 pl-2 pr-1 font-normal">操作</th>
             </tr>
@@ -591,6 +653,7 @@ function TaskVideoTable({
           <tbody>
             {d.pageVideos.map(v => {
               const isFiltered = v.status === 'filtered'
+              const videoStats = getVideoStats(v)
               return (
                 <tr
                   key={v.id}
@@ -602,11 +665,27 @@ function TaskVideoTable({
                   <td className={`${rowBar(v.status)} py-1 pl-1 pr-1`}>
                     <input type="checkbox" disabled={isFiltered} checked={selected.has(v.id)} onChange={() => onSelectRows(rowClick(v.id, d.selectableIds, selected, {}))} />
                   </td>
-                  <td className="max-w-0 py-1 pr-2"><span className="block truncate">{v.title || '（无标题）'}</span></td>
+                  <td className="max-w-0 py-1 pr-2">
+                    <span className="block truncate">{v.title || '（无标题）'}</span>
+                    {v.source_url ? (
+                      <span
+                        data-source-url
+                        className="block truncate text-[10px] leading-tight text-slate-400"
+                        title={v.source_url}
+                      >
+                        {formatSourceUrl(v.source_url)}
+                      </span>
+                    ) : (
+                      <span data-source-url className="block text-[10px] leading-tight text-slate-300">—</span>
+                    )}
+                  </td>
                   <td className="whitespace-nowrap py-1 pr-2">{v.author_nickname ?? '—'}</td>
                   <td className="whitespace-nowrap py-1 pr-2 tabular-nums">{formatDuration(v.duration)}</td>
                   <td className="whitespace-nowrap py-1 pr-2 tabular-nums">{formatDate(v.publish_time)}</td>
-                  <td className="whitespace-nowrap py-1 pr-2 tabular-nums">{formatLikes(getLikes(v))}</td>
+                  <td className="whitespace-nowrap py-1 pr-2 tabular-nums">{formatCount(videoStats.likes)}</td>
+                  <td data-stat="comments" className="whitespace-nowrap py-1 pr-2 tabular-nums">
+                    {videoStats.comments === null ? '—' : formatCount(videoStats.comments)}
+                  </td>
                   <td className={`py-1 pr-2 ${STATUS_CLASS[v.status] ?? 'text-slate-500'}`}>
                     <span className="whitespace-nowrap">{STATUS_LABEL[v.status] ?? v.status}</span>
                     {v.status === 'failed' && (
@@ -634,7 +713,9 @@ function TaskVideoTable({
                         {v.status === 'done' && v.local_path && (
                           <RowBtn label="定位" action="locate" onClick={() => void api.locateVideo(v.local_path!)} />
                         )}
-                        <a data-action="source" className="text-brand-500 hover:underline" href={`https://www.douyin.com/video/${v.aweme_id}`} target="_blank" rel="noreferrer">原视频</a>
+                        <RowBtn label="打开原视频" action="source" onClick={() => { void openSourceVideo(v) }} />
+                        <RowBtn label="复制链接" action="copy-source" onClick={() => { void copySourceUrl(v) }} />
+                        <RowBtn label="复制作者名" action="copy-author" onClick={() => { void copyAuthorName(v) }} />
                         <button data-action="delete" className="text-red-400 hover:text-red-500" onClick={() => onDeleteVideos([v.id])}>删除</button>
                       </div>
                     )}

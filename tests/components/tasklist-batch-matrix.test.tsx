@@ -270,15 +270,15 @@ describe('批量操作矩阵（全选/indeterminate + 批量按钮 + 行内按�
       makeVideo(9, { status: 'filtered' })
     ])
 
-    // 存在性组合（顺序 = DOM 顺序：下载/重试/暂停/继续/取消/定位/原视频/删除）
-    expect(rowActions(rowOf(c, 1))).toEqual(['pause', 'cancel', 'source', 'delete'])
-    expect(rowActions(rowOf(c, 2))).toEqual(['pause', 'cancel', 'source', 'delete'])
-    expect(rowActions(rowOf(c, 3))).toEqual(['resume', 'source', 'delete'])
-    expect(rowActions(rowOf(c, 4))).toEqual(['download', 'retry', 'source', 'delete'])
-    expect(rowActions(rowOf(c, 5))).toEqual(['download', 'source', 'delete'])
-    expect(rowActions(rowOf(c, 6))).toEqual(['download', 'source', 'delete'])
-    expect(rowActions(rowOf(c, 7))).toEqual(['locate', 'source', 'delete'])
-    expect(rowActions(rowOf(c, 8))).toEqual(['source', 'delete'])
+    // 存在性组合（顺序 = DOM 顺序：状态操作/打开原视频/复制链接/复制作者名/删除）
+    expect(rowActions(rowOf(c, 1))).toEqual(['pause', 'cancel', 'source', 'copy-source', 'copy-author', 'delete'])
+    expect(rowActions(rowOf(c, 2))).toEqual(['pause', 'cancel', 'source', 'copy-source', 'copy-author', 'delete'])
+    expect(rowActions(rowOf(c, 3))).toEqual(['resume', 'source', 'copy-source', 'copy-author', 'delete'])
+    expect(rowActions(rowOf(c, 4))).toEqual(['download', 'retry', 'source', 'copy-source', 'copy-author', 'delete'])
+    expect(rowActions(rowOf(c, 5))).toEqual(['download', 'source', 'copy-source', 'copy-author', 'delete'])
+    expect(rowActions(rowOf(c, 6))).toEqual(['download', 'source', 'copy-source', 'copy-author', 'delete'])
+    expect(rowActions(rowOf(c, 7))).toEqual(['locate', 'source', 'copy-source', 'copy-author', 'delete'])
+    expect(rowActions(rowOf(c, 8))).toEqual(['source', 'copy-source', 'copy-author', 'delete'])
     expect(rowActions(rowOf(c, 9))).toEqual([]) // filtered 行无任何操作元素
 
     // 代表性按钮点击 → 对应接口
@@ -315,14 +315,14 @@ describe('批量操作矩阵（全选/indeterminate + 批量按钮 + 行内按�
       makeVideo(9, { status: 'filtered' })
     ])
 
-    expect(rowControls(rowOf(c, 1))).toEqual(['暂停', '取消', '原视频', '删除'])
-    expect(rowControls(rowOf(c, 2))).toEqual(['暂停', '取消', '原视频', '删除'])
-    expect(rowControls(rowOf(c, 3))).toEqual(['继续', '原视频', '删除'])
-    expect(rowControls(rowOf(c, 4))).toEqual(['下载', '重试', '原视频', '删除'])
-    expect(rowControls(rowOf(c, 5))).toEqual(['下载', '原视频', '删除'])
-    expect(rowControls(rowOf(c, 6))).toEqual(['下载', '原视频', '删除'])
-    expect(rowControls(rowOf(c, 7))).toEqual(['定位', '原视频', '删除'])
-    expect(rowControls(rowOf(c, 8))).toEqual(['原视频', '删除'])
+    expect(rowControls(rowOf(c, 1))).toEqual(['暂停', '取消', '打开原视频', '复制链接', '复制作者名', '删除'])
+    expect(rowControls(rowOf(c, 2))).toEqual(['暂停', '取消', '打开原视频', '复制链接', '复制作者名', '删除'])
+    expect(rowControls(rowOf(c, 3))).toEqual(['继续', '打开原视频', '复制链接', '复制作者名', '删除'])
+    expect(rowControls(rowOf(c, 4))).toEqual(['下载', '重试', '打开原视频', '复制链接', '复制作者名', '删除'])
+    expect(rowControls(rowOf(c, 5))).toEqual(['下载', '打开原视频', '复制链接', '复制作者名', '删除'])
+    expect(rowControls(rowOf(c, 6))).toEqual(['下载', '打开原视频', '复制链接', '复制作者名', '删除'])
+    expect(rowControls(rowOf(c, 7))).toEqual(['定位', '打开原视频', '复制链接', '复制作者名', '删除'])
+    expect(rowControls(rowOf(c, 8))).toEqual(['打开原视频', '复制链接', '复制作者名', '删除'])
     expect(rowControls(rowOf(c, 9))).toEqual([]) // filtered 行无任何操作元素
   })
 })
