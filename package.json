@@ -2,6 +2,7 @@
   "name": "video-scraper",
   "version": "0.1.0",
   "description": "多平台视频批量爬取工具",
+  "license": "SEE LICENSE IN LICENSE",
   "main": "./out/main/index.js",
   "scripts": {
     "dev": "cross-env NODE_OPTIONS=--experimental-sqlite electron-vite dev",
@@ -9,9 +10,11 @@
     "start": "cross-env NODE_OPTIONS=--experimental-sqlite electron-vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
     "test": "vitest run",
-    "dist": "electron-vite build && electron-builder",
+    "dist": "electron-vite build && npm run check:licenses && electron-builder && npm run check:packaged-licenses",
     "check:css": "node scripts/check-css.mjs",
-    "verify": "npm run typecheck && npm test && npm run build && npm run check:css"
+    "check:licenses": "node scripts/check-licenses.mjs",
+    "check:packaged-licenses": "node scripts/check-licenses.mjs --packaged",
+    "verify": "npm run typecheck && npm test && npm run build && npm run check:css && npm run check:licenses"
   },
   "dependencies": {
     "react": "^18.3.0",

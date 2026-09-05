@@ -30,6 +30,17 @@ extraResources:
     to: ffmpeg/bin/ffmpeg.exe
   - from: E:/123/ffmpeg-8.0.1-essentials_build/bin/ffprobe.exe
     to: ffmpeg/bin/ffprobe.exe
+  # 项目许可与第三方许可独立放在 resources/licenses，运行时组件仍遵守各自条款。
+  - from: third_party/licenses
+    to: licenses
+  - from: LICENSE
+    to: licenses/PROJECT-LICENSE.txt
+  - from: LICENSE.zh-CN.md
+    to: licenses/PROJECT-LICENSE.zh-CN.md
+  - from: NOTICE
+    to: licenses/NOTICE.txt
+  - from: TRADEMARKS.md
+    to: licenses/TRADEMARKS.md
 
 win:
   target:

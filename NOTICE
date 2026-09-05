@@ -1,0 +1,39 @@
+video-scraper — Third-Party Notices
+===================================
+
+Project-owned code
+------------------
+
+Copyright (c) 2026 Sakeroux168.
+Licensed under the MIT License with Commons Clause License Condition v1.0.
+This makes the project source available, not OSI-approved open source.
+The Commons Clause condition applies only to project-owned code and does not relicense any component listed below.
+
+Source repository: https://github.com/Sakeroux168/video_bug
+
+Runtime components
+------------------
+
+1. FFmpeg 8.0.1 essentials build (separate ffmpeg.exe and ffprobe.exe)
+   - Project: https://ffmpeg.org/
+   - Windows build distributor: https://www.gyan.dev/ffmpeg/builds/
+   - Exact FFmpeg source: https://github.com/FFmpeg/FFmpeg/commit/894da5ca7d
+   - Declared build license: GNU General Public License version 3
+   - The distributed build enables GPL/version3 and libx264. It remains a separate executable invoked by video-scraper; it is not relicensed under the project license.
+   - Full license and build configuration: resources/licenses/FFmpeg-GPLv3.txt and FFmpeg-BUILD-INFO.txt
+
+2. Electron 35.7.5
+   - Project: https://www.electronjs.org/
+   - License: MIT
+   - Electron also contains Chromium, Node.js, and other components. electron-builder provides LICENSE.electron.txt and LICENSES.chromium.html in the packaged application.
+
+3. React and React DOM 18.3.1
+   - Project: https://react.dev/
+   - License: MIT
+
+4. sherpa-onnx-node and sherpa-onnx-win-x64 1.13.4
+   - Project: https://github.com/k2-fsa/sherpa-onnx
+   - License declared by the npm packages: Apache License 2.0
+   - The Windows package includes ONNX Runtime and native libraries; their notices and upstream source remain governed by their respective terms.
+
+License copies are collected under resources/licenses/ in the portable build. Third-party names and marks belong to their respective owners. No endorsement is implied.
