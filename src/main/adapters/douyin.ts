@@ -46,6 +46,8 @@ function positiveInteger(v: unknown): number {
 }
 
 function nonNegativeIntegerOrNull(v: unknown): number | null {
+  if (typeof v !== 'number' && typeof v !== 'string') return null
+  if (typeof v === 'string' && v.trim() === '') return null
   const n = Number(v)
   return Number.isInteger(n) && n >= 0 ? n : null
 }
