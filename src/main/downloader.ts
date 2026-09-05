@@ -1,5 +1,5 @@
 import type { DatabaseSync } from 'node:sqlite'
-import { createWriteStream, mkdirSync, rmSync } from 'fs'
+import { createWriteStream, existsSync, mkdirSync, renameSync, rmSync, statSync } from 'fs'
 import { pipeline } from 'stream/promises'
 import { Readable } from 'stream'
 import { join } from 'path'
@@ -11,12 +11,16 @@ import { classifyDownloadError, AddressPolicy } from './errors'
 import { safeFilename, ensureUniqueStem } from './filename'
 import { downloadCover } from './cover'
 import { setVideoStatus } from './db'
+import { normalizeVideo } from './videoNormalizer'
+import type { NormalizeVideoRequest, NormalizeVideoResult } from './videoNormalizer'
 
 export function buildUserAgent(_platform: string): string {
   return 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36'
 }
 
 type DlSettings = Pick<AppSettings, 'downloadDir' | 'downloadConcurrency' | 'addressTtlMin'>
+  & Partial<Pick<AppSettings, 'normalizeVideo' | 'keepOriginalVideo'>>
+type VideoNormalizer = (request: NormalizeVideoRequest) => Promise<NormalizeVideoResult>
 type DlEvent =
   | { type: 'video:status'; id: number; status: string; error?: string; localPath?: string }
 
@@ -34,16 +38,18 @@ export class Downloader {
   private listeners: Array<(e: DlEvent) => void> = []
   private fetching: Record<number, boolean> = {}
   private validator: ((file: string) => Promise<boolean>) | null
+  private normalizer: VideoNormalizer
 
   constructor(
     private db: DatabaseSync,
     private settings: DlSettings,
     private fetchImpl: typeof fetch = fetch,
-    opts?: { validator?: (file: string) => Promise<boolean> }
+    opts?: { validator?: (file: string) => Promise<boolean>; normalizer?: VideoNormalizer }
   ) {
     // C1: 确保下载目录存在（recursive 幂等）；目录不可写时由下载错误分类兜底为 ERROR.DISK
     try { mkdirSync(this.settings.downloadDir, { recursive: true }) } catch { /* ignore */ }
     this.validator = opts?.validator ?? null
+    this.normalizer = opts?.normalizer ?? normalizeVideo
   }
 
   /** 设置保存后热更新下载参数（目录/并发/地址TTL），无需重建 Downloader */
@@ -159,10 +165,14 @@ export class Downloader {
 
   private emit(e: DlEvent): void { for (const l of this.listeners) l(e) }
 
-  /** AbortError 收尾：删半成品 + 标状态（error 清空）+ 发事件 */
-  private finishAbort(id: number, status: VideoStatus, paths: string[]): void {
-    for (const path of paths) try { rmSync(path, { force: true }) } catch { /* ignore */ }
-    this.db.prepare("UPDATE videos SET status=?, error=NULL WHERE id=?").run(status, id)
+  /** AbortError 收尾：删除半成品；暂停发生在转码阶段时可保留已验证原片，继续后不重复请求。 */
+  private finishAbort(id: number, status: VideoStatus, paths: string[], keepPath?: string): void {
+    for (const path of paths) {
+      if (path === keepPath) continue
+      try { rmSync(path, { force: true }) } catch { /* ignore */ }
+    }
+    this.db.prepare("UPDATE videos SET status=?, error=NULL, local_path=?, original_path=NULL, normalization_error=NULL WHERE id=?")
+      .run(status, keepPath ?? null, id)
     this.emit({ type: 'video:status', id, status })
   }
 
@@ -189,59 +199,107 @@ export class Downloader {
     const aborter = new AbortController()
     this.aborters.set(id, aborter)
     const cleanupPaths: string[] = []
+    let sourceValidated = false
+    let sourcePart: string | null = null
     // 当前下载固定一个目录，设置热更新只影响下一条，避免封面与视频分离或覆盖旧封面。
     const downloadDir = this.settings.downloadDir
     try {
-      // 下载前判地址过期：源地址超过 TTL 视为失效，直接标失败，不浪费请求
-      const policy = new AddressPolicy(this.settings.addressTtlMin)
-      if (policy.isExpired(row.fetched_at)) {
-        this.db.prepare("UPDATE videos SET status='failed', error=? WHERE id=?").run(ERROR.ADDRESS_EXPIRED, id)
-        this.emit({ type: 'video:status', id, status: 'failed', error: ERROR.ADDRESS_EXPIRED })
-        return
-      }
-      this.db.prepare("UPDATE videos SET status = 'downloading' WHERE id = ?").run(id)
-      this.emit({ type: 'video:status', id, status: 'downloading' })
-
       const author = row.author_id
         ? (this.db.prepare('SELECT nickname FROM authors WHERE id = ?').get(row.author_id) as { nickname: string } | undefined)
         : undefined
       const name = safeFilename(row.title, author?.nickname ?? 'unknown', row.aweme_id)
-      const stem = ensureUniqueStem(downloadDir, name, ['.mp4', '.jpg', '.jpeg', '.png', '.webp'])
+      const stem = ensureUniqueStem(downloadDir, name, ['.mp4', '.original.mp4', '.jpg', '.jpeg', '.png', '.webp'])
       const target = join(downloadDir, `${stem}.mp4`)
-      cleanupPaths.push(target) // 供暂停/取消分支清理完整视频或半成品
+      const originalPath = join(downloadDir, `${stem}.original.mp4`)
+      sourcePart = join(downloadDir, `.video-${id}.download.part.mp4`)
+      const normalizedPart = join(downloadDir, `.video-${id}.normalized.part.mp4`)
+      cleanupPaths.push(target, originalPath, sourcePart, normalizedPart)
+      rmSync(normalizedPart, { force: true })
+      if (row.local_path !== sourcePart) rmSync(sourcePart, { force: true })
+
+      // 转码阶段暂停后，数据库会指向已验证的源文件断点。恢复时先复验，合格则跳过网络请求。
+      if (row.local_path === sourcePart && existsSync(sourcePart)) {
+        const size = statSync(sourcePart).size
+        const validContent = this.validator
+          ? await this.validator(sourcePart)
+          : (await isMp4(sourcePart)) && (await hasVideoStream(sourcePart))
+        sourceValidated = size >= 1024 && validContent
+        if (!sourceValidated) {
+          rmSync(sourcePart, { force: true })
+          this.db.prepare('UPDATE videos SET local_path=NULL WHERE id=?').run(id)
+        }
+      }
+
+      // 只有没有可复用断点时才检查 CDN 地址 TTL；本地源文件已经完整时无需依赖旧地址。
+      if (!sourceValidated) {
+        const policy = new AddressPolicy(this.settings.addressTtlMin)
+        if (policy.isExpired(row.fetched_at)) {
+          this.db.prepare("UPDATE videos SET status='failed', error=? WHERE id=?").run(ERROR.ADDRESS_EXPIRED, id)
+          this.emit({ type: 'video:status', id, status: 'failed', error: ERROR.ADDRESS_EXPIRED })
+          return
+        }
+      }
+
+      this.db.prepare("UPDATE videos SET status = 'downloading' WHERE id = ?").run(id)
+      this.emit({ type: 'video:status', id, status: 'downloading' })
       const headers = {
         'user-agent': buildUserAgent(row.platform),
         referer: `https://www.${row.platform}.com/`
       }
 
-      // 候选下载地址：原始地址优先（网页播放器即用，通常无水印）；失败/坏文件则回退 playwm→play 无水印变体
-      const candidates = [row.play_addr]
-      if (row.play_addr && row.play_addr.includes('playwm')) candidates.push(row.play_addr.replace('playwm', 'play'))
-      let size = 0
-      let lastErr: unknown = new Error('bad_mp4')
-      for (const url of candidates) {
-        const res = await this.fetchImpl(url!, {
-          signal: aborter.signal,
-          headers
-        })
-        if (!res.ok || !res.body) { lastErr = new Error(`http_${res.status}`); continue }
-        // Response.body 是 Web ReadableStream，不是 Node 流，需经 Readable.fromWeb 转成 Node Readable；
-        // 挂上 signal：cancel 时可掐断写盘（pipeline 抛 AbortError）
-        await pipeline(Readable.fromWeb(res.body as import('stream/web').ReadableStream, { signal: aborter.signal }), createWriteStream(target))
-        size = await import('fs').then(m => m.statSync(target).size)
-        // 校验是否真是带视频轨的 MP4：避免把 CDN 错误页/空文件/纯音频当视频（黑屏源头）
-        const validContent = this.validator
-          ? await this.validator(target)
-          : (await isMp4(target)) && (await hasVideoStream(target))
-        if (size >= 1024 && validContent) { lastErr = null; break }
-        await import('fs').then(m => m.rmSync(target, { force: true }))
-        lastErr = new Error('bad_mp4')
+      if (!sourceValidated) {
+        // 候选下载地址：原始地址优先；失败/坏文件则回退 playwm→play 无水印变体。
+        const candidates = [row.play_addr]
+        if (row.play_addr && row.play_addr.includes('playwm')) candidates.push(row.play_addr.replace('playwm', 'play'))
+        let lastErr: unknown = new Error('bad_mp4')
+        for (const url of candidates) {
+          rmSync(sourcePart, { force: true })
+          const res = await this.fetchImpl(url!, {
+            signal: aborter.signal,
+            headers
+          })
+          if (!res.ok || !res.body) { lastErr = new Error(`http_${res.status}`); continue }
+          // Response.body 是 Web ReadableStream，不是 Node 流，需经 Readable.fromWeb 转成 Node Readable。
+          await pipeline(
+            Readable.fromWeb(res.body as import('stream/web').ReadableStream, { signal: aborter.signal }),
+            createWriteStream(sourcePart)
+          )
+          const size = statSync(sourcePart).size
+          const validContent = this.validator
+            ? await this.validator(sourcePart)
+            : (await isMp4(sourcePart)) && (await hasVideoStream(sourcePart))
+          if (size >= 1024 && validContent) {
+            sourceValidated = true
+            lastErr = null
+            break
+          }
+          rmSync(sourcePart, { force: true })
+          lastErr = new Error('bad_mp4')
+        }
+        if (lastErr) throw lastErr
+        // 断点只在源文件完整且校验通过后写入，绝不记录半截下载。
+        this.db.prepare('UPDATE videos SET local_path=?, original_path=NULL, normalization_error=NULL WHERE id=?')
+          .run(sourcePart, id)
       }
-      if (lastErr) throw lastErr
-      // 校验阶段（statSync/isMp4/ffprobe/validator）不感知 abort：若删除/取消发生在该窗口，
-      // 文件已完整落盘但 runOne 会继续提交 done → 行已删时留孤儿 mp4。提交 done 前再查一次信号，
-      // 已 abort 则抛错走既有 aborted 收尾（rmSync 半成品 + 标 cancelled + 清 fetching）。
+
       if (aborter.signal.aborted) throw new Error('AbortError')
+
+      let normalizationResult: NormalizeVideoResult | null = null
+      if (this.settings.normalizeVideo === true) {
+        try {
+          normalizationResult = await this.normalizer({
+            inputPath: sourcePart,
+            outputPath: normalizedPart,
+            signal: aborter.signal
+          })
+        } catch {
+          if (aborter.signal.aborted) throw new Error('AbortError')
+          normalizationResult = { status: 'failed', error: 'ffmpeg_failed' }
+        }
+        if (normalizationResult.status === 'aborted') throw new Error('AbortError')
+      }
+      if (aborter.signal.aborted) throw new Error('AbortError')
+
       const coverPart = join(downloadDir, `${stem}.cover.part`)
       cleanupPaths.push(coverPart)
       const coverPath = row.cover_url
@@ -257,9 +315,41 @@ export class Downloader {
       if (coverPath) cleanupPaths.push(coverPath)
       else if (row.cover_url) console.warn(`[downloader] 封面下载失败，视频继续完成: id=${id}`)
       if (aborter.signal.aborted) throw new Error('AbortError')
+
+      let originalFinalPath: string | null = null
+      let normalizationError: string | null = null
+      let videoWidth = row.video_width
+      let videoHeight = row.video_height
+      if (normalizationResult?.status === 'normalized') {
+        if (this.settings.keepOriginalVideo === true) {
+          renameSync(sourcePart, originalPath)
+          try {
+            renameSync(normalizedPart, target)
+          } catch (error) {
+            try { renameSync(originalPath, sourcePart) } catch { /* 后续统一清理 */ }
+            throw error
+          }
+          originalFinalPath = originalPath
+        } else {
+          renameSync(normalizedPart, target)
+          rmSync(sourcePart, { force: true })
+        }
+        videoWidth = normalizationResult.target.width
+        videoHeight = normalizationResult.target.height
+      } else {
+        renameSync(sourcePart, target)
+        if (normalizationResult?.status === 'skipped') {
+          videoWidth = normalizationResult.target.width
+          videoHeight = normalizationResult.target.height
+        } else if (normalizationResult?.status === 'failed') {
+          normalizationError = normalizationResult.error
+        }
+      }
+
+      const size = statSync(target).size
       const downloadedAt = new Date().toISOString()
-      this.db.prepare("UPDATE videos SET status='done', local_path=?, cover_path=?, file_size=?, downloaded_at=?, error=NULL WHERE id=?")
-        .run(target, coverPath, size, downloadedAt, id)
+      this.db.prepare("UPDATE videos SET status='done', local_path=?, original_path=?, normalization_error=?, cover_path=?, video_width=?, video_height=?, file_size=?, downloaded_at=?, error=NULL WHERE id=?")
+        .run(target, originalFinalPath, normalizationError, coverPath, videoWidth, videoHeight, size, downloadedAt, id)
       this.emit({ type: 'video:status', id, status: 'done', localPath: target })
     } catch (err) {
       // 取消分支（signal 已 abort，真实 AbortError 是 DOMException、非 Error，用 signal.aborted 判）：
@@ -271,14 +361,15 @@ export class Downloader {
         const reason = this.abortReasons.get(id)
         this.abortReasons.delete(id)
         const cur = this.db.prepare('SELECT status FROM videos WHERE id = ?').get(id) as { status: VideoStatus } | undefined
+        const checkpoint = sourceValidated && sourcePart && existsSync(sourcePart) ? sourcePart : undefined
         if (reason === 'paused') {
           if (this.pausedIds.has(id)) {
             // 单条暂停（全局继续未发生过）：标 paused，继续后手动恢复
-            this.finishAbort(id, 'paused', cleanupPaths)
+            this.finishAbort(id, 'paused', cleanupPaths, checkpoint)
           } else if (cur?.status !== 'cancelled') {
             // 全局暂停（回调时无论是否已 resume）：标回 pending 重新入队，drain 自然续下；
             // 已取消项不再覆盖为 pending 重排
-            this.finishAbort(id, 'pending', cleanupPaths)
+            this.finishAbort(id, 'pending', cleanupPaths, checkpoint)
             this.queue.push(id)
           } else {
             this.finishAbort(id, 'cancelled', cleanupPaths)
@@ -288,9 +379,9 @@ export class Downloader {
         } else {
           // 无快照（兜底）：按当下状态判断——单条暂停 / 全局暂停 / 用户取消
           if (this.pausedIds.has(id)) {
-            this.finishAbort(id, 'paused', cleanupPaths)
+            this.finishAbort(id, 'paused', cleanupPaths, checkpoint)
           } else if (this.paused && cur?.status !== 'cancelled') {
-            this.finishAbort(id, 'pending', cleanupPaths)
+            this.finishAbort(id, 'pending', cleanupPaths, checkpoint)
             this.queue.push(id)
           } else {
             this.finishAbort(id, 'cancelled', cleanupPaths)
@@ -300,14 +391,15 @@ export class Downloader {
       }
       const retry = row.retry_count + 1
       const code = classifyDownloadError(err)
+      for (const path of cleanupPaths) try { rmSync(path, { force: true }) } catch { /* ignore */ }
       // 网络类错误自动重试2次（利用 retry_count）；磁盘(ENOENT/EPERM/ENOSPC)/风控等非网络错误直接失败
       if (retry <= 2 && code === ERROR.NETWORK) {
-        this.db.prepare("UPDATE videos SET status='pending', retry_count=?, error=NULL WHERE id=?").run(retry, id)
+        this.db.prepare("UPDATE videos SET status='pending', retry_count=?, error=NULL, local_path=NULL, original_path=NULL, normalization_error=NULL WHERE id=?").run(retry, id)
         // 回退定时器入 map，cancel(ids) 可 clearTimeout 防止已取消项被重新下载
         const t = setTimeout(() => { this.retryTimers.delete(id); this.enqueue(id) }, 5000)
         this.retryTimers.set(id, t)
       } else {
-        this.db.prepare("UPDATE videos SET status='failed', error=?, retry_count=? WHERE id=?").run(code, retry, id)
+        this.db.prepare("UPDATE videos SET status='failed', error=?, retry_count=?, local_path=NULL, original_path=NULL, normalization_error=NULL WHERE id=?").run(code, retry, id)
       }
       this.emit({ type: 'video:status', id, status: 'failed', error: code })
     } finally {

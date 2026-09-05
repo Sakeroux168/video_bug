@@ -9,7 +9,7 @@ import { Analyzer } from './analyzer'
 import { Organizer } from './organizer'
 import type { ResolveCategoryFn } from './organizer'
 import { registerIpc } from './ipc'
-import { enqueuePendingTasks } from './recovery'
+import { enqueuePendingTasks, recoverPendingVideos } from './recovery'
 import { getSettings } from './settings'
 import { douyinAdapter, drainDurationDiags } from './adapters/douyin'
 import { classifyAuthor } from './ai/organizer-ai'
@@ -220,9 +220,7 @@ app.whenReady().then(() => {
   // 断点续传：running→paused；downloading→pending，与已有 pending 一起重新入队
   const running = db.prepare("SELECT id FROM tasks WHERE status='running'").all() as Array<{ id: number }>
   for (const t of running) db.prepare("UPDATE tasks SET status='paused', error='interrupted' WHERE id=?").run(t.id)
-  db.prepare("UPDATE videos SET status='pending' WHERE status='downloading'").run()
-  const pend = db.prepare("SELECT id FROM videos WHERE status='pending'").all() as Array<{ id: number }>
-  for (const v of pend) downloader.enqueue(v.id)
+  recoverPendingVideos(db, id => downloader!.enqueue(id))
   // R11-3：遗留 pending 任务重新入队——内存 FIFO 重启即空，不恢复则旧任务永远没人启动（卡「等待」）
   enqueuePendingTasks(db, enqueueTask)
   downloader.start()

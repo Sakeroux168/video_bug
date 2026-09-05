@@ -68,6 +68,223 @@ describe('Downloader', () => {
     expect(events).toContain('video:status:done')
   })
 
+  it('标准化成功：最终文件使用转码结果，默认不保留原片', async () => {
+    const taskId = createTask(db, input)
+    insertVideos(db, [item('NORMALIZED')], taskId, 'douyin')
+    const [v] = listVideos(db, taskId)
+    const source = Buffer.alloc(2048, 1)
+    source.write('ftypisom', 4)
+    const normalized = Buffer.alloc(3072, 2)
+    normalized.write('ftypisom', 4)
+    const normalizer = vi.fn(async ({ outputPath }: { outputPath: string }) => {
+      writeFileSync(outputPath, normalized)
+      return { status: 'normalized' as const, target: { width: 1920, height: 1080 } }
+    })
+    const dl = new Downloader(db, {
+      downloadDir: dir, downloadConcurrency: 1, addressTtlMin: 30,
+      normalizeVideo: true, keepOriginalVideo: false
+    }, (async () => new Response(source)) as typeof fetch, { validator: async () => true, normalizer })
+
+    dl.enqueue(v.id)
+    await vi.waitFor(() => expect(dl.isIdle()).toBe(true))
+
+    const row = listVideos(db, taskId)[0]
+    expect(row.status).toBe('done')
+    expect(readFileSync(row.local_path!)).toEqual(normalized)
+    expect(row.original_path).toBeNull()
+    expect(row.normalization_error).toBeNull()
+    expect(row.video_width).toBe(1920)
+    expect(row.video_height).toBe(1080)
+    expect(normalizer).toHaveBeenCalledOnce()
+    expect(readdirSync(dir).some(name => name.includes('.part.'))).toBe(false)
+  })
+
+  it('保留原片开启：转码成品与 .original.mp4 同名主体并存', async () => {
+    const taskId = createTask(db, input)
+    insertVideos(db, [item('KEEP')], taskId, 'douyin')
+    const [v] = listVideos(db, taskId)
+    const source = Buffer.alloc(2048, 3)
+    source.write('ftypisom', 4)
+    const normalized = Buffer.alloc(3072, 4)
+    normalized.write('ftypisom', 4)
+    const normalizer = vi.fn(async ({ outputPath }: { outputPath: string }) => {
+      writeFileSync(outputPath, normalized)
+      return { status: 'normalized' as const, target: { width: 1080, height: 1920 } }
+    })
+    const dl = new Downloader(db, {
+      downloadDir: dir, downloadConcurrency: 1, addressTtlMin: 30,
+      normalizeVideo: true, keepOriginalVideo: true
+    }, (async () => new Response(source)) as typeof fetch, { validator: async () => true, normalizer })
+
+    dl.enqueue(v.id)
+    await vi.waitFor(() => expect(dl.isIdle()).toBe(true))
+
+    const row = listVideos(db, taskId)[0]
+    expect(row.status).toBe('done')
+    expect(readFileSync(row.local_path!)).toEqual(normalized)
+    expect(readFileSync(row.original_path!)).toEqual(source)
+    expect(row.original_path).toBe(row.local_path!.replace(/\.mp4$/i, '.original.mp4'))
+    expect(row.video_width).toBe(1080)
+    expect(row.video_height).toBe(1920)
+  })
+
+  it.each([
+    ['skipped', null],
+    ['failed', 'ffmpeg_failed']
+  ] as const)('标准化返回 %s：已验证原片成为最终视频且不复制原片', async (status, expectedError) => {
+    const taskId = createTask(db, input)
+    insertVideos(db, [item(`FALLBACK-${status}`)], taskId, 'douyin')
+    const [v] = listVideos(db, taskId)
+    const source = Buffer.alloc(2048, 5)
+    source.write('ftypisom', 4)
+    const normalizer = vi.fn(async () => status === 'skipped'
+      ? { status, target: { width: 1920, height: 1080 } }
+      : { status, error: 'ffmpeg_failed' as const, target: { width: 1920, height: 1080 } })
+    const dl = new Downloader(db, {
+      downloadDir: dir, downloadConcurrency: 1, addressTtlMin: 30,
+      normalizeVideo: true, keepOriginalVideo: true
+    }, (async () => new Response(source)) as typeof fetch, { validator: async () => true, normalizer })
+
+    dl.enqueue(v.id)
+    await vi.waitFor(() => expect(dl.isIdle()).toBe(true))
+
+    const row = listVideos(db, taskId)[0]
+    expect(row.status).toBe('done')
+    expect(readFileSync(row.local_path!)).toEqual(source)
+    expect(row.original_path).toBeNull()
+    expect(row.normalization_error).toBe(expectedError)
+  })
+
+  it('关闭标准化时不调用 normalizer，直接原子落为最终视频', async () => {
+    const taskId = createTask(db, input)
+    insertVideos(db, [item('DISABLED')], taskId, 'douyin')
+    const [v] = listVideos(db, taskId)
+    const source = Buffer.alloc(2048, 6)
+    source.write('ftypisom', 4)
+    const normalizer = vi.fn()
+    const dl = new Downloader(db, {
+      downloadDir: dir, downloadConcurrency: 1, addressTtlMin: 30,
+      normalizeVideo: false, keepOriginalVideo: true
+    }, (async () => new Response(source)) as typeof fetch, { validator: async () => true, normalizer })
+
+    dl.enqueue(v.id)
+    await vi.waitFor(() => expect(dl.isIdle()).toBe(true))
+
+    const row = listVideos(db, taskId)[0]
+    expect(row.status).toBe('done')
+    expect(readFileSync(row.local_path!)).toEqual(source)
+    expect(row.original_path).toBeNull()
+    expect(normalizer).not.toHaveBeenCalled()
+  })
+
+  it('标准化期间全局暂停：保留已验证下载断点，继续后不重复请求视频', async () => {
+    const taskId = createTask(db, input)
+    insertVideos(db, [item('PAUSE-NORMALIZE')], taskId, 'douyin')
+    const [v] = listVideos(db, taskId)
+    const source = Buffer.alloc(2048, 7)
+    source.write('ftypisom', 4)
+    const normalized = Buffer.alloc(3072, 8)
+    normalized.write('ftypisom', 4)
+    let fetchCount = 0
+    let normalizationStarted!: () => void
+    const started = new Promise<void>(resolve => { normalizationStarted = resolve })
+    let normalizeCount = 0
+    const normalizer = vi.fn(async ({ outputPath, signal }: { outputPath: string; signal?: AbortSignal }) => {
+      normalizeCount++
+      if (normalizeCount === 1) {
+        normalizationStarted()
+        await new Promise<void>(resolve => signal?.addEventListener('abort', () => resolve(), { once: true }))
+        return { status: 'aborted' as const, target: { width: 1920, height: 1080 } }
+      }
+      writeFileSync(outputPath, normalized)
+      return { status: 'normalized' as const, target: { width: 1920, height: 1080 } }
+    })
+    const fetchImpl = (async () => { fetchCount++; return new Response(source) }) as typeof fetch
+    const dl = new Downloader(db, {
+      downloadDir: dir, downloadConcurrency: 1, addressTtlMin: 30,
+      normalizeVideo: true, keepOriginalVideo: false
+    }, fetchImpl, { validator: async () => true, normalizer })
+
+    dl.enqueue(v.id)
+    await started
+    dl.pause()
+    await vi.waitFor(() => expect(listVideos(db, taskId)[0].status).toBe('pending'))
+    const paused = listVideos(db, taskId)[0]
+    expect(paused.local_path).toMatch(/\.download\.part\.mp4$/)
+    expect(existsSync(paused.local_path!)).toBe(true)
+    expect(fetchCount).toBe(1)
+
+    dl.resume()
+    await vi.waitFor(() => expect(dl.isIdle()).toBe(true))
+    const row = listVideos(db, taskId)[0]
+    expect(row.status).toBe('done')
+    expect(readFileSync(row.local_path!)).toEqual(normalized)
+    expect(fetchCount).toBe(1)
+    expect(normalizer).toHaveBeenCalledTimes(2)
+  })
+
+  it('程序重启后复用数据库中的已验证源文件断点，不再请求过期视频地址', async () => {
+    const taskId = createTask(db, input)
+    insertVideos(db, [item('RESTART-NORMALIZE')], taskId, 'douyin')
+    const [v] = listVideos(db, taskId)
+    const source = Buffer.alloc(2048, 9)
+    source.write('ftypisom', 4)
+    const normalized = Buffer.alloc(3072, 10)
+    normalized.write('ftypisom', 4)
+    const checkpoint = join(dir, `.video-${v.id}.download.part.mp4`)
+    writeFileSync(checkpoint, source)
+    db.prepare("UPDATE videos SET status='pending', local_path=?, fetched_at='2000-01-01T00:00:00.000Z' WHERE id=?")
+      .run(checkpoint, v.id)
+    const fetchImpl = vi.fn(async () => { throw new Error('不应重新请求') })
+    const normalizer = vi.fn(async ({ outputPath }: { outputPath: string }) => {
+      writeFileSync(outputPath, normalized)
+      return { status: 'normalized' as const, target: { width: 1920, height: 1080 } }
+    })
+    const dl = new Downloader(db, {
+      downloadDir: dir, downloadConcurrency: 1, addressTtlMin: 1,
+      normalizeVideo: true, keepOriginalVideo: false
+    }, fetchImpl as unknown as typeof fetch, { validator: async () => true, normalizer })
+
+    dl.enqueue(v.id)
+    await vi.waitFor(() => expect(dl.isIdle()).toBe(true))
+
+    const row = listVideos(db, taskId)[0]
+    expect(row.status).toBe('done')
+    expect(readFileSync(row.local_path!)).toEqual(normalized)
+    expect(fetchImpl).not.toHaveBeenCalled()
+  })
+
+  it('标准化期间取消：删除源文件断点和转码半成品，并清空数据库路径', async () => {
+    const taskId = createTask(db, input)
+    insertVideos(db, [item('CANCEL-NORMALIZE')], taskId, 'douyin')
+    const [v] = listVideos(db, taskId)
+    const source = Buffer.alloc(2048, 11)
+    source.write('ftypisom', 4)
+    let normalizationStarted!: () => void
+    const started = new Promise<void>(resolve => { normalizationStarted = resolve })
+    const normalizer = vi.fn(async ({ outputPath, signal }: { outputPath: string; signal?: AbortSignal }) => {
+      writeFileSync(outputPath, Buffer.alloc(1024, 12))
+      normalizationStarted()
+      await new Promise<void>(resolve => signal?.addEventListener('abort', () => resolve(), { once: true }))
+      return { status: 'aborted' as const, target: { width: 1920, height: 1080 } }
+    })
+    const dl = new Downloader(db, {
+      downloadDir: dir, downloadConcurrency: 1, addressTtlMin: 30,
+      normalizeVideo: true, keepOriginalVideo: false
+    }, (async () => new Response(source)) as typeof fetch, { validator: async () => true, normalizer })
+
+    dl.enqueue(v.id)
+    await started
+    dl.cancel([v.id])
+    await vi.waitFor(() => expect(dl.isIdle()).toBe(true))
+
+    const row = listVideos(db, taskId)[0]
+    expect(row.status).toBe('cancelled')
+    expect(row.local_path).toBeNull()
+    expect(row.original_path).toBeNull()
+    expect(readdirSync(dir)).toEqual([])
+  })
+
   it('视频与封面下载成功：保存为完全相同的文件名主体', async () => {
     const taskId = createTask(db, input)
     insertVideos(db, [item('PAIR1', { coverUrl: 'https://img.test/c' })], taskId, 'douyin')
@@ -240,6 +457,8 @@ describe('Downloader', () => {
     insertVideos(db, [item()], taskId, 'douyin')
     const [v] = listVideos(db, taskId)
     db.prepare('UPDATE videos SET fetched_at=? WHERE id=?').run(new Date(Date.now() - 31 * 60 * 1000).toISOString(), v.id)
+    const orphanPart = join(dir, `.video-${v.id}.download.part.mp4`)
+    writeFileSync(orphanPart, Buffer.alloc(2048)) // 模拟崩溃发生在写完文件、登记断点之前
     const fetchImpl = (async () => { throw new Error('不应发起下载请求') }) as typeof fetch
     const dl = new Downloader(db, { downloadDir: dir, downloadConcurrency: 3, scrollIntervalMs: 2000, addressTtlMin: 30 }, fetchImpl)
     dl.enqueue(v.id)
@@ -248,6 +467,7 @@ describe('Downloader', () => {
     const row = listVideos(db, taskId)[0]
     expect(row.status).toBe('failed')
     expect(row.error).toBe('address_expired')
+    expect(existsSync(orphanPart)).toBe(false)
   })
 
   it('磁盘错误（ENOENT）→ 直接 failed + 错误码 disk，不重试', async () => {

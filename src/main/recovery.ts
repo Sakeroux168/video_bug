@@ -7,3 +7,13 @@ export function enqueuePendingTasks(db: DatabaseSync, enqueue: (id: number) => v
   const rows = db.prepare("SELECT id FROM tasks WHERE status='pending' ORDER BY id").all() as Array<{ id: number }>
   for (const r of rows) enqueue(r.id)
 }
+
+/**
+ * 重启恢复下载：在途任务回到等待并重新入队。
+ * local_path 可能是已校验的隐藏源文件断点，必须原样保留给 Downloader 复验复用。
+ */
+export function recoverPendingVideos(db: DatabaseSync, enqueue: (id: number) => void): void {
+  db.prepare("UPDATE videos SET status='pending' WHERE status='downloading'").run()
+  const rows = db.prepare("SELECT id FROM videos WHERE status='pending' ORDER BY id").all() as Array<{ id: number }>
+  for (const row of rows) enqueue(row.id)
+}
