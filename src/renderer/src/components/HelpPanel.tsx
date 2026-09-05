@@ -170,6 +170,27 @@ export default function HelpPanel(): React.ReactElement {
           需要开启的话找技术在设置页填 Key。
         </p>
       </Card>
+
+      <Card>
+        <SectionTitle index="7">免费版本与许可</SectionTitle>
+        <div className="space-y-2 text-xs leading-5 text-slate-500">
+          <p>
+            这是项目维护者提供的<span className="font-medium text-emerald-600">官方免费版本</span>。
+            项目采用 MIT + Commons Clause 的<span className="font-medium text-slate-700">源码可用</span>许可：
+            允许利用软件输出赚钱，但禁止出售软件本身、换皮版或把软件本体做成主要收费服务。
+          </p>
+          <p>
+            源码地址：
+            <code className="ml-1 break-all rounded bg-slate-100 px-1 py-0.5 text-slate-600">
+              https://github.com/Sakeroux168/video_bug
+            </code>
+          </p>
+          <p>
+            软件按现状提供、不作担保。FFmpeg、Electron、React 等第三方组件遵守各自许可证；
+            完整文本随程序放在 <code className="rounded bg-slate-100 px-1 py-0.5">resources\licenses</code>。
+          </p>
+        </div>
+      </Card>
     </div>
   )
 }

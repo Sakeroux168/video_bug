@@ -49,4 +49,16 @@ describe('HelpPanel（使用说明面板）', () => {
     expect(text).not.toContain('仍要运行')
     expect(text).not.toContain('已保护你的电脑')
   })
+
+  it('显示官方免费版本、源码可用许可边界和第三方许可位置', () => {
+    const { container } = render(<HelpPanel />)
+    const text = container.textContent ?? ''
+    expect(text).toContain('官方免费版本')
+    expect(text).toContain('允许利用软件输出赚钱')
+    expect(text).toContain('禁止出售软件本身')
+    expect(text).toContain('源码可用')
+    expect(text).toContain('https://github.com/Sakeroux168/video_bug')
+    expect(text).toContain('resources\\licenses')
+    expect(text).toContain('按现状提供')
+  })
 })
