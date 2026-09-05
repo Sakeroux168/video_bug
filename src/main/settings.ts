@@ -9,6 +9,8 @@ const DEFAULTS: AppSettings = {
   aiApiKey: '',
   aiModel: 'gpt-4o-mini',
   downloadConcurrency: 3,
+  normalizeVideo: true,
+  keepOriginalVideo: false,
   scrollIntervalMs: 3500, // R12：默认滚动间隔放慢（2000→3500）降风控
   scrollSpeed: 'slow',
   scrollPageWaitMs: 8000,

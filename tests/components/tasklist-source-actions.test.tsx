@@ -19,7 +19,8 @@ function video(id: number, title: string, stats: string, sourceUrl: string | nul
   return {
     id, platform: 'douyin', task_id: 1, aweme_id: `AW${id}`, title,
     author_id: 1, play_addr: 'https://cdn.test/video.mp4', source_url: sourceUrl,
-    cover_url: null, cover_path: null, video_width: 1080, video_height: 1920,
+    cover_url: null, cover_path: null, original_path: null, normalization_error: null,
+    video_width: 1080, video_height: 1920,
     duration: 10, publish_time: '2026-09-04T00:00:00.000Z', stats,
     ai_verdict: null, ai_tags: null, status: 'collected', local_path: null,
     file_size: null, error: null, retry_count: 0,

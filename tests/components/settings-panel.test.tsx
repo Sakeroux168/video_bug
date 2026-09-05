@@ -20,6 +20,8 @@ const SETTING_LABELS: Record<keyof AppSettings, string> = {
   aiApiKey: 'API Key',
   aiModel: '模型',
   downloadConcurrency: '下载并发',
+  normalizeVideo: '统一输出分辨率（推荐）',
+  keepOriginalVideo: '保留原视频',
   scrollIntervalMs: '滚动间隔(ms)',
   scrollSpeed: '滚动速度',
   scrollPageWaitMs: '每页最大等待(秒)',
@@ -98,6 +100,30 @@ describe('SettingsPanel 分组与字段完整性', () => {
     await waitFor(() => expect(window.api.saveSettings).toHaveBeenCalledWith(expect.objectContaining({
       organizeDebounceMs: 8000,
       asrMaxSec: 120
+    })))
+  })
+
+  it('标准化默认开启；保留原片可选，关闭标准化时自动关闭并禁用原片开关', async () => {
+    installFakeApi()
+    render(<SettingsPanel />)
+
+    const normalize = await screen.findByLabelText('统一输出分辨率（推荐）') as HTMLInputElement
+    const keepOriginal = screen.getByLabelText('保留原视频') as HTMLInputElement
+    expect(normalize).toBeChecked()
+    expect(keepOriginal).not.toBeChecked()
+    expect(keepOriginal).toBeEnabled()
+
+    fireEvent.click(keepOriginal)
+    expect(keepOriginal).toBeChecked()
+    fireEvent.click(normalize)
+    expect(normalize).not.toBeChecked()
+    expect(keepOriginal).not.toBeChecked()
+    expect(keepOriginal).toBeDisabled()
+
+    fireEvent.click(screen.getByRole('button', { name: '保存设置' }))
+    await waitFor(() => expect(window.api.saveSettings).toHaveBeenCalledWith(expect.objectContaining({
+      normalizeVideo: false,
+      keepOriginalVideo: false
     })))
   })
 

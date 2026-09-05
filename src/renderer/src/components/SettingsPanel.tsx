@@ -115,6 +115,31 @@ export default function SettingsPanel() {
               <input type="number" min={1} className={inputCls} value={s.addressTtlMin} onChange={e => set('addressTtlMin', Number(e.target.value))} />
             </label>
           </div>
+          <div className="mt-3 space-y-2 border-t border-slate-100 pt-3 text-xs text-slate-600">
+            <label className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={s.normalizeVideo}
+                onChange={e => setS(prev => prev ? {
+                  ...prev,
+                  normalizeVideo: e.target.checked,
+                  keepOriginalVideo: e.target.checked ? prev.keepOriginalVideo : false
+                } : prev)}
+              />
+              <span>统一输出分辨率（推荐）</span>
+            </label>
+            <p className="pl-5 leading-5 text-slate-400">横屏输出 1920×1080，竖屏输出 1080×1920；主体保持比例，不会被拉长或压扁。</p>
+            <label className={`flex items-center gap-2 ${s.normalizeVideo ? '' : 'text-slate-300'}`}>
+              <input
+                type="checkbox"
+                checked={s.keepOriginalVideo}
+                disabled={!s.normalizeVideo}
+                onChange={e => set('keepOriginalVideo', e.target.checked)}
+              />
+              <span>保留原视频</span>
+            </label>
+            <p className="pl-5 leading-5 text-slate-400">仅在发生转码时额外保留原片，会占用更多磁盘空间。</p>
+          </div>
           <label className="mt-3 flex items-start gap-2 text-xs leading-5 text-slate-600">
             <input className="mt-1" type="checkbox" checked={s.allowDuplicateAuthor} onChange={e => set('allowDuplicateAuthor', e.target.checked)} />
             允许重复爬取已爬过主页的作者（取消勾选则自动去重跳过）

@@ -56,6 +56,8 @@ export interface VideoRow {
   id: number; platform: string; task_id: number; aweme_id: string; title: string
   author_id: number | null; play_addr: string | null; source_url: string | null; duration: number
   cover_url: string | null; cover_path: string | null
+  original_path: string | null
+  normalization_error: string | null
   video_width: number; video_height: number
   organize_retry?: number // 成对移动回滚失败：路径记录实际位置，后续整理仍需重试
   publish_time: string | null; stats: string; ai_verdict: 'pass' | 'filtered' | null
@@ -93,6 +95,10 @@ export interface AppSettings {
   aiApiKey: string
   aiModel: string
   downloadConcurrency: number
+  /** 新下载视频是否统一输出为横屏 1920x1080 / 竖屏 1080x1920。 */
+  normalizeVideo: boolean
+  /** 标准化成功后是否把原片以 .original.mp4 同行保留。 */
+  keepOriginalVideo: boolean
   scrollIntervalMs: number
   /** T2：滚动速度三档（档位预设 scrollPageWaitMs 初始值：慢8s/中5s/快3s；数字微调直接生效） */
   scrollSpeed: 'slow' | 'medium' | 'fast'

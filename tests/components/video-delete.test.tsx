@@ -18,6 +18,7 @@ function makeVideo(id: number, status: VideoRow['status'] = 'done'): VideoRow {
   return {
     id, platform: 'douyin', task_id: 1, aweme_id: `aweme-${id}`, title: `视频${id}`,
     author_id: 1, play_addr: null, source_url: null, cover_url: null, cover_path: null,
+    original_path: null, normalization_error: null,
     video_width: 0, video_height: 0, duration: 60, publish_time: '2026-08-01T00:00:00.000Z',
     stats: '{}', ai_verdict: null, ai_tags: null, status, local_path: null,
     file_size: null, error: null, retry_count: 0, fetched_at: '2026-08-01T00:00:00.000Z',

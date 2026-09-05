@@ -25,6 +25,8 @@ function fullSettings(over: Partial<AppSettings> = {}): AppSettings {
     aiApiKey: 'sk-test',
     aiModel: 'gpt-4o-mini',
     downloadConcurrency: 5,
+    normalizeVideo: false,
+    keepOriginalVideo: true,
     scrollIntervalMs: 1500,
     scrollSpeed: 'fast',
     scrollPageWaitMs: 3000,
@@ -46,6 +48,8 @@ describe('settings', () => {
     const s = getSettings()
     expect(s.downloadDir).toBe(join(mockPaths.downloads, '爬取视频'))
     expect(s.downloadConcurrency).toBe(3)
+    expect(s.normalizeVideo).toBe(true)
+    expect(s.keepOriginalVideo).toBe(false)
     expect(s.scrollSpeed).toBe('slow')
     expect(s.scrollPageWaitMs).toBe(8000)
     expect(s.allowDuplicateAuthor).toBe(false)
@@ -64,6 +68,8 @@ describe('settings', () => {
     const s = getSettings()
     expect(s.downloadConcurrency).toBe(5)
     expect(s.allowDuplicateAuthor).toBe(true)
+    expect(s.normalizeVideo).toBe(true)
+    expect(s.keepOriginalVideo).toBe(false)
     expect(s.aiModel).toBe('gpt-4o-mini') // 未存字段回落到默认
     expect(s.downloadDir).toBe(join(mockPaths.downloads, '爬取视频'))
   })

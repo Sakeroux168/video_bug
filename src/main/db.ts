@@ -48,6 +48,8 @@ CREATE TABLE IF NOT EXISTS videos (
   source_url TEXT,
   cover_url TEXT,
   cover_path TEXT,
+  original_path TEXT,
+  normalization_error TEXT,
   video_width INTEGER NOT NULL DEFAULT 0,
   video_height INTEGER NOT NULL DEFAULT 0,
   organize_retry INTEGER NOT NULL DEFAULT 0,
@@ -92,6 +94,8 @@ export function initDb(db: DatabaseSync): void {
   addColumnIfMissing(db, 'videos', 'video_height', 'INTEGER NOT NULL DEFAULT 0')
   addColumnIfMissing(db, 'videos', 'organize_retry', 'INTEGER NOT NULL DEFAULT 0')
   addColumnIfMissing(db, 'videos', 'source_url', 'TEXT')
+  addColumnIfMissing(db, 'videos', 'original_path', 'TEXT')
+  addColumnIfMissing(db, 'videos', 'normalization_error', 'TEXT')
 }
 
 /** 老库迁移：表缺列时补列（ALTER TABLE ADD COLUMN 不能带 NOT NULL 无默认值的约束，故用 DEFAULT） */
@@ -366,7 +370,7 @@ export function setAuthorOrganizeState(db: DatabaseSync, id: number, state: 'pen
 export function setVideoStatus(db: DatabaseSync, id: number, status: VideoStatus, patch: Partial<VideoRow> = {}): void {
   const sets = ['status = ?']
   const vals: unknown[] = [status]
-  for (const k of ['error', 'local_path', 'cover_path', 'video_width', 'video_height', 'file_size', 'retry_count', 'downloaded_at', 'ai_verdict', 'ai_tags'] as const) {
+  for (const k of ['error', 'local_path', 'cover_path', 'original_path', 'normalization_error', 'video_width', 'video_height', 'file_size', 'retry_count', 'downloaded_at', 'ai_verdict', 'ai_tags'] as const) {
     if (k in patch && patch[k] !== undefined) { sets.push(`${k} = ?`); vals.push(patch[k]) }
   }
   vals.push(id)

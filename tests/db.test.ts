@@ -48,6 +48,8 @@ describe('db', () => {
     const [video] = listVideos(db, id)
     expect(video.cover_url).toBe('https://img.test/cover.jpg')
     expect(video.cover_path).toBeNull()
+    expect(video.original_path).toBeNull()
+    expect(video.normalization_error).toBeNull()
     expect(video.video_width).toBe(1080)
     expect(video.video_height).toBe(1920)
   })
@@ -76,12 +78,15 @@ describe('db', () => {
     initDb(old)
     const columns = old.prepare('PRAGMA table_info(videos)').all() as Array<{ name: string }>
     expect(columns.map(c => c.name)).toEqual(expect.arrayContaining([
-      'cover_url', 'cover_path', 'video_width', 'video_height', 'organize_retry', 'source_url'
+      'cover_url', 'cover_path', 'video_width', 'video_height', 'organize_retry', 'source_url',
+      'original_path', 'normalization_error'
     ]))
     expect(old.prepare('SELECT aweme_id, video_width, video_height, organize_retry FROM videos').get())
       .toEqual({ aweme_id: 'OLD1', video_width: 0, video_height: 0, organize_retry: 0 })
     expect(old.prepare('SELECT source_url FROM videos WHERE aweme_id=?').get('OLD1'))
       .toEqual({ source_url: null })
+    expect(old.prepare('SELECT original_path, normalization_error FROM videos WHERE aweme_id=?').get('OLD1'))
+      .toEqual({ original_path: null, normalization_error: null })
   })
 
   it('upsertAuthor 幂等，video_count 累加', () => {
