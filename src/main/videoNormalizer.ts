@@ -1,4 +1,5 @@
-import { execFile } from 'node:child_process'
+import { execFile, spawn } from 'node:child_process'
+import { rmSync, statSync } from 'node:fs'
 import { findBin } from './ffbin'
 
 export interface MediaProbe {
@@ -21,6 +22,26 @@ export interface VideoSize {
 export interface MediaProbeDeps {
   findFfprobe: () => string | null
   execFile: (file: string, args: string[], callback: (error: Error | null, stdout: string) => void) => void
+}
+
+export interface NormalizeVideoRequest {
+  inputPath: string
+  outputPath: string
+  signal?: AbortSignal
+}
+
+export type NormalizeVideoResult =
+  | { status: 'normalized'; target: VideoSize }
+  | { status: 'skipped'; target: VideoSize }
+  | { status: 'failed'; error: 'media_probe_failed' | 'ffmpeg_not_found' | 'ffmpeg_failed' | 'output_invalid'; target?: VideoSize }
+  | { status: 'aborted'; target?: VideoSize }
+
+export interface VideoNormalizerDeps {
+  findFfmpeg: () => string | null
+  probeMedia: (file: string) => Promise<MediaProbe | null>
+  runFfmpeg: (file: string, args: string[], signal?: AbortSignal) => Promise<void>
+  fileSize: (file: string) => number
+  removeFile: (file: string) => void
 }
 
 const realProbeDeps: MediaProbeDeps = {
@@ -102,6 +123,123 @@ export function buildNormalizationFilter(target: VideoSize): string {
   ].join(';')
 }
 
+export function buildNormalizationArgs(inputPath: string, outputPath: string, target: VideoSize): string[] {
+  return [
+    '-hide_banner', '-loglevel', 'error', '-y',
+    '-i', inputPath,
+    '-filter_complex', buildNormalizationFilter(target),
+    '-map', '[v]',
+    '-map', '0:a:0?',
+    '-sn', '-dn',
+    '-map_metadata', '-1',
+    '-c:v', 'libx264',
+    '-preset', 'medium',
+    '-crf', '20',
+    '-pix_fmt', 'yuv420p',
+    '-c:a', 'aac',
+    '-b:a', '192k',
+    '-movflags', '+faststart',
+    '-metadata:s:v:0', 'rotate=0',
+    outputPath
+  ]
+}
+
+function abortError(): Error {
+  return Object.assign(new Error('FFmpeg aborted'), { name: 'AbortError' })
+}
+
+/** 只保留少量 stderr 供本地调试；上层只收到稳定错误码，不把文件路径写进数据库。 */
+async function runFfmpegProcess(file: string, args: string[], signal?: AbortSignal): Promise<void> {
+  if (signal?.aborted) throw abortError()
+  await new Promise<void>((resolve, reject) => {
+    const child = spawn(file, args, { windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'] })
+    let stderr = ''
+    let settled = false
+    const finish = (error?: Error): void => {
+      if (settled) return
+      settled = true
+      signal?.removeEventListener('abort', onAbort)
+      if (error) reject(error)
+      else resolve()
+    }
+    const onAbort = (): void => {
+      child.kill()
+    }
+    signal?.addEventListener('abort', onAbort, { once: true })
+    child.stderr.on('data', chunk => {
+      stderr = `${stderr}${String(chunk)}`.slice(-4096)
+    })
+    child.once('error', error => finish(error))
+    child.once('close', code => {
+      if (signal?.aborted) finish(abortError())
+      else if (code === 0) finish()
+      else finish(new Error(stderr || `FFmpeg exited with code ${String(code)}`))
+    })
+  })
+}
+
+const realNormalizerDeps: VideoNormalizerDeps = {
+  findFfmpeg: () => findBin('ffmpeg'),
+  probeMedia,
+  runFfmpeg: runFfmpegProcess,
+  fileSize: file => statSync(file).size,
+  removeFile: file => { try { rmSync(file, { force: true }) } catch { /* best effort */ } }
+}
+
+function durationMatches(source: MediaProbe, output: MediaProbe): boolean {
+  if (source.durationSec <= 0) return true
+  const tolerance = Math.max(0.5, source.durationSec * 0.02)
+  return Math.abs(source.durationSec - output.durationSec) <= tolerance
+}
+
+function validNormalizedOutput(
+  source: MediaProbe,
+  output: MediaProbe | null,
+  target: VideoSize,
+  size: number
+): boolean {
+  return size >= 1024
+    && output !== null
+    && output.width === target.width
+    && output.height === target.height
+    && isAlreadyCompatible(output)
+    && durationMatches(source, output)
+}
+
+export async function normalizeVideo(
+  request: NormalizeVideoRequest,
+  deps: VideoNormalizerDeps = realNormalizerDeps
+): Promise<NormalizeVideoResult> {
+  const source = await deps.probeMedia(request.inputPath)
+  if (!source) return { status: 'failed', error: 'media_probe_failed' }
+  const target = targetDimensions(source)
+  if (!target) return { status: 'failed', error: 'media_probe_failed' }
+  if (isAlreadyCompatible(source)) return { status: 'skipped', target }
+  const ffmpeg = deps.findFfmpeg()
+  if (!ffmpeg) return { status: 'failed', error: 'ffmpeg_not_found', target }
+
+  try {
+    await deps.runFfmpeg(
+      ffmpeg,
+      buildNormalizationArgs(request.inputPath, request.outputPath, target),
+      request.signal
+    )
+  } catch (error) {
+    deps.removeFile(request.outputPath)
+    if (request.signal?.aborted || (error as Error).name === 'AbortError') return { status: 'aborted', target }
+    return { status: 'failed', error: 'ffmpeg_failed', target }
+  }
+
+  let size = 0
+  try { size = deps.fileSize(request.outputPath) } catch { /* invalid output */ }
+  const output = size >= 1024 ? await deps.probeMedia(request.outputPath) : null
+  if (!validNormalizedOutput(source, output, target, size)) {
+    deps.removeFile(request.outputPath)
+    return { status: 'failed', error: 'output_invalid', target }
+  }
+  return { status: 'normalized', target }
+}
+
 export async function probeMedia(file: string, deps: MediaProbeDeps = realProbeDeps): Promise<MediaProbe | null> {
   const ffprobe = deps.findFfprobe()
   if (!ffprobe) return null
@@ -157,4 +295,3 @@ export async function probeMedia(file: string, deps: MediaProbeDeps = realProbeD
     }
   })
 }
-

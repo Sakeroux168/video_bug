@@ -1,11 +1,14 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
+  buildNormalizationArgs,
   buildNormalizationFilter,
   displayDimensions,
   isAlreadyCompatible,
+  normalizeVideo,
   probeMedia,
   targetDimensions,
-  type MediaProbe
+  type MediaProbe,
+  type VideoNormalizerDeps
 } from '../src/main/videoNormalizer'
 
 function media(over: Partial<MediaProbe> = {}): MediaProbe {
@@ -135,5 +138,108 @@ describe('ffprobe 媒体解析', () => {
     })
     await expect(probeMedia('audio.mp4', { findFfprobe: () => 'ffprobe', execFile: noVideo }))
       .resolves.toBeNull()
+  })
+})
+
+function normalizerDeps(over: Partial<VideoNormalizerDeps> = {}): VideoNormalizerDeps {
+  return {
+    findFfmpeg: () => 'C:/ffmpeg/bin/ffmpeg.exe',
+    probeMedia: vi.fn()
+      .mockResolvedValueOnce(media({ width: 1280, height: 720 }))
+      .mockResolvedValueOnce(media()),
+    runFfmpeg: vi.fn().mockResolvedValue(undefined),
+    fileSize: () => 2048,
+    removeFile: vi.fn(),
+    ...over
+  }
+}
+
+describe('FFmpeg 标准化编排', () => {
+  it('已完全兼容时跳过转码，即使本机没有ffmpeg也可直接使用原片', async () => {
+    const deps = normalizerDeps({
+      findFfmpeg: () => null,
+      probeMedia: vi.fn().mockResolvedValue(media()),
+      runFfmpeg: vi.fn()
+    })
+    const result = await normalizeVideo({ inputPath: 'source.mp4', outputPath: 'normalized.part.mp4' }, deps)
+    expect(result).toMatchObject({ status: 'skipped', target: { width: 1920, height: 1080 } })
+    expect(deps.runFfmpeg).not.toHaveBeenCalled()
+  })
+
+  it('媒体无法探测或ffmpeg缺失时返回可区分失败，不创建输出', async () => {
+    const noProbe = normalizerDeps({ probeMedia: vi.fn().mockResolvedValue(null) })
+    await expect(normalizeVideo({ inputPath: 'source.mp4', outputPath: 'out.mp4' }, noProbe))
+      .resolves.toEqual({ status: 'failed', error: 'media_probe_failed' })
+    expect(noProbe.runFfmpeg).not.toHaveBeenCalled()
+
+    const noFfmpeg = normalizerDeps({ findFfmpeg: () => null })
+    await expect(normalizeVideo({ inputPath: 'source.mp4', outputPath: 'out.mp4' }, noFfmpeg))
+      .resolves.toMatchObject({ status: 'failed', error: 'ffmpeg_not_found' })
+    expect(noFfmpeg.runFfmpeg).not.toHaveBeenCalled()
+  })
+
+  it('横屏使用libx264可靠参数、可选音轨映射和无拉伸滤镜，验证后返回normalized', async () => {
+    const deps = normalizerDeps()
+    const result = await normalizeVideo({ inputPath: 'source.mp4', outputPath: 'normalized.part.mp4' }, deps)
+    expect(result).toMatchObject({ status: 'normalized', target: { width: 1920, height: 1080 } })
+    expect(deps.runFfmpeg).toHaveBeenCalledOnce()
+    const [exe, args] = vi.mocked(deps.runFfmpeg).mock.calls[0]
+    expect(exe).toBe('C:/ffmpeg/bin/ffmpeg.exe')
+    expect(args).toEqual(buildNormalizationArgs('source.mp4', 'normalized.part.mp4', { width: 1920, height: 1080 }))
+    expect(args).toContain('libx264')
+    expect(args).toContain('medium')
+    expect(args).toContain('20')
+    expect(args).toContain('0:a:0?')
+    expect(args).toContain('aac')
+    expect(args).toContain('192k')
+    expect(args).toContain('+faststart')
+    expect(args.join(' ')).toContain('force_original_aspect_ratio=decrease')
+  })
+
+  it('无音轨输入正常标准化，输出也允许无音轨', async () => {
+    const deps = normalizerDeps({
+      probeMedia: vi.fn()
+        .mockResolvedValueOnce(media({ width: 720, height: 1280, audioCodec: null }))
+        .mockResolvedValueOnce(media({ width: 1080, height: 1920, audioCodec: null }))
+    })
+    await expect(normalizeVideo({ inputPath: 'silent.mp4', outputPath: 'out.mp4' }, deps))
+      .resolves.toMatchObject({ status: 'normalized', target: { width: 1080, height: 1920 } })
+  })
+
+  it('进程失败清理半成品并返回ffmpeg_failed', async () => {
+    const removeFile = vi.fn()
+    const deps = normalizerDeps({
+      runFfmpeg: vi.fn().mockRejectedValue(new Error('encoder failed')),
+      removeFile
+    })
+    await expect(normalizeVideo({ inputPath: 'source.mp4', outputPath: 'out.mp4' }, deps))
+      .resolves.toMatchObject({ status: 'failed', error: 'ffmpeg_failed' })
+    expect(removeFile).toHaveBeenCalledWith('out.mp4')
+  })
+
+  it('取消信号返回aborted并清理半成品，不伪装成普通转码失败', async () => {
+    const controller = new AbortController()
+    const removeFile = vi.fn()
+    const runFfmpeg = vi.fn(async (_exe: string, _args: string[], signal?: AbortSignal) => {
+      controller.abort()
+      expect(signal?.aborted).toBe(true)
+      throw Object.assign(new Error('aborted'), { name: 'AbortError' })
+    })
+    const deps = normalizerDeps({ runFfmpeg, removeFile })
+    await expect(normalizeVideo({
+      inputPath: 'source.mp4', outputPath: 'out.mp4', signal: controller.signal
+    }, deps)).resolves.toMatchObject({ status: 'aborted' })
+    expect(removeFile).toHaveBeenCalledWith('out.mp4')
+  })
+
+  it.each([
+    ['文件过小', normalizerDeps({ fileSize: () => 10 })],
+    ['输出无法探测', normalizerDeps({ probeMedia: vi.fn().mockResolvedValueOnce(media({ width: 1280, height: 720 })).mockResolvedValueOnce(null) })],
+    ['输出尺寸错误', normalizerDeps({ probeMedia: vi.fn().mockResolvedValueOnce(media({ width: 1280, height: 720 })).mockResolvedValueOnce(media({ width: 1080, height: 1920 })) })],
+    ['输出时长漂移', normalizerDeps({ probeMedia: vi.fn().mockResolvedValueOnce(media({ width: 1280, height: 720, durationSec: 10 })).mockResolvedValueOnce(media({ durationSec: 8 })) })]
+  ])('%s时拒绝结果、清理半成品并返回output_invalid', async (_label, deps) => {
+    await expect(normalizeVideo({ inputPath: 'source.mp4', outputPath: 'out.mp4' }, deps))
+      .resolves.toMatchObject({ status: 'failed', error: 'output_invalid' })
+    expect(deps.removeFile).toHaveBeenCalledWith('out.mp4')
   })
 })
