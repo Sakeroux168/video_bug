@@ -66,21 +66,24 @@ describe('deleteVideoRows（ipc video:delete 编排）', () => {
     expect(listAuthors(db)[0].video_count).toBe(0) // 2 条全删 → 计数归 0
   })
 
-  it('视频和封面路径都安全时，两份文件一起删除后再删数据库行', async () => {
+  it('视频、封面和保留原片路径都安全时，三份文件一起删除后再删数据库行', async () => {
     setupVideos(1)
     const [video] = listVideos(db, 1)
     const videoPath = join(tmp, 'pair.mp4')
     const coverPath = join(tmp, 'pair.webp')
+    const originalPath = join(tmp, 'pair.original.mp4')
     writeFileSync(videoPath, 'video')
     writeFileSync(coverPath, 'cover')
-    db.prepare('UPDATE videos SET local_path=?, cover_path=? WHERE id=?')
-      .run(videoPath, coverPath, video.id)
+    writeFileSync(originalPath, 'original')
+    db.prepare('UPDATE videos SET local_path=?, cover_path=?, original_path=? WHERE id=?')
+      .run(videoPath, coverPath, originalPath, video.id)
 
     const result = await deleteVideoRows({ db, downloader: { cancel: vi.fn() }, downloadDir: tmp }, [video.id])
 
     expect(result).toEqual({ ok: true, deleted: 1 })
     expect(existsSync(videoPath)).toBe(false)
     expect(existsSync(coverPath)).toBe(false)
+    expect(existsSync(originalPath)).toBe(false)
     expect(listVideos(db, 1)).toHaveLength(0)
   })
 
@@ -135,6 +138,26 @@ describe('deleteVideoRows（ipc video:delete 编排）', () => {
     expect(result.deleted).toBe(0)
     expect(result.error).toContain('不在下载目录内')
     expect(existsSync(videoPath)).toBe(true)
+    expect(listVideos(db, 1)).toHaveLength(1)
+  })
+
+  it('原片路径在下载目录外时，不先删安全的视频和封面', async () => {
+    setupVideos(1)
+    const [video] = listVideos(db, 1)
+    const videoPath = join(tmp, 'safe.mp4')
+    const coverPath = join(tmp, 'safe.webp')
+    const outsideOriginal = join(tmp, '..', 'outside.original.mp4')
+    writeFileSync(videoPath, 'video')
+    writeFileSync(coverPath, 'cover')
+    db.prepare('UPDATE videos SET local_path=?, cover_path=?, original_path=? WHERE id=?')
+      .run(videoPath, coverPath, outsideOriginal, video.id)
+
+    const result = await deleteVideoRows({ db, downloader: { cancel: vi.fn() }, downloadDir: tmp }, [video.id])
+
+    expect(result.ok).toBe(false)
+    expect(result.deleted).toBe(0)
+    expect(existsSync(videoPath)).toBe(true)
+    expect(existsSync(coverPath)).toBe(true)
     expect(listVideos(db, 1)).toHaveLength(1)
   })
 

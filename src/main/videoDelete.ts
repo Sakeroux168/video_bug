@@ -15,7 +15,7 @@ export interface VideoDeleteDeps {
  * Task3 程序内删除视频编排（ipc video:delete 的核心，抽离主进程便于单测）：
  * 1. 先 downloader.cancel(ids) —— 在途/排队项取消（abort 删半成品、出队、清 fetching），
  *    否则删行后 runOne 继续写盘会留无记录孤儿 mp4；
- * 2. 逐条查视频与封面路径，两者都安全才逐一 unlink（ENOENT 忽略，其它错误收集并保留 DB 行）；
+ * 2. 逐条查视频、封面与可选原片路径，全部安全才逐一 unlink（ENOENT 忽略，其它错误收集并保留 DB 行）；
  * 3. 删 DB 行，收集受影响 author_id；
  * 4. recomputeAuthorCounts 同步作者视频数。
  * 返回 { ok, deleted, error? }：任何异常 → { ok:false, error }。
@@ -32,11 +32,11 @@ export async function deleteVideoRows(
     const authorIds: number[] = []
     const errors: string[] = []
     for (const id of ids) {
-      const row = db.prepare('SELECT author_id, local_path, cover_path FROM videos WHERE id = ?')
-        .get(id) as { author_id: number | null; local_path: string | null; cover_path: string | null } | undefined
+      const row = db.prepare('SELECT author_id, local_path, cover_path, original_path FROM videos WHERE id = ?')
+        .get(id) as { author_id: number | null; local_path: string | null; cover_path: string | null; original_path: string | null } | undefined
       if (!row) continue
       if (row.author_id != null) authorIds.push(row.author_id)
-      const paths = [row.local_path, row.cover_path].filter((path): path is string => Boolean(path))
+      const paths = [...new Set([row.local_path, row.cover_path, row.original_path].filter((path): path is string => Boolean(path)))]
       // 先统一校验，避免先删安全 MP4 后才发现封面在目录外，造成半套资源。
       if (paths.some(path => !isPathInside(downloadDir, path))) {
         errors.push('删除文件失败：视频资源不在下载目录内')

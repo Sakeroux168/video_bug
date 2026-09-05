@@ -208,6 +208,31 @@ describe('Organizer.organizeAuthor', () => {
 })
 
 describe('横竖屏与封面成对归档', () => {
+  it('视频、封面和保留原片使用同一主体名，一起移动并更新数据库路径', async () => {
+    const { authorId, vids } = authorWithDoneVideos('TRIPLE', '三件套', 1)
+    const coverPath = join(dir, 'TRIPLE_0.webp')
+    const originalPath = join(dir, 'TRIPLE_0.original.mp4')
+    writeFileSync(coverPath, 'cover')
+    writeFileSync(originalPath, 'original')
+    setVideoStatus(db, vids[0].id, 'done', {
+      cover_path: coverPath, original_path: originalPath, video_width: 1920, video_height: 1080
+    })
+
+    expect(await organizer().organizeAuthor(authorId)).toMatchObject({ moved: 1, state: 'done' })
+
+    const row = db.prepare('SELECT local_path, cover_path, original_path FROM videos WHERE id=?').get(vids[0].id) as {
+      local_path: string; cover_path: string; original_path: string
+    }
+    const expectedDir = join(dir, '美食', '三件套', '横屏', '一分钟内')
+    expect(dirname(row.local_path)).toBe(expectedDir)
+    expect(dirname(row.cover_path)).toBe(expectedDir)
+    expect(dirname(row.original_path)).toBe(expectedDir)
+    expect(basename(row.local_path, '.mp4')).toBe('TRIPLE_0')
+    expect(basename(row.cover_path, '.webp')).toBe('TRIPLE_0')
+    expect(basename(row.original_path, '.original.mp4')).toBe('TRIPLE_0')
+    expect(readdirSync(expectedDir).sort()).toEqual(['TRIPLE_0.mp4', 'TRIPLE_0.original.mp4', 'TRIPLE_0.webp'])
+  })
+
   it.each([
     [1080, 1920, '竖屏'], [1920, 1080, '横屏'], [1080, 1080, '竖屏']
   ])('%sx%s 的视频与封面同时进入 %s 目录，已有宽高不再探测', async (width, height, bucket) => {
@@ -275,11 +300,28 @@ describe('横竖屏与封面成对归档', () => {
       .toEqual({ local_path: vids[0].src, cover_path: missingCover })
   })
 
+  it('原片移动失败时回滚已移动的视频和封面，三条数据库路径均保持原值', async () => {
+    const { authorId, vids } = authorWithDoneVideos('ORIGINAL-ROLLBACK', '原片回滚', 1)
+    const coverPath = join(dir, 'ORIGINAL-ROLLBACK_0.webp')
+    const missingOriginal = join(dir, 'missing.original.mp4')
+    writeFileSync(coverPath, 'cover')
+    setVideoStatus(db, vids[0].id, 'done', { cover_path: coverPath, original_path: missingOriginal })
+
+    expect(await organizer().organizeAuthor(authorId)).toMatchObject({ moved: 0, state: 'failed' })
+
+    expect(existsSync(vids[0].src)).toBe(true)
+    expect(existsSync(coverPath)).toBe(true)
+    expect(db.prepare('SELECT local_path, cover_path, original_path FROM videos WHERE id=?').get(vids[0].id))
+      .toEqual({ local_path: vids[0].src, cover_path: coverPath, original_path: missingOriginal })
+  })
+
   it('封面移动和视频回滚都被占用阻止时，记录实际位置，重建整理器后仍能重试成功', async () => {
     const { authorId, vids } = authorWithDoneVideos('LOCKED', '占用', 1)
     const coverPath = join(dir, 'LOCKED_0.webp')
+    const originalPath = join(dir, 'LOCKED_0.original.mp4')
     writeFileSync(coverPath, 'cover')
-    setVideoStatus(db, vids[0].id, 'done', { cover_path: coverPath })
+    writeFileSync(originalPath, 'original')
+    setVideoStatus(db, vids[0].id, 'done', { cover_path: coverPath, original_path: originalPath })
     const org = new Organizer({
       db, downloadDir: dir, resolveCategory: async () => '美食',
       renameFile: async (from, to) => {
@@ -292,15 +334,19 @@ describe('横竖屏与封面成对归档', () => {
     expect(partial.organize_retry).toBe(1)
     expect(existsSync(partial.local_path)).toBe(true)
     expect(existsSync(partial.cover_path)).toBe(true)
+    expect(existsSync(partial.original_path)).toBe(true)
     expect(partial.local_path).not.toBe(vids[0].src)
     // 模拟进程重启/文件解除占用；恢复不依赖旧 Organizer 的内存。
     expect(await organizer().organizeAuthor(authorId)).toMatchObject({ moved: 1, state: 'done' })
     const complete = db.prepare('SELECT * FROM videos WHERE id=?').get(vids[0].id) as any
     expect(complete.organize_retry).toBe(0)
     expect(dirname(complete.local_path)).toBe(dirname(complete.cover_path))
+    expect(dirname(complete.local_path)).toBe(dirname(complete.original_path))
     expect(basename(complete.local_path, '.mp4')).toBe(basename(complete.cover_path, '.webp'))
+    expect(basename(complete.local_path, '.mp4')).toBe(basename(complete.original_path, '.original.mp4'))
     expect(existsSync(complete.local_path)).toBe(true)
     expect(existsSync(complete.cover_path)).toBe(true)
+    expect(existsSync(complete.original_path)).toBe(true)
   })
 
   it('旧结构中已归档的视频保持原位置，不自动搬迁', async () => {

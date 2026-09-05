@@ -52,7 +52,7 @@ export interface OrganizerDeps {
   onProgress?: (info: { authorId: number; authorName: string; moved: number; category: string; state: 'done' | 'failed' }) => void
 }
 
-/** 按作者归档：平铺视频与封面 → 品类/作者/方向/时长，同主体名称成对移动。 */
+/** 按作者归档：平铺视频、封面与可选原片 → 品类/作者/方向/时长，同主体名称成组移动。 */
 export class Organizer {
   constructor(private deps: OrganizerDeps) {}
 
@@ -120,20 +120,26 @@ export class Organizer {
         mkdirSync(destDir, { recursive: true })
         const videoExt = extname(v.local_path)
         const coverExt = v.cover_path ? extname(v.cover_path) : '.jpg'
-        const stem = ensureUniqueStem(destDir, basename(v.local_path, videoExt), [videoExt, '.jpg', '.jpeg', '.png', '.webp', coverExt])
+        const stem = ensureUniqueStem(destDir, basename(v.local_path, videoExt), [videoExt, '.original.mp4', '.jpg', '.jpeg', '.png', '.webp', coverExt])
         const destVideo = join(destDir, `${stem}${videoExt}`)
         const destCover = v.cover_path ? join(destDir, `${stem}${coverExt}`) : null
+        const destOriginal = v.original_path ? join(destDir, `${stem}.original.mp4`) : null
         await moveFile(v.local_path, destVideo)
         let coverMoved = false
+        let originalMoved = false
         try {
           if (v.cover_path && destCover) {
             await moveFile(v.cover_path, destCover)
             coverMoved = true
           }
+          if (v.original_path && destOriginal) {
+            await moveFile(v.original_path, destOriginal)
+            originalMoved = true
+          }
           db.exec('BEGIN')
           try {
-            db.prepare('UPDATE videos SET local_path=?, cover_path=?, video_width=?, video_height=?, organize_retry=0 WHERE id=?')
-              .run(destVideo, destCover, width, height, v.id)
+            db.prepare('UPDATE videos SET local_path=?, cover_path=?, original_path=?, video_width=?, video_height=?, organize_retry=0 WHERE id=?')
+              .run(destVideo, destCover, destOriginal, width, height, v.id)
             db.exec('COMMIT')
           } catch (error) {
             db.exec('ROLLBACK')
@@ -142,14 +148,18 @@ export class Organizer {
         } catch (error) {
           let actualVideo = destVideo
           let actualCover = coverMoved ? destCover : v.cover_path
+          let actualOriginal = originalMoved ? destOriginal : v.original_path
+          if (originalMoved && destOriginal && v.original_path) {
+            try { await moveFile(destOriginal, v.original_path); actualOriginal = v.original_path } catch { /* 下方记录实际位置 */ }
+          }
           if (coverMoved && destCover && v.cover_path) {
             try { await moveFile(destCover, v.cover_path); actualCover = v.cover_path } catch { /* 下方记录实际位置 */ }
           }
           try { await moveFile(destVideo, v.local_path); actualVideo = v.local_path } catch { /* 下方记录实际位置 */ }
-          if (actualVideo !== v.local_path || actualCover !== v.cover_path) {
+          if (actualVideo !== v.local_path || actualCover !== v.cover_path || actualOriginal !== v.original_path) {
             // 文件占用可能让回滚也失败。持久化真实路径和重试标记，避免下一次仍找不存在的源文件。
-            db.prepare('UPDATE videos SET local_path=?, cover_path=?, organize_retry=1 WHERE id=?')
-              .run(actualVideo, actualCover, v.id)
+            db.prepare('UPDATE videos SET local_path=?, cover_path=?, original_path=?, organize_retry=1 WHERE id=?')
+              .run(actualVideo, actualCover, actualOriginal, v.id)
             console.warn(`[organizer] 归档回滚未完成，已记录实际位置等待重试: id=${v.id}`)
           }
           throw error

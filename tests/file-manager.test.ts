@@ -53,6 +53,8 @@ describe('scanFilesTree（目录树扫描）', () => {
     mkdirSync(join(tmp, '未分类', '作者C'), { recursive: true })
     writeFileSync(join(tmp, '美食', '作者A', '5-10分钟', 'v1.mp4'), 'x'.repeat(10))
     writeFileSync(join(tmp, '美食', '作者A', 'v2.mp4'), 'x'.repeat(20))
+    writeFileSync(join(tmp, '美食', '作者A', 'v2.original.mp4'), 'x'.repeat(1000))
+    writeFileSync(join(tmp, '美食', '作者A', '.video-99.download.part.mp4'), 'x'.repeat(1000))
     writeFileSync(join(tmp, '美食', '作者A', 'thumb.jpg'), 'x'.repeat(100)) // 非 mp4 不计
     writeFileSync(join(tmp, '美食', '作者B', 'v3.mp4'), 'x'.repeat(40))
     writeFileSync(join(tmp, '未分类', '作者C', 'v4.MP4'), 'x'.repeat(50)) // 大小写不敏感

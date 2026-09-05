@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { DatabaseSync } from 'node:sqlite'
 import { createServer } from 'node:http'
-import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { basename, dirname, join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { initDb, createTask, insertVideos, listVideos } from '../src/main/db'
@@ -16,6 +16,8 @@ describe('下载 → 封面 → 方向归档 → 删除联动', () => {
     const db = new DatabaseSync(':memory:')
     const videoBytes = Buffer.alloc(2048)
     videoBytes.write('ftypisom', 4)
+    const normalizedBytes = Buffer.alloc(3072, 7)
+    normalizedBytes.write('ftypisom', 4)
     const coverBytes = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/l9sAAAAASUVORK5CYII=', 'base64')
     const server = createServer((req, res) => {
       const isImage = req.url?.endsWith('.png')
@@ -43,7 +45,21 @@ describe('下载 → 封面 → 方向归档 → 删除联动', () => {
       })), taskId, 'douyin')
       const org = new Organizer({ db, downloadDir: dir, resolveCategory: async () => '美食' })
       // 本测试验证业务流程和实际 HTTP/文件流；视频编码校验另由 asr-media 与探测测试覆盖。
-      const dl = new Downloader(db, { downloadDir: dir, downloadConcurrency: 2, addressTtlMin: 30 }, fetch, { validator: async () => true })
+      const normalizer = vi.fn(async ({ inputPath, outputPath }: { inputPath: string; outputPath: string }) => {
+        const id = Number(/\.video-(\d+)\.download\.part\.mp4$/.exec(inputPath)?.[1])
+        const sourceRow = db.prepare('SELECT video_width, video_height FROM videos WHERE id=?').get(id) as { video_width: number; video_height: number }
+        writeFileSync(outputPath, normalizedBytes)
+        return {
+          status: 'normalized' as const,
+          target: sourceRow.video_height >= sourceRow.video_width
+            ? { width: 1080, height: 1920 }
+            : { width: 1920, height: 1080 }
+        }
+      })
+      const dl = new Downloader(db, {
+        downloadDir: dir, downloadConcurrency: 2, addressTtlMin: 30,
+        normalizeVideo: true, keepOriginalVideo: true
+      }, fetch, { validator: async () => true, normalizer })
       dl.onEvent(event => {
         if (event.status === 'done') org.markAuthorPending(listVideos(db, taskId)[0].author_id!)
       })
@@ -56,13 +72,16 @@ describe('下载 → 封面 → 方向归档 → 删除联动', () => {
         const expected = join(dir, '美食', '联动作者', row.video_height >= row.video_width ? '竖屏' : '横屏', row.duration <= 60 ? '一分钟内' : '一分钟外')
         expect(dirname(row.local_path!)).toBe(expected)
         expect(dirname(row.cover_path!)).toBe(expected)
+        expect(dirname(row.original_path!)).toBe(expected)
         expect(basename(row.local_path!, '.mp4')).toBe(basename(row.cover_path!, '.png'))
-        expect(readdirSync(expected)).toHaveLength(2)
-        expect(readFileSync(row.local_path!)).toEqual(videoBytes)
+        expect(basename(row.local_path!, '.mp4')).toBe(basename(row.original_path!, '.original.mp4'))
+        expect(readdirSync(expected)).toHaveLength(3)
+        expect(readFileSync(row.local_path!)).toEqual(normalizedBytes)
         expect(readFileSync(row.cover_path!)).toEqual(coverBytes)
+        expect(readFileSync(row.original_path!)).toEqual(videoBytes)
       }
       expect(scanFilesTree(dir).categories[0].videoCount).toBe(2)
-      expect(scanFilesTree(dir).totalSize).toBe(videoBytes.length * 2)
+      expect(scanFilesTree(dir).totalSize).toBe(normalizedBytes.length * 2)
       expect(await deleteVideoRows({ db, downloader: dl, downloadDir: dir }, [rows[0].id]))
         .toEqual({ ok: true, deleted: 1 })
       expect(readdirSync(dirname(rows[0].local_path!))).toHaveLength(0)

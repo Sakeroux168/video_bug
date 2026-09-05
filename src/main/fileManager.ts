@@ -18,6 +18,12 @@ function isIgnoredName(name: string): boolean {
   return name.startsWith('.') || name.startsWith('~')
 }
 
+/** 保留原片由数据库跟随成品管理，不应在文件管理统计里被当成第二条视频。 */
+function isCountedVideo(name: string): boolean {
+  const lower = name.toLowerCase()
+  return lower.endsWith('.mp4') && !lower.endsWith('.original.mp4')
+}
+
 /** 递归统计目录内 .mp4 视频（organizer 归档为 {品类}/{作者}/{时长分桶}/xxx.mp4，须递归），跳过隐藏/临时项 */
 function countMp4s(dir: string): { count: number; size: number } {
   let count = 0
@@ -31,7 +37,7 @@ function countMp4s(dir: string): { count: number; size: number } {
       const sub = countMp4s(p)
       count += sub.count
       size += sub.size
-    } else if (e.isFile() && e.name.toLowerCase().endsWith('.mp4')) {
+    } else if (e.isFile() && isCountedVideo(e.name)) {
       // 文件在统计瞬间被删（竞态）→ 忽略该文件，不中断整次扫描
       try { size += statSync(p).size } catch { /* 忽略 */ }
       count++
@@ -55,7 +61,7 @@ function scanCategory(dir: string): FilesTreeCategory | null {
       authors.push({ name: e.name, videoCount: count, size: s })
       videoCount += count
       size += s
-    } else if (e.isFile() && e.name.toLowerCase().endsWith('.mp4')) {
+    } else if (e.isFile() && isCountedVideo(e.name)) {
       try { size += statSync(p).size } catch { /* 忽略 */ }
       videoCount++
     }
