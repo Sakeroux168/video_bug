@@ -1,4 +1,5 @@
 import { BrowserWindow, screen } from 'electron'
+import type { Rectangle } from 'electron'
 import { join } from 'path'
 import type { PlatformAdapter } from './adapters/types'
 import { buildInjectScript } from './injector'
@@ -85,25 +86,64 @@ export class VideoBrowser {
     return this.current
   }
 
-  async init(): Promise<void> {
+  /**
+   * 确保存在一个服务于该平台的窗口。
+   * 同平台复用；跨平台销毁重建——partition 只能在 BrowserWindow 创建时定死，之后改不了。
+   * 分区名是 persist:*，销毁窗口不会删掉平台 Cookie，切回去登录态还在。
+   */
+  async ensureWindow(adapter: PlatformAdapter): Promise<void> {
+    if (this.win && !this.win.isDestroyed() && this.current?.sessionPartition === adapter.sessionPartition) {
+      this.current = adapter // 同分区不同适配器实例（理论上不会有）也认新的
+      return
+    }
+    const previous = this.teardownWindow()
+    this.createWindow(adapter, previous)
+  }
+
+  /** 销毁当前窗口，返回它的位置与可见状态供新窗口继承；无窗口返回 null */
+  private teardownWindow(): { bounds: Rectangle; visible: boolean } | null {
+    const win = this.win
+    this.win = null
+    if (!win || win.isDestroyed()) return null
+    const state = { bounds: win.getBounds(), visible: win.isVisible() }
+    // forceClose 必须先置位：close 拦截（点×只隐藏）会把这里的关闭变成 hide，
+    // 留下一个仍占着旧分区、且再也不会被回收的隐藏残窗。
+    this.forceClose = true
+    win.destroy()
+    return state
+  }
+
+  private createWindow(adapter: PlatformAdapter, previous: { bounds: Rectangle; visible: boolean } | null): void {
+    this.current = adapter
+    this.inject = buildInjectScript(adapter.rawUrlHints)
+    this.forceClose = false
+    // 新窗口从未显示过：everShown 必须跟着复位，否则 setVisible(true) 只会调 showInactive()，
+    // 而它对从未显示过的窗口是空操作 —— 表现为「切平台后浏览器窗口再也打不开」。
+    this.everShown = false
+
     // 独立普通窗口（不带 parent：Windows 上带 parent 的 owned window 永远盖在父窗口上层，
-    // 用户抱怨抖音窗口一直挡在程序上方；去 parent 后点谁谁在上）。初始隐藏，由 setVisible/focus 唤起。
-    // 最小尺寸 = 抖音搜索页布局下限（实测窗口缩小时页面不缩放、右侧布局被裁出窗外）。
+    // 用户抱怨平台窗口一直挡在程序上方；去 parent 后点谁谁在上）。初始隐藏，由 setVisible/focus 唤起。
+    // 最小尺寸 = 搜索页布局下限（实测窗口缩小时页面不缩放、右侧布局被裁出窗外）。
     const win = new BrowserWindow({
       show: false,
       width: 1024,
       height: 760,
       minWidth: 900,
       minHeight: 600,
-      title: '抖音浏览器',
+      title: `${adapter.displayName}浏览器`,
       webPreferences: {
-        partition: 'persist:douyin',
+        partition: adapter.sessionPartition,
         preload: join(__dirname, '../preload/platform.js'),
         contextIsolation: true,
         nodeIntegration: false
       }
     })
     this.win = win
+    // 继承上一个窗口的位置：换平台不该把用户拖好的窗口弹回默认位置
+    if (previous) {
+      win.setBounds(previous.bounds)
+      this.positioned = true
+    }
 
     const wc = win.webContents
     // 关键：隐藏/切后台时不被 Chromium 节流，否则切到管理面板后页面停止发请求，爬取到一页就停
@@ -149,14 +189,16 @@ export class VideoBrowser {
         win.hide()
       }
     })
+
+    // 继承可见状态：切平台前开着就继续开着，藏着就别自己冒出来
+    if (previous?.visible) this.setVisible(true)
   }
 
   async load(adapter: PlatformAdapter, url: string): Promise<void> {
+    // 按平台准备窗口（同平台复用、跨平台重建）。注入脚本也在这里随平台重建——
+    // 必须在 loadURL 之前置好，dom-ready / did-finish-load 在 loadURL 期间就会读它。
+    await this.ensureWindow(adapter)
     if (!this.win) throw new Error('browser_not_initialized')
-    // 注入脚本随平台切换：URL 兜底特征来自适配器。必须在 loadURL 之前置好——
-    // dom-ready / did-finish-load 在 loadURL 期间就会触发并读取 this.inject。
-    this.current = adapter
-    this.inject = buildInjectScript(adapter.rawUrlHints)
     // R11-4：页面加载 30s 强制超时——loadURL 永不 resolve（网络挂起/页面卡死）时不永久卡住；
     // 超时抛 code=OP_TIMEOUT 标记错误，调度器按"加载失败"处理（重搜超时计数消耗后继续）
     await withTimeout(this.win.loadURL(url), LOAD_TIMEOUT_MS, '页面加载')
