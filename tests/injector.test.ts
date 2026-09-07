@@ -225,7 +225,8 @@ describe('buildInjectScript 的 URL 兜底特征由平台提供', () => {
 
   it('抖音特征就是搬迁前脚本里写死的那两条，不许悄悄收窄', () => {
     expect(douyinAdapter.rawUrlHints).toEqual(['/aweme/', '/search/'])
-    expect(kuaishouAdapter.rawUrlHints).toEqual(['/graphql'])
+    // 真机实测搜索走 /rest/v/search/feed，兜底特征跟着加宽；抖音那两条一字未动
+    expect(kuaishouAdapter.rawUrlHints).toEqual(['/graphql', '/rest/v/'])
   })
 
   it('脚本不含任何平台专有字面量（泛化后不该再出现 dy: 前缀）', () => {

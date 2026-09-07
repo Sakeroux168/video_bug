@@ -69,11 +69,30 @@ function collectRepresentations(codec: unknown): VideoCandidate[] {
 }
 
 function pickRepresentation(photo: Obj): VideoCandidate | null {
+  // 2026-09-07 真机：搜索 feed 里是 photo.manifest / photo.manifestH265（自适应清单）。
+  // videoResource 是早期 GraphQL 路由的形态，保留兼容。
   const resource = parseResourceJson(photo.videoResource)
-  const h264 = collectRepresentations(resource.h264)
+  const h264 = [
+    ...collectRepresentations(photo.manifest),
+    ...collectRepresentations(resource.h264)
+  ].sort((a, b) => (b.bitrate - a.bitrate) || ((b.width * b.height) - (a.width * a.height)))
   if (h264.length > 0) return h264[0]
-  const hevc = collectRepresentations(resource.hevc ?? resource.h265)
+  const hevc = [
+    ...collectRepresentations(photo.manifestH265),
+    ...collectRepresentations(resource.hevc ?? resource.h265)
+  ].sort((a, b) => (b.bitrate - a.bitrate) || ((b.width * b.height) - (a.width * a.height)))
   return hevc[0] ?? null
+}
+
+/** photoUrls / photoH265Urls：[{ cdn, url }] 多 CDN 同内容，取第一条可用的。
+ *  这是 2026-09-07 真机搜索 feed 的主播放地址来源；旧的单数 photoUrl 保留兼容。 */
+function pickUrlList(value: unknown): string {
+  if (!Array.isArray(value)) return ''
+  for (const raw of value) {
+    const url = text(asObj(raw).url)
+    if (url) return url
+  }
+  return ''
 }
 
 function coverUrl(photo: Obj): string {
@@ -143,6 +162,15 @@ function buildVideoUrl(workId: string): string {
 
 /** 关键词与话题都走搜索；话题在快手就是带 # 的搜索词，没有独立接口。 */
 const SEARCH_OPERATIONS = ['visionSearchPhoto']
+
+/** 2026-09-07 真机：搜索走 POST /rest/v/search/feed，响应根是
+ *  { result, webPageArea, pcursor, feeds: [...], llsid, searchSessionId }。
+ *  判据取 feeds 数组 + 搜索独有的会话字段——只看 feeds 会把作者页/推荐流也放进来。 */
+function isRestSearchFeed(json: unknown): boolean {
+  const root = asObj(json)
+  if (!Array.isArray(root.feeds)) return false
+  return typeof root.searchSessionId === 'string' || typeof root.webPageArea === 'string'
+}
 /** 作者主页作品列表。 */
 const AUTHOR_OPERATIONS = ['visionProfilePhotoList']
 
@@ -158,6 +186,9 @@ function responseOperations(json: unknown): string[] {
  *  白名单判定：visionVideoDetail（用户手点的详情）、推荐流等未知 operation 一律拒绝，
  *  不拿"能解析出视频"当放行理由——那会让无关响应污染正在跑的任务。 */
 export function matchesKuaishouTaskResponse(type: TaskType, json: unknown): boolean {
+  if (type === 'keyword' || type === 'hashtag') {
+    if (isRestSearchFeed(json)) return true
+  }
   const operations = responseOperations(json)
   const wanted = type === 'author' ? AUTHOR_OPERATIONS
     : (type === 'keyword' || type === 'hashtag') ? SEARCH_OPERATIONS
@@ -170,7 +201,13 @@ function parsePhoto(context: PhotoContext): VideoItem | null {
   const id = text(photo.id)
   const authorId = text(author.id ?? author.userId ?? author.user_id)
   const selected = pickRepresentation(photo)
-  const playUrl = text(photo.photoUrl) || selected?.url || ''
+  // 优先级：单数 photoUrl（旧路由）→ photoUrls 数组（H.264，真机搜索 feed）
+  //        → manifest/videoResource 里码率最高的 H.264 → 最后才是 HEVC
+  const playUrl = text(photo.photoUrl)
+    || pickUrlList(photo.photoUrls)
+    || selected?.url
+    || pickUrlList(photo.photoH265Urls)
+    || ''
   if (!id || !authorId || !playUrl) return null
 
   const durationMs = Number(photo.duration ?? 0)
@@ -185,10 +222,16 @@ function parsePhoto(context: PhotoContext): VideoItem | null {
     authorHomeUrl: `https://www.kuaishou.com/profile/${encodeURIComponent(authorId)}`,
     playUrl,
     coverUrl: coverUrl(photo),
-    width: selected?.width ?? positiveInteger(photo.width),
-    height: selected?.height ?? positiveInteger(photo.height),
+    // 宽高优先信 photo 自身（搜索 feed 直接给了）；缺失才回落 representation。
+    // 都取不到就留 0，下载后由 ffprobe 判方向——不伪造尺寸。
+    width: positiveInteger(photo.width) || selected?.width || 0,
+    height: positiveInteger(photo.height) || selected?.height || 0,
     durationSec: Number.isFinite(durationMs) && durationMs > 0 ? durationMs / 1000 : 0,
-    publishTime: Number.isFinite(timestamp) && timestamp > 1_000_000_000_000 ? timestamp / 1000 : (Number.isFinite(timestamp) ? timestamp : 0),
+    // 13 位毫秒 → 秒必须取整：契约写的是 unix 秒，下游 new Date(publishTime * 1000)
+    // 与时间范围筛选都按整数用，留小数会带进亚毫秒噪声。
+    publishTime: Number.isFinite(timestamp)
+      ? (timestamp > 1_000_000_000_000 ? Math.floor(timestamp / 1000) : Math.floor(timestamp))
+      : 0,
     likes: count(photo.likeCount) ?? 0,
     comments,
     sourceUrl: buildVideoUrl(id)
@@ -217,8 +260,9 @@ export const kuaishouAdapter: PlatformAdapter = {
   sessionPartition: 'persist:kuaishou',
   authorInputPlaceholder: 'https://www.kuaishou.com/profile/xxx',
   downloadReferer: 'https://www.kuaishou.com/',
-  apiUrlPatterns: [/\/graphql(?:[/?#]|$)/i],
-  rawUrlHints: ['/graphql'],
+  // 真机搜索走 /rest/v/search/feed；/graphql 保留，详情等路由可能仍在用
+  apiUrlPatterns: [/\/graphql(?:[/?#]|$)/i, /\/rest\/v\/search\/feed/i],
+  rawUrlHints: ['/graphql', '/rest/v/'],
   buildSearchUrl: (query: string) => `https://www.kuaishou.com/search/video?searchKey=${encodeURIComponent(query)}`,
   buildAuthorUrl: (userId: string) => `https://www.kuaishou.com/profile/${encodeURIComponent(userId)}`,
   buildHashtagUrl: (query: string) => `https://www.kuaishou.com/search/video?searchKey=${encodeURIComponent(`#${query}`)}`,

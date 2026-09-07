@@ -53,7 +53,7 @@ describe('kuaishouAdapter.parseApiJson', () => {
       width: 1080,
       height: 1920,
       durationSec: 12.5,
-      publishTime: 1710000000.123,
+      publishTime: 1710000000, // 13 位毫秒转秒后取整（原先漏了取整，断言里固化成了 .123）
       likes: 456,
       comments: 0,
       sourceUrl: 'https://www.kuaishou.com/short-video/3xPHOTO1'
@@ -221,5 +221,179 @@ describe('kuaishouAdapter 平台知识集中在适配器里', () => {
     expect(kuaishouAdapter.isShortLink('https://c.kuaishou.com/ABC123')).toBe(true)
     expect(kuaishouAdapter.isShortLink('https://www.kuaishou.com/profile/3xA')).toBe(false)
     expect(kuaishouAdapter.isShortLink('https://v.douyin.com/ABC')).toBe(false)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 真机烟测（2026-09-07）实测：快手网页端搜索走的不是 GraphQL，而是
+//   POST https://www.kuaishou.com/rest/v/search/feed?__NS_hxfalcon=...&caver=2
+// 响应根形如 { result, webPageArea, pcursor, feeds: [...], llsid, searchSessionId }
+// 每条 feed 形如 { type, tags[], photo{}, author{}, comment{}, authorStatement? }
+//
+// 下面的夹具是照实测响应的**结构**手写的，字段名与层级一比一，值全部是编造的，
+// 不含任何真实作品 ID、作者名或带签名的地址。
+// ---------------------------------------------------------------------------
+
+/** photo.manifest：与 photoUrls 并存的自适应清单，representation 里带宽高码率 */
+const MANIFEST = {
+  adaptationSet: [{
+    id: 1,
+    duration: 12500,
+    representation: [
+      { id: 1, url: 'https://v-fixture.test/720p.mp4', width: 720, height: 1280, maxBitrate: 3300, avgBitrate: 1974, qualityType: '720p' },
+      { id: 2, url: 'https://v-fixture.test/1080p.mp4', width: 1080, height: 1920, maxBitrate: 5200, avgBitrate: 3100, qualityType: '1080p' }
+    ]
+  }]
+}
+
+const REST_FEED = {
+  type: 1,
+  tags: [{ name: '标签一', type: 1 }, { name: '标签二', type: 1 }],
+  // 实测 comment 只有 us_c，20 条样本里全是 0（点赞几十万的也是 0），
+  // 因此它不是评论数。评论数在这个接口里根本没有。
+  comment: { us_c: 0 },
+  danmakuSwitch: true,
+  author: {
+    id: '3xREALAUTHOR1',
+    name: '快手作者',
+    headerUrl: 'https://p-fixture.test/head.jpg',
+    following: false,
+    livingInfo: { living: false, livingId: null, iconType: 0 }
+  },
+  photo: {
+    id: '3xREALPHOTO01',
+    caption: '快手搜索结果标题',
+    duration: 12500,
+    timestamp: 1757850158602,
+    width: 720,
+    height: 1280,
+    likeCount: 228227,
+    viewCount: 11484563,
+    collectCount: 0,
+    coverUrl: 'https://p-fixture.test/cover.jpg',
+    animatedCoverUrl: 'https://p-fixture.test/cover.webp',
+    // 播放地址是数组，多 CDN 同内容；photoUrls=H.264，photoH265Urls=HEVC
+    photoUrls: [
+      { cdn: 'v23-3.kwaicdn.test', url: 'https://v23-3.kwaicdn.test/h264-a.mp4' },
+      { cdn: 'v4.oskwai.test', url: 'https://v4.oskwai.test/h264-b.mp4' }
+    ],
+    photoH265Urls: [
+      { cdn: 'v23-3.kwaicdn.test', url: 'https://v23-3.kwaicdn.test/h265-a.mp4' }
+    ],
+    manifest: MANIFEST,
+    manifestH265: MANIFEST,
+    expTag: 'exp-tag',
+    riskTagContent: null,
+    riskTagUrl: null,
+    stereoType: 0,
+    musicBlocked: false,
+    liked: false,
+    collected: false,
+    disableSensitivePhoto: false
+  }
+}
+
+const REST_SEARCH_RESPONSE = {
+  result: 1,
+  webPageArea: 'searchxxnull',
+  pcursor: '1',
+  feeds: [REST_FEED],
+  llsid: '2010054898359520577',
+  searchSessionId: 'SESSION_FIXTURE'
+}
+
+const REST_URL = 'https://www.kuaishou.com/rest/v/search/feed?__NS_hxfalcon=REDACTED&caver=2'
+
+describe('kuaishouAdapter 解析 REST 搜索 feed（真机实测结构）', () => {
+  it('拦截 URL 特征认得 /rest/v/search/feed（否则第一道闸门就把响应丢了）', () => {
+    expect(kuaishouAdapter.apiUrlPatterns.some(r => r.test(REST_URL))).toBe(true)
+    expect(kuaishouAdapter.apiUrlPatterns.some(r => r.test('https://www.kuaishou.com/rest/v/search/feed'))).toBe(true)
+  })
+
+  it('关键词/话题任务认这个响应，作者任务不认', () => {
+    expect(kuaishouAdapter.matchesTaskResponse('keyword', REST_URL, REST_SEARCH_RESPONSE)).toBe(true)
+    expect(kuaishouAdapter.matchesTaskResponse('hashtag', REST_URL, REST_SEARCH_RESPONSE)).toBe(true)
+    expect(kuaishouAdapter.matchesTaskResponse('author', REST_URL, REST_SEARCH_RESPONSE)).toBe(false)
+  })
+
+  it('解析出完整视频项：播放地址取 photoUrls[0].url（H.264），宽高取 photo 自身', () => {
+    const items = kuaishouAdapter.parseApiJson(REST_URL, REST_SEARCH_RESPONSE)
+    expect(items).toHaveLength(1)
+    expect(items[0]).toEqual({
+      awemeId: '3xREALPHOTO01',
+      title: '快手搜索结果标题',
+      authorSecUid: '3xREALAUTHOR1',
+      authorNickname: '快手作者',
+      authorHomeUrl: 'https://www.kuaishou.com/profile/3xREALAUTHOR1',
+      playUrl: 'https://v23-3.kwaicdn.test/h264-a.mp4',
+      coverUrl: 'https://p-fixture.test/cover.jpg',
+      width: 720,
+      height: 1280,
+      durationSec: 12.5,
+      publishTime: 1757850158,
+      likes: 228227,
+      // 这个接口不返回评论数（comment.us_c 实测恒为 0，不是评论数）。
+      // 按既有红线，未知必须是 null 让界面显示「—」，不能伪装成 0。
+      comments: null,
+      sourceUrl: 'https://www.kuaishou.com/short-video/3xREALPHOTO01'
+    })
+  })
+
+  it('photoUrls 缺失时回落到 manifest 的最高码率 H.264 representation', () => {
+    const noUrls = {
+      ...REST_SEARCH_RESPONSE,
+      feeds: [{ ...REST_FEED, photo: { ...REST_FEED.photo, photoUrls: [] } }]
+    }
+    const items = kuaishouAdapter.parseApiJson(REST_URL, noUrls)
+    expect(items).toHaveLength(1)
+    expect(items[0].playUrl).toBe('https://v-fixture.test/1080p.mp4')
+  })
+
+  it('photoUrls 与 manifest 都没有时回落 HEVC，仍不丢条目', () => {
+    const h265Only = {
+      ...REST_SEARCH_RESPONSE,
+      feeds: [{
+        ...REST_FEED,
+        photo: {
+          ...REST_FEED.photo,
+          photoUrls: [],
+          manifest: { adaptationSet: [] },
+          manifestH265: { adaptationSet: [] }
+        }
+      }]
+    }
+    const items = kuaishouAdapter.parseApiJson(REST_URL, h265Only)
+    expect(items[0].playUrl).toBe('https://v23-3.kwaicdn.test/h265-a.mp4')
+  })
+
+  it('一条播放地址都取不到 → 整条丢弃，不入库一个点不开的视频', () => {
+    const broken = {
+      ...REST_SEARCH_RESPONSE,
+      feeds: [{
+        ...REST_FEED,
+        photo: {
+          ...REST_FEED.photo,
+          photoUrls: [], photoH265Urls: [],
+          manifest: { adaptationSet: [] }, manifestH265: { adaptationSet: [] }
+        }
+      }]
+    }
+    expect(kuaishouAdapter.parseApiJson(REST_URL, broken)).toEqual([])
+  })
+
+  it('photo.width/height 缺失时才回落 representation 的宽高', () => {
+    const noSize = {
+      ...REST_SEARCH_RESPONSE,
+      feeds: [{ ...REST_FEED, photo: { ...REST_FEED.photo, width: 0, height: 0, photoUrls: [] } }]
+    }
+    const items = kuaishouAdapter.parseApiJson(REST_URL, noSize)
+    expect(items[0]).toMatchObject({ width: 1080, height: 1920 })
+  })
+
+  it('空 feeds / 畸形响应不抛错也不产生条目', () => {
+    for (const json of [{ result: 1, feeds: [] }, { result: 0 }, null, 'text', []]) {
+      expect(kuaishouAdapter.parseApiJson(REST_URL, json)).toEqual([])
+      expect(kuaishouAdapter.matchesTaskResponse('keyword', REST_URL, json)).toBe(false)
+    }
   })
 })
