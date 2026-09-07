@@ -2,7 +2,7 @@ import { describe, it, expect, vi } from 'vitest'
 import { VideoBrowser, VERIFY_TEXT_PATTERN, withTimeout } from '../src/main/browser'
 
 function makeBrowser(): { b: VideoBrowser } {
-  const b = new VideoBrowser({} as never, () => {})
+  const b = new VideoBrowser({} as never)
   return { b }
 }
 
@@ -46,7 +46,9 @@ describe('验证码识别与长操作强制超时（R11-4）', () => {
       const { b } = makeBrowser()
       const never = new Promise<void>(() => {})
       ;(b as unknown as { win: unknown }).win = { loadURL: () => never }
-      const p = b.load({} as never, 'https://www.douyin.com/search/x').catch(e => e)
+      // load 会按适配器声明的 URL 兜底特征构建注入脚本，故给一个最小适配器桩
+      const stub = { rawUrlHints: ['/aweme/'] } as never
+      const p = b.load(stub, 'https://www.douyin.com/search/x').catch(e => e)
       await vi.advanceTimersByTimeAsync(31000)
       const r = await p
       expect(r).toMatchObject({ code: 'OP_TIMEOUT' })
@@ -70,4 +72,46 @@ describe('验证码识别与长操作强制超时（R11-4）', () => {
       vi.useRealTimers()
     }
   }, 15000)
+})
+
+// ---------------------------------------------------------------------------
+// B：原始响应通道泛化。窗口要记住自己正在服务哪个平台——主进程收到 platform:raw
+// 后靠它决定交给哪个适配器解析，不能只凭 URL 遍历所有适配器（快手与后续平台
+// 可能共用 /graphql 这类通用路径，只看 URL 会认错平台）。
+// ---------------------------------------------------------------------------
+describe('VideoBrowser 记住当前平台并按平台构建注入脚本', () => {
+  /** 造一个只做记录、立刻 resolve 的假 win */
+  function browserWithFakeWin(): VideoBrowser {
+    const b = new VideoBrowser({} as never)
+    ;(b as unknown as { win: unknown }).win = { loadURL: async () => {} }
+    return b
+  }
+
+  const ks = { name: 'kuaishou', rawUrlHints: ['/graphql'] } as never
+  const dy = { name: 'douyin', rawUrlHints: ['/aweme/', '/search/'] } as never
+
+  it('未 load 过任何页面时没有当前平台', () => {
+    expect(browserWithFakeWin().adapter).toBeNull()
+  })
+
+  it('load 后 adapter 指向该平台，再 load 另一个平台会切过去', async () => {
+    const b = browserWithFakeWin()
+    await b.load(dy, 'https://www.douyin.com/')
+    expect(b.adapter).toBe(dy)
+    await b.load(ks, 'https://www.kuaishou.com/')
+    expect(b.adapter).toBe(ks)
+  })
+
+  it('注入脚本用的是当前平台的 URL 兜底特征', async () => {
+    const b = browserWithFakeWin()
+    const injected = (): string => (b as unknown as { inject: string }).inject
+
+    await b.load(dy, 'https://www.douyin.com/')
+    expect(injected()).toContain('/aweme/')
+    expect(injected()).not.toContain('/graphql')
+
+    await b.load(ks, 'https://www.kuaishou.com/')
+    expect(injected()).toContain('/graphql')
+    expect(injected()).not.toContain('/aweme/')
+  })
 })

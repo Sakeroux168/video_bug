@@ -216,6 +216,7 @@ export const kuaishouAdapter: PlatformAdapter = {
   sourceHosts: ['www.kuaishou.com'],
   sessionPartition: 'persist:kuaishou',
   apiUrlPatterns: [/\/graphql(?:[/?#]|$)/i],
+  rawUrlHints: ['/graphql'],
   buildSearchUrl: (query: string) => `https://www.kuaishou.com/search/video?searchKey=${encodeURIComponent(query)}`,
   buildAuthorUrl: (userId: string) => `https://www.kuaishou.com/profile/${encodeURIComponent(userId)}`,
   buildHashtagUrl: (query: string) => `https://www.kuaishou.com/search/video?searchKey=${encodeURIComponent(`#${query}`)}`,

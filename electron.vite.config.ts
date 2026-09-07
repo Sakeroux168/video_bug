@@ -20,7 +20,7 @@ export default defineConfig({
       rollupOptions: {
         input: {
           index: resolve('src/preload/index.ts'),
-          douyin: resolve('src/preload/douyin.ts')
+          platform: resolve('src/preload/platform.ts')
         }
       }
     }

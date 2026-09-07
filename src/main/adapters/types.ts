@@ -28,6 +28,9 @@ export interface PlatformAdapter {
   sessionPartition: string
   /** 挂钩脚本需要转发的接口 URL 特征 */
   apiUrlPatterns: RegExp[]
+  /** XHR 响应 content-type 不标准时，按 URL 子串兜底判断该响应是否值得解析。
+   *  注入脚本本身不认识任何平台，这份特征由适配器提供后注入进去。 */
+  rawUrlHints: readonly string[]
   buildSearchUrl(query: string, filters: Filters): string
   buildAuthorUrl(secUid: string): string
   buildHashtagUrl(query: string): string

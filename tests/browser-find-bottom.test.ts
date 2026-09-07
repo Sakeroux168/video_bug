@@ -6,7 +6,7 @@ import { VideoBrowser } from '../src/main/browser'
 function makeBrowserWithDom(): VideoBrowser {
   const executeJavaScript = async (script: string): Promise<unknown> =>
     new Function('window', 'document', 'return (' + script + ')')(window, document)
-  const b = new VideoBrowser({} as never, () => {})
+  const b = new VideoBrowser({} as never)
   ;(b as unknown as { win: unknown }).win = { webContents: { executeJavaScript } }
   return b
 }

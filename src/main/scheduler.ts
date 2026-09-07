@@ -507,7 +507,7 @@ export class Scheduler {
    *  匹配放宽：搜索接口路径多变（/search/item/、/general/search/ 等），用宽松的 /search/ 判断；
    *  推荐feed(/tab/feed/ 等)与个人主页(/user/profile/ 或 /aweme/post/ 之外的)不会含 /search/。 */
 
-  /** 主进程从 ipcMain 'dy:raw' 调用来处理一个原始 JSON（任务期间持续被调用）。browser.onRaw 方法不存在，消息统一走这里。 */
+  /** 主进程从 ipcMain 'platform:raw' 调用来处理一个原始 JSON（任务期间持续被调用）。适配器由当前活动浏览器窗口给出，不由 URL 反推。 */
   async handleRaw(adapter: PlatformAdapter, rawUrl: string, json: unknown): Promise<{ items: number; kept: number } | null> {
     if (this.taskId === 0 || this.adapter !== adapter) return null
     if (!adapter.apiUrlPatterns.some(r => r.test(rawUrl))) return null

@@ -1,7 +1,7 @@
 import { BrowserWindow, screen } from 'electron'
 import { join } from 'path'
 import type { PlatformAdapter } from './adapters/types'
-import { INJECT_SCRIPT } from './injector'
+import { buildInjectScript } from './injector'
 
 /** R11-4/5：验证码识别正则（导出供测试与页面脚本共用）——R11-5 扩展：机器人验证/完成拼图/点击完成/安全校验/verify/captcha
  *  （真机反馈「机器人验证」等抖音实际文案漏检，重搜烧掉 3 次机会） */
@@ -70,12 +70,19 @@ export class VideoBrowser {
   // 主动销毁开关：dispose 时置 true，避免 close 拦截把销毁变成隐藏
   private forceClose = false
 
-  constructor(
-    private host: BrowserWindow,
-    private onRaw: (url: string, json: unknown) => void,
-    private inject: string = INJECT_SCRIPT
-  ) {
+  // 当前窗口服务的平台。主进程收到原始响应时靠它决定交给哪个适配器解析——
+  // 不能只凭 URL 遍历所有适配器：快手和后续平台可能共用 /graphql 这类通用路径。
+  private current: PlatformAdapter | null = null
+  // 注入脚本按平台构建（URL 兜底特征来自适配器），load 时刷新
+  private inject = ''
+
+  constructor(private host: BrowserWindow) {
     // 不再依赖宿主窗口布局：独立子窗口自行定位，无需订阅 resize
+  }
+
+  /** 当前窗口服务的平台适配器；尚未 load 过任何页面时为 null */
+  get adapter(): PlatformAdapter | null {
+    return this.current
   }
 
   async init(): Promise<void> {
@@ -91,7 +98,7 @@ export class VideoBrowser {
       title: '抖音浏览器',
       webPreferences: {
         partition: 'persist:douyin',
-        preload: join(__dirname, '../preload/douyin.js'),
+        preload: join(__dirname, '../preload/platform.js'),
         contextIsolation: true,
         nodeIntegration: false
       }
@@ -146,6 +153,10 @@ export class VideoBrowser {
 
   async load(adapter: PlatformAdapter, url: string): Promise<void> {
     if (!this.win) throw new Error('browser_not_initialized')
+    // 注入脚本随平台切换：URL 兜底特征来自适配器。必须在 loadURL 之前置好——
+    // dom-ready / did-finish-load 在 loadURL 期间就会触发并读取 this.inject。
+    this.current = adapter
+    this.inject = buildInjectScript(adapter.rawUrlHints)
     // R11-4：页面加载 30s 强制超时——loadURL 永不 resolve（网络挂起/页面卡死）时不永久卡住；
     // 超时抛 code=OP_TIMEOUT 标记错误，调度器按"加载失败"处理（重搜超时计数消耗后继续）
     await withTimeout(this.win.loadURL(url), LOAD_TIMEOUT_MS, '页面加载')
@@ -163,7 +174,7 @@ export class VideoBrowser {
       // 中止信号（暂停即时）：pause() → 主进程 send → preload postMessage → 这里置位；循环每步检查，置位立即 break
       window.__scrollAborted = false;
       const onAbort = (e) => {
-        try { if (e.data && e.data.type === 'dy:scroll-abort') window.__scrollAborted = true; } catch (err) {}
+        try { if (e.data && e.data.type === 'platform:scroll-abort') window.__scrollAborted = true; } catch (err) {}
       };
       window.addEventListener('message', onAbort);
       const sc = document.scrollingElement || document.documentElement;
@@ -288,11 +299,11 @@ export class VideoBrowser {
   }
 
   /** 通知页面滚动脚本立即中止（fire-and-forget，不等待脚本返回）：
-   *  webContents.send('dy:scroll-abort') → preload（隔离世界）→ window.postMessage → 主世界滚动脚本置 __scrollAborted，
+   *  webContents.send('platform:scroll-abort') → preload（隔离世界）→ window.postMessage → 主世界滚动脚本置 __scrollAborted，
    *  滚动循环在下个检查点退出（步间隔 ≤550ms，暂停 1 秒内生效） */
   abortScroll(): void {
     if (!this.win || this.win.isDestroyed()) return
-    this.win.webContents.send('dy:scroll-abort')
+    this.win.webContents.send('platform:scroll-abort')
   }
 
   /**

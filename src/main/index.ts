@@ -132,11 +132,7 @@ app.whenReady().then(() => {
   const settings = getSettings()
   reloadAnalyzer()
   downloader = new Downloader(db, settings)
-  browser = new VideoBrowser(win!, (url, json) => {
-    if (douyinAdapter.apiUrlPatterns.some(r => r.test(url))) {
-      void scheduler?.handleRaw(douyinAdapter, url, json)
-    }
-  })
+  browser = new VideoBrowser(win!)
 
   // Task14：ASR 依赖组装。ffmpeg 用 findFfmpeg()；模型路径从 asr 模型目录取。
   // asrReady 每次归档时现查（models.status().ready）：模型下载完成/设置保存后即时生效，无需重启。
@@ -197,7 +193,7 @@ app.whenReady().then(() => {
     getStallThresholdSec: () => getSettings().stallThresholdSec ?? 25,
     organizer,
     organizeDebounceMs: settings.organizeDebounceMs ?? 5000,
-    // R12：停滞自救全链路日志（停滞检测/到底命中/重搜冷却/重搜计数）：汇入 rawLog 面板（与 dy:raw 拦截日志同列展示）
+    // R12：停滞自救全链路日志（停滞检测/到底命中/重搜冷却/重搜计数）：汇入 rawLog 面板（与 platform:raw 拦截日志同列展示）
     onFilterLog: pushFilterLog
   })
 
@@ -228,7 +224,7 @@ app.whenReady().then(() => {
   app.on('activate', () => { if (BrowserWindow.getAllWindows().length === 0) createWindow() })
 })
 
-// 调试：记录最近收到的 dy:raw（URL + 是否处理 + 解析出几条/过滤剩几条 + 0 时长诊断）+ 停滞自救全链路日志，
+// 调试：记录最近收到的 platform:raw（URL + 是否处理 + 解析出几条/过滤剩几条 + 0 时长诊断）+ 停滞自救全链路日志，
 // 供界面"查看拦截日志"查看（自救日志条目无 url/handled，带 filterLog 字段）
 const rawLog: Array<{
   at: string
@@ -243,7 +239,7 @@ const rawLog: Array<{
   filterLog?: string
 }> = []
 
-/** R12：停滞自救全链路日志逐行入 rawLog，与 dy:raw 拦截日志同面板展示 */
+/** R12：停滞自救全链路日志逐行入 rawLog，与 platform:raw 拦截日志同面板展示 */
 function pushFilterLog(msg: string): void {
   rawLog.push({ at: new Date().toISOString().slice(11, 19), filterLog: msg })
   if (rawLog.length > 60) rawLog.shift()
@@ -251,12 +247,15 @@ function pushFilterLog(msg: string): void {
   // 定位全靠用户截图；这里补一条，dev 下直接跟着日志走。
   console.log('[自救]', msg)
 }
-ipcMain.on('dy:raw', async (_e, msg) => {
+ipcMain.on('platform:raw', async (_e, msg) => {
   const url = String(msg?.url ?? '')
   const json = msg?.json
-  const handled = douyinAdapter.apiUrlPatterns.some(r => r.test(url))
+  // 适配器取自当前活动浏览器窗口，不写死抖音，也不靠 URL 去遍历所有适配器——
+  // 快手与后续平台可能共用 /graphql 这类通用路径，只凭 URL 会认错平台。
+  const adapter = browser?.adapter ?? null
+  const handled = !!adapter && adapter.apiUrlPatterns.some(r => r.test(url))
   let stats: { items: number; kept: number } | null = null
-  if (handled) stats = (await scheduler?.handleRaw(douyinAdapter, url, json)) ?? null
+  if (handled && adapter) stats = (await scheduler?.handleRaw(adapter, url, json)) ?? null
   // 0 时长诊断：parseApiJson 暂存的诊断同步取走（取走即清空）
   const diags = drainDurationDiags()
   const durationZero = diags.length > 0

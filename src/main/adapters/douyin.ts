@@ -65,12 +65,12 @@ function pickDurationSec(o: Record<string, any>): number {
 }
 
 /** 0 时长诊断：解析出有效条目但时长多候选仍取不到（durationSec === 0）时，记录该条目顶层字段名，
- *  经 dy:raw 拦截日志展示，供实跑时对照真实接口字段位置 */
+ *  经 platform:raw 拦截日志展示，供实跑时对照真实接口字段位置 */
 export interface DurationDiag {
   topKeys: string[]
 }
 
-// parseApiJson 同步暂存诊断，主进程 dy:raw 通道解析后经 drainDurationDiags 取走（只标记，不影响解析流程）
+// parseApiJson 同步暂存诊断，主进程 platform:raw 通道解析后经 drainDurationDiags 取走（只标记，不影响解析流程）
 let durationDiags: DurationDiag[] = []
 
 export function drainDurationDiags(): DurationDiag[] {
@@ -165,6 +165,8 @@ export const douyinAdapter: PlatformAdapter = {
   sourceHosts: ['www.douyin.com'],
   sessionPartition: 'persist:douyin',
   apiUrlPatterns: [/aweme\/v1\/web\//, /aweme\/v1\/app\//],
+  // 与泛化前写死在注入脚本里的两条特征逐字一致，不收窄
+  rawUrlHints: ['/aweme/', '/search/'],
   buildSearchUrl: (q: string) => `https://www.douyin.com/search/${encodeURIComponent(q)}`,
   buildAuthorUrl: (secUid: string) => `https://www.douyin.com/user/${secUid}`,
   buildHashtagUrl: (q: string) => `https://www.douyin.com/search/%23${encodeURIComponent(q)}`,
@@ -176,7 +178,7 @@ export const douyinAdapter: PlatformAdapter = {
     const items = collectAwemeList(json)
       .map(a => parseAweme(a, diags))
       .filter((x): x is VideoItem => x !== null)
-    durationDiags = diags // 暂存 0 时长诊断，供 dy:raw 通道取走
+    durationDiags = diags // 暂存 0 时长诊断，供 platform:raw 通道取走
     return items
   },
   normalizePlayUrl
