@@ -223,3 +223,44 @@ describe('douyinAdapter 解析新版卡片结构（aweme_info 包装）', () => 
   })
 
 })
+
+// ---------------------------------------------------------------------------
+// 任务接口匹配下沉到适配器。这里逐条锁死 scheduler 里原有的抖音规则，
+// 搬家不是重写：keyword→/search/、author→/aweme/post/、hashtag→/challenge/ 或 /search/。
+// 抖音只看 URL，不看响应体（同一路径不会混装两种任务的数据）。
+// ---------------------------------------------------------------------------
+describe('douyinAdapter.matchesTaskResponse', () => {
+  const search = 'https://www.douyin.com/aweme/v1/web/search/item/?device_platform=webapp'
+  const general = 'https://www.douyin.com/aweme/v1/web/general/search/single/?device_platform=webapp'
+  const post = 'https://www.douyin.com/aweme/v1/web/aweme/post/?sec_user_id=SEC1'
+  const challenge = 'https://www.douyin.com/aweme/v1/web/challenge/aweme/?ch_id=1'
+  const unrelated = 'https://www.douyin.com/aweme/v1/web/im/user/info/?aid=6383'
+
+  it('关键词任务收 /search/，不收作者作品列表和无关接口', () => {
+    expect(douyinAdapter.matchesTaskResponse('keyword', search, {})).toBe(true)
+    expect(douyinAdapter.matchesTaskResponse('keyword', general, {})).toBe(true)
+    expect(douyinAdapter.matchesTaskResponse('keyword', post, {})).toBe(false)
+    expect(douyinAdapter.matchesTaskResponse('keyword', unrelated, {})).toBe(false)
+  })
+
+  it('作者任务只收 /aweme/post/', () => {
+    expect(douyinAdapter.matchesTaskResponse('author', post, {})).toBe(true)
+    expect(douyinAdapter.matchesTaskResponse('author', search, {})).toBe(false)
+    expect(douyinAdapter.matchesTaskResponse('author', challenge, {})).toBe(false)
+    expect(douyinAdapter.matchesTaskResponse('author', unrelated, {})).toBe(false)
+  })
+
+  it('话题任务收 /challenge/ 也收 /search/（话题页实际会走搜索接口）', () => {
+    expect(douyinAdapter.matchesTaskResponse('hashtag', challenge, {})).toBe(true)
+    expect(douyinAdapter.matchesTaskResponse('hashtag', search, {})).toBe(true)
+    expect(douyinAdapter.matchesTaskResponse('hashtag', post, {})).toBe(false)
+    expect(douyinAdapter.matchesTaskResponse('hashtag', unrelated, {})).toBe(false)
+  })
+
+  it('判定只依赖 URL，响应体畸形也不抛错', () => {
+    for (const json of [null, undefined, 0, '', [], {}]) {
+      expect(douyinAdapter.matchesTaskResponse('keyword', search, json)).toBe(true)
+      expect(douyinAdapter.matchesTaskResponse('author', search, json)).toBe(false)
+    }
+  })
+})

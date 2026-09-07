@@ -1391,3 +1391,59 @@ describe('导入作者的名称校验（R16）', () => {
     expect(browser.readAuthorNicknameCalls).toBe(0) // 没有作者行可校验，直接跳过，不发起昵称读取
   })
 })
+
+// ---------------------------------------------------------------------------
+// 任务接口匹配下沉到适配器：scheduler 不再自己认抖音路径。
+// 快手关键词/作者/详情共用同一个 /graphql，URL 区分不了，判定必须由适配器做。
+// ---------------------------------------------------------------------------
+describe('handleRaw 把任务接口匹配委托给适配器', () => {
+  /** 起一个挂在 load 上的关键词任务，保持 taskId/adapter 就绪 */
+  async function runningKeywordTask() {
+    const db = newDb()
+    const taskId = createTask(db, input)
+    const dl = new FakeDownloader()
+    const browser = new FakeBrowser()
+    advancingClock()
+    const { s } = setup(db, dl, browser)
+    browser.blockNextLoad()
+    void s.run(taskId)
+    await new Promise(r => setTimeout(r, 10))
+    return { db, taskId, s, browser }
+  }
+
+  it('适配器说不匹配 → 拒收，即使 URL 长得像抖音搜索接口', async () => {
+    const { db, taskId, s } = await runningKeywordTask()
+    const spy = vi.spyOn(douyinAdapter, 'matchesTaskResponse').mockReturnValue(false)
+
+    expect(await s.handleRaw(douyinAdapter, rawUrl, rawJson)).toBeNull()
+    expect(spy).toHaveBeenCalledWith('keyword', rawUrl, rawJson)
+    expect(db.prepare('SELECT COUNT(*) c FROM videos WHERE task_id=?').get(taskId)).toEqual({ c: 0 })
+  })
+
+  it('适配器说匹配 → 收下，即使 URL 不含 /search/（快手全走 /graphql 时必须如此）', async () => {
+    const { db, taskId, s } = await runningKeywordTask()
+    vi.spyOn(douyinAdapter, 'matchesTaskResponse').mockReturnValue(true)
+    // 这条 URL 命中 apiUrlPatterns 但不含 /search/：旧的硬编码规则会把它判给"作者任务"而拒绝
+    const postUrl = 'https://www.douyin.com/aweme/v1/web/aweme/post/?sec_user_id=SEC_001'
+
+    expect(await s.handleRaw(douyinAdapter, postUrl, rawJson)).toMatchObject({ kept: 1 })
+    expect(db.prepare('SELECT COUNT(*) c FROM videos WHERE task_id=?').get(taskId)).toEqual({ c: 1 })
+  })
+
+  it('apiUrlPatterns 仍是第一道闸：URL 不属于本平台接口时，适配器判定根本不会被问', async () => {
+    const { s } = await runningKeywordTask()
+    const spy = vi.spyOn(douyinAdapter, 'matchesTaskResponse').mockReturnValue(true)
+
+    expect(await s.handleRaw(douyinAdapter, 'https://www.douyin.com/static/logo.png', rawJson)).toBeNull()
+    expect(spy).not.toHaveBeenCalled()
+  })
+
+  it('抖音三类任务的原有规则不回退（真实适配器，不打桩）', async () => {
+    const search = 'https://www.douyin.com/aweme/v1/web/search/item/?device_platform=webapp'
+    const post = 'https://www.douyin.com/aweme/v1/web/aweme/post/?sec_user_id=SEC_001'
+    expect(douyinAdapter.matchesTaskResponse('keyword', search, rawJson)).toBe(true)
+    expect(douyinAdapter.matchesTaskResponse('keyword', post, rawJson)).toBe(false)
+    expect(douyinAdapter.matchesTaskResponse('author', post, rawJson)).toBe(true)
+    expect(douyinAdapter.matchesTaskResponse('author', search, rawJson)).toBe(false)
+  })
+})

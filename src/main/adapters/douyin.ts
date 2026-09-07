@@ -1,4 +1,5 @@
 import type { PlatformAdapter, VideoItem } from './types'
+import type { TaskType } from '../../shared/types'
 
 /** 是否"长得像"一条抖音视频对象（新版卡片有 aweme_info 包装；老版直接带 aweme_id+video/desc/author） */
 function isAwemeLike(x: unknown): boolean {
@@ -146,6 +147,18 @@ export function parseAuthorInput(raw: string): string | null {
   return null
 }
 
+/** 任务类型 ↔ 接口路径。规则由 scheduler.matchesTaskEndpoint() 原样搬来，逐条未改：
+ *  keyword→/search/、author→/aweme/post/、hashtag→/challenge/ 或 /search/（话题页实走搜索接口）。
+ *  抖音同一路径不会混装两种任务的数据，因此只看 URL，不看响应体。 */
+export function matchesTaskResponse(type: TaskType, url: string): boolean {
+  switch (type) {
+    case 'keyword': return /\/search\//.test(url) // 关键词搜索（宽匹配）
+    case 'author': return /\/aweme\/post\//.test(url) // 作者主页视频列表
+    case 'hashtag': return /\/challenge\//.test(url) || /\/search\//.test(url)
+    default: return false
+  }
+}
+
 export const douyinAdapter: PlatformAdapter = {
   name: 'douyin',
   displayName: '抖音',
@@ -157,6 +170,7 @@ export const douyinAdapter: PlatformAdapter = {
   buildHashtagUrl: (q: string) => `https://www.douyin.com/search/%23${encodeURIComponent(q)}`,
   buildVideoUrl,
   parseAuthorInput,
+  matchesTaskResponse: (type: TaskType, url: string) => matchesTaskResponse(type, url),
   parseApiJson: (_url: string, json: unknown) => {
     const diags: DurationDiag[] = []
     const items = collectAwemeList(json)

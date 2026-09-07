@@ -506,21 +506,14 @@ export class Scheduler {
   /** 只处理当前任务类型对应的接口响应，避免把推荐页/自己主页等无关 feed 当结果爬进来（用户反馈爬到了不该爬的内容）。
    *  匹配放宽：搜索接口路径多变（/search/item/、/general/search/ 等），用宽松的 /search/ 判断；
    *  推荐feed(/tab/feed/ 等)与个人主页(/user/profile/ 或 /aweme/post/ 之外的)不会含 /search/。 */
-  private matchesTaskEndpoint(rawUrl: string): boolean {
-    if (!this.task) return false
-    switch (this.task.type) {
-      case 'keyword': return /\/search\//.test(rawUrl) // 关键词搜索（宽匹配）
-      case 'author': return /\/aweme\/post\//.test(rawUrl) // 作者主页视频列表
-      case 'hashtag': return /\/challenge\//.test(rawUrl) || /\/search\//.test(rawUrl)
-      default: return false
-    }
-  }
 
   /** 主进程从 ipcMain 'dy:raw' 调用来处理一个原始 JSON（任务期间持续被调用）。browser.onRaw 方法不存在，消息统一走这里。 */
   async handleRaw(adapter: PlatformAdapter, rawUrl: string, json: unknown): Promise<{ items: number; kept: number } | null> {
     if (this.taskId === 0 || this.adapter !== adapter) return null
     if (!adapter.apiUrlPatterns.some(r => r.test(rawUrl))) return null
-    if (!this.matchesTaskEndpoint(rawUrl)) return null
+    // 任务接口匹配由适配器决定：抖音看接口路径，快手关键词/作者/详情共用同一个
+    // /graphql，URL 完全相同，只能看响应里的 operation 根字段。
+    if (!this.task || !adapter.matchesTaskResponse(this.task.type, rawUrl, json)) return null
     this.rawSinceLastRound = true
     const db = this.deps.db
     const filters = this.filters

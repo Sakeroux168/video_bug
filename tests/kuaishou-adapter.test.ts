@@ -156,3 +156,59 @@ describe('kuaishouAdapter URL 与任务接口', () => {
     expect(kuaishouAdapter.parseAuthorInput(input)).toBe(expected)
   })
 })
+
+// ---------------------------------------------------------------------------
+// 任务接口匹配下沉到适配器。
+// 抖音靠接口路径就能区分任务类型；快手关键词/作者/详情全部走同一个
+// https://www.kuaishou.com/graphql，URL 一模一样，只能看响应里出现了哪个 operation 根字段。
+// ---------------------------------------------------------------------------
+const GQL = 'https://www.kuaishou.com/graphql'
+
+const searchResponse = { data: { visionSearchPhoto: { result: 1, feeds: [FEED], pcursor: 'next' } } }
+const profileResponse = { data: { visionProfilePhotoList: { result: 1, feeds: [FEED], pcursor: 'next' } } }
+const detailResponse = { data: { visionVideoDetail: { status: 1, photo: FEED.photo, author: FEED.author } } }
+
+describe('kuaishouAdapter.matchesTaskResponse', () => {
+  it('关键词任务只收搜索响应', () => {
+    expect(kuaishouAdapter.matchesTaskResponse('keyword', GQL, searchResponse)).toBe(true)
+    expect(kuaishouAdapter.matchesTaskResponse('keyword', GQL, profileResponse)).toBe(false)
+    expect(kuaishouAdapter.matchesTaskResponse('keyword', GQL, detailResponse)).toBe(false)
+  })
+
+  it('话题任务走搜索接口，与关键词同源', () => {
+    expect(kuaishouAdapter.matchesTaskResponse('hashtag', GQL, searchResponse)).toBe(true)
+    expect(kuaishouAdapter.matchesTaskResponse('hashtag', GQL, profileResponse)).toBe(false)
+  })
+
+  it('作者任务只收作者作品列表', () => {
+    expect(kuaishouAdapter.matchesTaskResponse('author', GQL, profileResponse)).toBe(true)
+    expect(kuaishouAdapter.matchesTaskResponse('author', GQL, searchResponse)).toBe(false)
+    expect(kuaishouAdapter.matchesTaskResponse('author', GQL, detailResponse)).toBe(false)
+  })
+
+  it('详情响应不属于任何任务类型：用户手点一条视频不能污染正在跑的任务', () => {
+    for (const type of ['keyword', 'author', 'hashtag'] as const) {
+      expect(kuaishouAdapter.matchesTaskResponse(type, GQL, detailResponse)).toBe(false)
+    }
+  })
+
+  it('推荐流等未知 operation 一律拒绝，不靠"能解析出视频"来放行', () => {
+    // 这个响应结构完整、解析得出视频，但它不是当前任务要的数据
+    const feedResponse = { data: { brilliantTypeDataV2: { feeds: [FEED] } } }
+    expect(kuaishouAdapter.parseApiJson(GQL, feedResponse).length).toBeGreaterThan(0)
+    for (const type of ['keyword', 'author', 'hashtag'] as const) {
+      expect(kuaishouAdapter.matchesTaskResponse(type, GQL, feedResponse)).toBe(false)
+    }
+  })
+
+  it('operation 未包在 data 里时也认（有中间层会拆包），但仍按根字段判定', () => {
+    expect(kuaishouAdapter.matchesTaskResponse('keyword', GQL, { visionSearchPhoto: { feeds: [FEED] } })).toBe(true)
+    expect(kuaishouAdapter.matchesTaskResponse('author', GQL, { visionSearchPhoto: { feeds: [FEED] } })).toBe(false)
+  })
+
+  it('畸形响应不抛错，一律拒绝', () => {
+    for (const json of [null, undefined, 0, '', 'text', [], { data: null }, { data: [] }, { data: {} }]) {
+      expect(kuaishouAdapter.matchesTaskResponse('keyword', GQL, json)).toBe(false)
+    }
+  })
+})

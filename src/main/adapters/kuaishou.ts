@@ -1,4 +1,5 @@
 import type { PlatformAdapter, VideoItem } from './types'
+import type { TaskType } from '../../shared/types'
 
 type Obj = Record<string, unknown>
 
@@ -140,6 +141,30 @@ function buildVideoUrl(workId: string): string {
   return `https://www.kuaishou.com/short-video/${encodeURIComponent(workId)}`
 }
 
+/** 关键词与话题都走搜索；话题在快手就是带 # 的搜索词，没有独立接口。 */
+const SEARCH_OPERATIONS = ['visionSearchPhoto']
+/** 作者主页作品列表。 */
+const AUTHOR_OPERATIONS = ['visionProfilePhotoList']
+
+/** 取响应里出现的 GraphQL operation 根字段名。
+ *  正常是 { data: { visionSearchPhoto: ... } }；也兼容中间层已拆掉 data 包装的情形。 */
+function responseOperations(json: unknown): string[] {
+  const root = asObj(json)
+  const data = asObj(root.data)
+  return Object.keys(Object.keys(data).length > 0 ? data : root)
+}
+
+/** 快手所有业务共用 https://www.kuaishou.com/graphql，URL 区分不了任务类型，只能看 operation。
+ *  白名单判定：visionVideoDetail（用户手点的详情）、推荐流等未知 operation 一律拒绝，
+ *  不拿"能解析出视频"当放行理由——那会让无关响应污染正在跑的任务。 */
+export function matchesKuaishouTaskResponse(type: TaskType, json: unknown): boolean {
+  const operations = responseOperations(json)
+  const wanted = type === 'author' ? AUTHOR_OPERATIONS
+    : (type === 'keyword' || type === 'hashtag') ? SEARCH_OPERATIONS
+    : []
+  return wanted.some(op => operations.includes(op))
+}
+
 function parsePhoto(context: PhotoContext): VideoItem | null {
   const { photo, author } = context
   const id = text(photo.id)
@@ -196,6 +221,7 @@ export const kuaishouAdapter: PlatformAdapter = {
   buildHashtagUrl: (query: string) => `https://www.kuaishou.com/search/video?searchKey=${encodeURIComponent(`#${query}`)}`,
   buildVideoUrl,
   parseAuthorInput: parseKuaishouAuthorInput,
+  matchesTaskResponse: (type: TaskType, _url: string, json: unknown) => matchesKuaishouTaskResponse(type, json),
   parseApiJson: (_url: string, json: unknown) => collectKuaishouPhotos(json)
     .map(parsePhoto)
     .filter((item): item is VideoItem => item !== null),
