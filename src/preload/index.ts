@@ -3,7 +3,7 @@ import type { CreateTaskInput, AppSettings, TaskRow, VideoRow, AuthorRow, TaskSt
 
 const api = {
   ping: () => ipcRenderer.sendSync('api:ping') as string,
-  listPlatforms: (): Promise<Array<{ name: string; displayName: string }>> => ipcRenderer.invoke('platforms:list'),
+  listPlatforms: (): Promise<Array<{ name: string; displayName: string; authorInputPlaceholder: string }>> => ipcRenderer.invoke('platforms:list'),
   createTask: (input: CreateTaskInput): Promise<{ id: number | null; skipped: boolean; reason?: string }> => ipcRenderer.invoke('task:create', input),
   listTasks: (): Promise<TaskRow[]> => ipcRenderer.invoke('task:list'),
   listTaskVideos: (taskId: number): Promise<VideoRow[]> => ipcRenderer.invoke('task:video:list', taskId),
@@ -27,7 +27,7 @@ const api = {
   getRecentDownloads: (limit?: number): Promise<RecentDownload[]> => ipcRenderer.invoke('stats:recent', limit),
   writeClipboard: (text: string): Promise<void> => ipcRenderer.invoke('clipboard:write', text),
   openVideoSource: (id: number): Promise<{ ok: boolean; url?: string; error?: string }> => ipcRenderer.invoke('video:source:open', id),
-  importAuthors: (items: Array<{ nickname: string; url: string }>): Promise<{ created: number; results: Array<{ line: number; raw: string; ok: boolean; reason?: string }> }> => ipcRenderer.invoke('authors:import', items),
+  importAuthors: (items: Array<{ nickname: string; url: string }>, platform: string): Promise<{ created: number; results: Array<{ line: number; raw: string; ok: boolean; reason?: string }> }> => ipcRenderer.invoke('authors:import', items, platform),
   organizeAuthor: (id: number): Promise<{ ok: boolean; moved?: number; category?: string; state?: string; error?: string }> => ipcRenderer.invoke('authors:organize', id),
   organizeAll: (): Promise<{ ok: boolean; count?: number; error?: string }> => ipcRenderer.invoke('organize:all'),
   getAsrStatus: (): Promise<AsrStatus> => ipcRenderer.invoke('asr:status'),

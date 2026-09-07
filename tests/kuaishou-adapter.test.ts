@@ -212,3 +212,14 @@ describe('kuaishouAdapter.matchesTaskResponse', () => {
     }
   })
 })
+
+describe('kuaishouAdapter 平台知识集中在适配器里', () => {
+  it('作者输入 placeholder / 下载 Referer / 短链识别都由适配器提供', () => {
+    expect(kuaishouAdapter.authorInputPlaceholder).toBe('https://www.kuaishou.com/profile/xxx')
+    expect(kuaishouAdapter.downloadReferer).toBe('https://www.kuaishou.com/')
+    expect(kuaishouAdapter.isShortLink('https://v.kuaishou.com/ABC123')).toBe(true)
+    expect(kuaishouAdapter.isShortLink('https://c.kuaishou.com/ABC123')).toBe(true)
+    expect(kuaishouAdapter.isShortLink('https://www.kuaishou.com/profile/3xA')).toBe(false)
+    expect(kuaishouAdapter.isShortLink('https://v.douyin.com/ABC')).toBe(false)
+  })
+})

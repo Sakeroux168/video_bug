@@ -9,10 +9,13 @@ import { parseAuthorsCsv, buildAuthorsCsv, decodeCsvBytes } from './authorsCsv'
 
 type ImportResult = { created: number; results: Array<{ line: number; raw: string; ok: boolean; reason?: string }> }
 
-const IMPORT_PLACEHOLDER =
-  '每行一个作者，名称 + 完整主页链接（顺序不限，用空格/Tab/逗号分隔）：\n' +
-  '张三的日常  https://www.douyin.com/user/MS4wLjABAAAA_abc123\n' +
-  '李四        https://www.douyin.com/user/MS4wLjABAAAA_def456'
+/** 粘贴示例跟随所选平台：永远写着 douyin.com 的话，导快手作者的人会照着填错。
+ *  说明行原样保留，只把示例链接换成当前平台的形态。 */
+function importPlaceholder(sample: string): string {
+  return   '每行一个作者，名称 + 完整主页链接（顺序不限，用空格/Tab/逗号分隔）：\n' +
+    `张三　　　粘贴  ${sample}\n` +
+    `李四　　　　　　${sample}`
+}
 
 export default function AuthorCollection({ notify }: { notify: (text: string) => void }) {
   const [authors, setAuthors] = useState<AuthorRow[]>([])
@@ -20,11 +23,16 @@ export default function AuthorCollection({ notify }: { notify: (text: string) =>
   const [editingId, setEditingId] = useState<number | null>(null)
   const [editVal, setEditVal] = useState('')
   const [importOpen, setImportOpen] = useState(false)
+  // 导入平台：解析器与落库平台都跟它走。以前写死抖音，粘快手链接会被抖音解析器拒绝，
+  // 且提示说的是「未识别到抖音主页链接」，用户完全看不出问题在哪。
+  const [importPlatform, setImportPlatform] = useState('douyin')
+  const [platforms, setPlatforms] = useState<Array<{ name: string; displayName: string; authorInputPlaceholder: string }>>([])
   const [importText, setImportText] = useState('')
   const [importResult, setImportResult] = useState<ImportResult | null>(null)
   const [importing, setImporting] = useState(false)
 
   useEffect(() => { void api.listAuthors().then(setAuthors) }, [])
+  useEffect(() => { void api.listPlatforms().then(setPlatforms) }, [])
 
   // 作者校验的结果是调度器写进库的，不订阅就永远停在旧数据上——
   // 用户只能看到一闪而过的 toast。任务暂停/完成都可能改变作者行
@@ -176,7 +184,7 @@ export default function AuthorCollection({ notify }: { notify: (text: string) =>
     const items = parsePastedAuthors(importText)
     setImporting(true)
     try {
-      const r = await api.importAuthors(items)
+      const r = await api.importAuthors(items, importPlatform)
       setImportResult(r)
       notify(r.created > 0 ? `已导入 ${r.created} 个作者` : '本次没有新增作者')
       refresh()
@@ -241,10 +249,21 @@ export default function AuthorCollection({ notify }: { notify: (text: string) =>
       </div>
       {importOpen && (
         <div className="mb-3 rounded-md border border-slate-200 bg-slate-50 p-3">
+          <label htmlFor="import-platform" className="mb-2 flex items-center gap-2 text-xs text-slate-500">
+            导入平台
+            <select
+              id="import-platform"
+              className="rounded-md border border-slate-300 px-2 py-1 text-xs outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500"
+              value={importPlatform}
+              onChange={e => setImportPlatform(e.target.value)}
+            >
+              {platforms.map(p => <option key={p.name} value={p.name}>{p.displayName}</option>)}
+            </select>
+          </label>
           <textarea
             className="w-full rounded-md border border-slate-300 px-3 py-2 text-xs outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500"
             rows={5}
-            placeholder={IMPORT_PLACEHOLDER}
+            placeholder={importPlaceholder(platforms.find(p => p.name === importPlatform)?.authorInputPlaceholder ?? '')}
             value={importText}
             onChange={e => setImportText(e.target.value)}
           />

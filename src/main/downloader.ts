@@ -13,9 +13,19 @@ import { downloadCover } from './cover'
 import { setVideoStatus } from './db'
 import { normalizeVideo } from './videoNormalizer'
 import type { NormalizeVideoRequest, NormalizeVideoResult } from './videoNormalizer'
+import { getAdapter } from './adapters'
 
 export function buildUserAgent(_platform: string): string {
   return 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36'
+}
+
+/** 下载媒体的请求头。Referer 取自适配器，不再用 `www.{platform}.com` 拼——
+ *  未注册平台宁可不带 Referer，也不发一个编出来的来源。 */
+export function buildRequestHeaders(platform: string): Record<string, string> {
+  const referer = getAdapter(platform)?.downloadReferer
+  return referer
+    ? { 'user-agent': buildUserAgent(platform), referer }
+    : { 'user-agent': buildUserAgent(platform) }
 }
 
 type DlSettings = Pick<AppSettings, 'downloadDir' | 'downloadConcurrency' | 'addressTtlMin'>
@@ -242,10 +252,7 @@ export class Downloader {
 
       this.db.prepare("UPDATE videos SET status = 'downloading' WHERE id = ?").run(id)
       this.emit({ type: 'video:status', id, status: 'downloading' })
-      const headers = {
-        'user-agent': buildUserAgent(row.platform),
-        referer: `https://www.${row.platform}.com/`
-      }
+      const headers = buildRequestHeaders(row.platform)
 
       if (!sourceValidated) {
         // 候选下载地址：原始地址优先；失败/坏文件则回退 playwm→play 无水印变体。

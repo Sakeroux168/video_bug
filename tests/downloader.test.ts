@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { DatabaseSync } from 'node:sqlite'
 import { initDb, createTask, insertVideos, listVideos, setVideoStatus } from '../src/main/db'
-import { Downloader, buildUserAgent } from '../src/main/downloader'
+import { Downloader, buildUserAgent, buildRequestHeaders } from '../src/main/downloader'
 import { mkdtempSync, readFileSync, rmSync, existsSync, readdirSync, writeFileSync } from 'fs'
 import { basename, dirname, extname, join } from 'path'
 import { tmpdir } from 'os'
@@ -915,5 +915,20 @@ describe('Downloader', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+})
+
+describe('下载请求头按平台取，不再靠 www.{platform}.com 拼字符串', () => {
+  it('抖音与快手各用自己的 Referer', () => {
+    expect(buildRequestHeaders('douyin').referer).toBe('https://www.douyin.com/')
+    expect(buildRequestHeaders('kuaishou').referer).toBe('https://www.kuaishou.com/')
+  })
+
+  it('未注册平台不猜 Referer（宁可不带，也不发一个编出来的来源）', () => {
+    expect(buildRequestHeaders('unknown').referer).toBeUndefined()
+  })
+
+  it('User-Agent 照常带上', () => {
+    expect(buildRequestHeaders('kuaishou')['user-agent']).toMatch(/Mozilla/)
   })
 })

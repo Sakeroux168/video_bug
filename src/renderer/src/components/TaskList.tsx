@@ -9,6 +9,8 @@ import { describeError } from '../errors'
 
 const TASK_STATUS_LABEL: Record<string, string> = { pending: '等待中', running: '进行中', done: '完成', paused: '已暂停', failed: '失败' }
 
+const TASK_TYPE_LABEL: Record<string, string> = { keyword: '关键词', author: '作者', hashtag: '话题' }
+
 const STATUS_LABEL: Record<string, string> = {
   pending: '等待', downloading: '下载中', done: '完成', failed: '失败',
   filtered: '已过滤', collected: '待下载', cancelled: '已取消', paused: '已暂停'
@@ -159,6 +161,16 @@ export default function TaskList({ notify }: { notify: (text: string) => void })
   // 用 ref 持有最新 refresh，避免 onTaskProgress 闭包捕获过期 expanded
   const coalescedRefresh = useCoalescedRefresh(() => refreshRef.current(), 800)
   const refreshRef = useRef(refresh)
+  // 平台显示名来自 platforms:list（源头是各适配器的 displayName），
+  // 界面不写 platform === 'douyin' 这类分支。未知平台或列表尚未到达时回落原始值，不留空白。
+  const [platformNames, setPlatformNames] = useState<Record<string, string>>({})
+  useEffect(() => {
+    void api.listPlatforms().then(list => {
+      setPlatformNames(Object.fromEntries(list.map(p => [p.name, p.displayName])))
+    })
+  }, [])
+  const platformLabel = (name: string): string => platformNames[name] ?? name
+
   useEffect(() => { refreshRef.current = refresh })
 
   useEffect(() => {
@@ -360,7 +372,7 @@ export default function TaskList({ notify }: { notify: (text: string) => void })
                     className={`cursor-pointer border-b border-slate-100 transition-colors hover:bg-slate-50 ${isOpen ? 'bg-brand-50/40' : ''}`}
                     onClick={() => void toggleExpand(t.id)}
                   >
-                    <td className="whitespace-nowrap py-2 pr-3 text-slate-500">{t.platform}/{t.type}</td>
+                    <td className="whitespace-nowrap py-2 pr-3 text-slate-500">{platformLabel(t.platform)} · {TASK_TYPE_LABEL[t.type] ?? t.type}</td>
                     <td className="max-w-0 py-2 pr-3 font-medium">
                       {/* 作者任务的 query 存的是 sec_uid（P1.5 归一化），直接显示是一串英文认不出是谁；
                           listTasks 已关联带出昵称。库里还没该作者时回落显示原值，不能空白。 */}

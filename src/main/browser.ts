@@ -318,7 +318,13 @@ export class VideoBrowser {
    */
   async readAuthorNickname(): Promise<string | null> {
     if (!this.win) return null
+    // 站点后缀取自当前平台适配器（抖音/快手/…），不写死。
+    // 正则转义在 TS 这边做完再注入，脚本里只做字符串拼接，避免模板字面量里嵌套转义写错。
+    const site = this.current?.displayName ?? ''
+    const siteEscaped = site.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
     const script = `(() => {
+      const SITE = ${JSON.stringify(site)};
+      const SITE_RE = ${JSON.stringify(siteEscaped)};
       const pick = () => {
         const og = document.querySelector('meta[property="og:title"]');
         const v = og && og.getAttribute('content');
@@ -327,11 +333,11 @@ export class VideoBrowser {
       };
       let t = pick();
       if (!t) return null;
-      // 剥尾巴：「- 抖音」「_抖音」等站点后缀
-      t = t.replace(/\\s*[-_|｜]\\s*抖音.*$/, '').trim();
+      // 剥尾巴：「- 抖音」「_快手」等站点后缀（站点名由当前平台提供；未知平台不乱剥）
+      if (SITE_RE) t = t.replace(new RegExp('\\\\s*[-_|｜]\\\\s*' + SITE_RE + '.*$'), '').trim();
       // 再剥「的主页」（仅当它在末尾时，避免把「主页装修师」这类昵称剪坏）
       t = t.replace(/的主页$/, '').trim();
-      if (!t || t === '抖音') return null;
+      if (!t || (SITE && t === SITE)) return null;
       return t;
     })()`
     try {

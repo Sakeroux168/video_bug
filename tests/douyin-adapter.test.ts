@@ -264,3 +264,13 @@ describe('douyinAdapter.matchesTaskResponse', () => {
     }
   })
 })
+
+describe('douyinAdapter 平台知识集中在适配器里', () => {
+  it('作者输入 placeholder / 下载 Referer / 短链识别都由适配器提供', () => {
+    expect(douyinAdapter.authorInputPlaceholder).toBe('https://www.douyin.com/user/xxx')
+    expect(douyinAdapter.downloadReferer).toBe('https://www.douyin.com/')
+    expect(douyinAdapter.isShortLink('https://v.douyin.com/ABC123/')).toBe(true)
+    expect(douyinAdapter.isShortLink('https://www.douyin.com/user/SEC1')).toBe(false)
+    expect(douyinAdapter.isShortLink('https://v.kuaishou.com/ABC')).toBe(false)
+  })
+})

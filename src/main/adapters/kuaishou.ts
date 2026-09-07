@@ -215,6 +215,8 @@ export const kuaishouAdapter: PlatformAdapter = {
   displayName: '快手',
   sourceHosts: ['www.kuaishou.com'],
   sessionPartition: 'persist:kuaishou',
+  authorInputPlaceholder: 'https://www.kuaishou.com/profile/xxx',
+  downloadReferer: 'https://www.kuaishou.com/',
   apiUrlPatterns: [/\/graphql(?:[/?#]|$)/i],
   rawUrlHints: ['/graphql'],
   buildSearchUrl: (query: string) => `https://www.kuaishou.com/search/video?searchKey=${encodeURIComponent(query)}`,
@@ -222,6 +224,7 @@ export const kuaishouAdapter: PlatformAdapter = {
   buildHashtagUrl: (query: string) => `https://www.kuaishou.com/search/video?searchKey=${encodeURIComponent(`#${query}`)}`,
   buildVideoUrl,
   parseAuthorInput: parseKuaishouAuthorInput,
+  isShortLink: isKuaishouShortLink,
   matchesTaskResponse: (type: TaskType, _url: string, json: unknown) => matchesKuaishouTaskResponse(type, json),
   parseApiJson: (_url: string, json: unknown) => collectKuaishouPhotos(json)
     .map(parsePhoto)

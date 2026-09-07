@@ -143,3 +143,59 @@ describe('authors:import', () => {
     expect(r.results[4].reason).toBe('未识别到抖音主页链接')
   })
 })
+
+// D 阶段：批量导入以前把平台写死成 douyin，粘快手链接会得到「未识别到抖音主页链接」，
+// 用户完全看不出问题在哪。现在平台由调用方给出，落库也用这个平台。
+describe('authors:import 按平台解析', () => {
+  function importWith(platform: string) {
+    const { db } = setup()
+    const handler = mockIpc.handlers.get('authors:import')!
+    return {
+      db,
+      run: (items: ImportItem[]) => handler(null, items, platform) as Promise<ImportResult>
+    }
+  }
+
+  it('快手：完整主页链接被接受，并按 kuaishou 落库', async () => {
+    const { db, run } = importWith('kuaishou')
+    const r = await run([{ nickname: '快手作者', url: 'https://www.kuaishou.com/profile/3xAUTHOR1' }])
+
+    expect(r.created).toBe(1)
+    expect(r.results[0]).toMatchObject({ line: 1, ok: true })
+    const row = db.prepare('SELECT platform, sec_uid, home_url FROM authors').get() as
+      { platform: string; sec_uid: string; home_url: string }
+    expect(row).toEqual({
+      platform: 'kuaishou',
+      sec_uid: '3xAUTHOR1',
+      home_url: 'https://www.kuaishou.com/profile/3xAUTHOR1'
+    })
+  })
+
+  it('快手模式下粘抖音链接 → 提示说的是快手，不再张冠李戴', async () => {
+    const { run } = importWith('kuaishou')
+    const r = await run([{ nickname: '走错门的', url: 'https://www.douyin.com/user/SEC_X' }])
+    expect(r.results[0]).toMatchObject({ ok: false, reason: '未识别到快手主页链接' })
+  })
+
+  it('快手短链接与「压根不是本平台链接」区分开', async () => {
+    const { run } = importWith('kuaishou')
+    const r = await run([{ nickname: '短链', url: 'https://v.kuaishou.com/ABC123' }])
+    expect(r.results[0]).toMatchObject({ ok: false, reason: '暂不支持短链接，请粘贴完整主页链接' })
+  })
+
+  it('未注册平台 → 每行都明确失败，不静默当成抖音处理', async () => {
+    const { db, run } = importWith('weibo')
+    const r = await run([{ nickname: '某人', url: 'https://weibo.com/u/123' }])
+    expect(r.created).toBe(0)
+    expect(r.results[0]).toMatchObject({ ok: false, reason: '不支持的平台：weibo' })
+    expect(db.prepare('SELECT COUNT(*) c FROM authors').get()).toEqual({ c: 0 })
+  })
+
+  it('不传平台时沿用抖音（老调用方不受影响）', async () => {
+    const { db } = setup()
+    const handler = mockIpc.handlers.get('authors:import')!
+    const r = await handler(null, [{ nickname: '老用法', url: 'https://www.douyin.com/user/SEC_OLD' }]) as ImportResult
+    expect(r.created).toBe(1)
+    expect((db.prepare('SELECT platform FROM authors').get() as { platform: string }).platform).toBe('douyin')
+  })
+})

@@ -82,3 +82,39 @@ describe('视频时长筛选', () => {
     expect(screen.getByText('开始抓取')).toBeDisabled()
   })
 })
+
+// D 阶段：界面文案跟随平台。作者输入框以前永远提示抖音主页链接，
+// 选了快手仍然写着 douyin.com，用户照着填必然失败。
+describe('作者输入提示跟随所选平台', () => {
+  const platforms = [
+    { name: 'douyin', displayName: '抖音', authorInputPlaceholder: 'https://www.douyin.com/user/xxx' },
+    { name: 'kuaishou', displayName: '快手', authorInputPlaceholder: 'https://www.kuaishou.com/profile/xxx' }
+  ]
+
+  async function renderWithPlatforms() {
+    installFakeApi()
+    vi.mocked(window.api.listPlatforms).mockResolvedValue(platforms as never)
+    render(<FilterForm onSubmit={vi.fn(async () => ({ id: 1, skipped: false }))} />)
+    await screen.findByRole('option', { name: '快手' })
+  }
+
+  it('默认抖音：作者输入框提示抖音主页链接', async () => {
+    await renderWithPlatforms()
+    fireEvent.click(screen.getByLabelText('作者'))
+    expect(await screen.findByPlaceholderText('https://www.douyin.com/user/xxx')).toBeInTheDocument()
+  })
+
+  it('切到快手：提示换成快手主页链接，不再显示 douyin.com', async () => {
+    await renderWithPlatforms()
+    fireEvent.change(screen.getByLabelText('平台'), { target: { value: 'kuaishou' } })
+    fireEvent.click(screen.getByLabelText('作者'))
+
+    expect(await screen.findByPlaceholderText('https://www.kuaishou.com/profile/xxx')).toBeInTheDocument()
+    expect(screen.queryByPlaceholderText('https://www.douyin.com/user/xxx')).not.toBeInTheDocument()
+  })
+
+  it('关键词/话题类型仍用通用提示，不显示任何平台 URL', async () => {
+    await renderWithPlatforms()
+    expect(await screen.findByPlaceholderText('输入内容')).toBeInTheDocument()
+  })
+})

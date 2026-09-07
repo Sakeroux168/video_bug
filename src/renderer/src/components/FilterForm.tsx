@@ -4,7 +4,7 @@ import type { CreateTaskInput, Filters, TaskType } from '../../../shared/types'
 import { btnPrimary, inputCls, Card } from './ui'
 
 export default function FilterForm({ onSubmit }: { onSubmit: (t: CreateTaskInput) => Promise<{ id: number | null; skipped: boolean; reason?: string }> }) {
-  const [platforms, setPlatforms] = useState<Array<{ name: string; displayName: string }>>([])
+  const [platforms, setPlatforms] = useState<Array<{ name: string; displayName: string; authorInputPlaceholder: string }>>([])
   const [platform, setPlatform] = useState('douyin')
   const [type, setType] = useState<TaskType>('keyword')
   const [query, setQuery] = useState('')
@@ -25,6 +25,10 @@ export default function FilterForm({ onSubmit }: { onSubmit: (t: CreateTaskInput
     // 默认跟随全局设置：未在表单改过时 allowDuplicateAuthor 保持与设置一致
     void api.getSettings().then(s => setAllowDuplicateAuthor(s.allowDuplicateAuthor))
   }, [])
+
+  // 作者输入提示跟随所选平台：选了快手还提示 douyin.com 的话，用户照着填必然失败。
+  // 平台列表未到达时留空，不写死任何一个平台的 URL。
+  const authorPlaceholder = platforms.find(p => p.name === platform)?.authorInputPlaceholder ?? ''
 
   // 目标数量自由设置 1-1000（默认 200）
   const targetValid = target >= 1 && target <= 1000
@@ -76,7 +80,7 @@ export default function FilterForm({ onSubmit }: { onSubmit: (t: CreateTaskInput
         </div>
         <label htmlFor="filter-query" className="flex flex-1 flex-col gap-1 text-xs text-slate-500 min-w-[200px]">
           {type === 'keyword' ? '关键词' : type === 'author' ? '作者主页链接或 ID' : '话题'}
-          <input id="filter-query" className={inputCls} value={query} onChange={e => setQuery(e.target.value)} placeholder={type === 'author' ? 'https://www.douyin.com/user/xxx' : '输入内容'} />
+          <input id="filter-query" className={inputCls} value={query} onChange={e => setQuery(e.target.value)} placeholder={type === 'author' ? authorPlaceholder : '输入内容'} />
         </label>
         <label htmlFor="filter-timerange" className="flex flex-col gap-1 text-xs text-slate-500">
           时间

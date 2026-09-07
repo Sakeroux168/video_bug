@@ -50,7 +50,8 @@ describe('TaskList 顶层任务表', () => {
     expect(container.querySelectorAll('thead th')).toHaveLength(6)
     expect(container.querySelector('thead input[disabled]')).toBeNull()
 
-    const taskRow = screen.getByText('douyin/keyword').closest('tr')
+    // 平台/类型现在显示中文（见 tasklist-platform-label.test.tsx）；这里只是用它定位任务行
+    const taskRow = screen.getByText('douyin · 关键词').closest('tr')
     expect(taskRow?.querySelector('input[disabled]')).toBeNull()
   })
 

@@ -66,7 +66,8 @@ describe('AuthorCollection 批量导入作者', () => {
       { nickname: '张三', url: 'https://www.douyin.com/user/a' },
       { nickname: '李四', url: 'https://www.douyin.com/user/b' },
       { nickname: '王五', url: 'https://www.douyin.com/user/c' }
-    ])
+    // 导入现在带平台参数（面板上的平台下拉），默认抖音
+    ], 'douyin')
   })
 
   it('导入成功后 api.listAuthors 被再次调用（refresh 生效）', async () => {
@@ -334,4 +335,53 @@ describe('AuthorCollection 批量导入作者', () => {
     expect(screen.getByRole('button', { name: /只复制链接/ })).toBeDisabled()
   })
 
+})
+
+// D 阶段：导入面板以前不带平台，粘快手链接会被抖音解析器拒绝且提示说的是抖音。
+// 现在面板上有平台下拉，选什么平台就用什么平台解析、落库。
+describe('AuthorCollection 批量导入按平台', () => {
+  const PLATFORMS = [
+    { name: 'douyin', displayName: '抖音', authorInputPlaceholder: 'https://www.douyin.com/user/xxx' },
+    { name: 'kuaishou', displayName: '快手', authorInputPlaceholder: 'https://www.kuaishou.com/profile/xxx' }
+  ]
+
+  async function openImportPanel(): Promise<void> {
+    installFakeApi()
+    vi.mocked(window.api.listAuthors).mockResolvedValue([])
+    vi.mocked(window.api.listPlatforms).mockResolvedValue(PLATFORMS as never)
+    render(<AuthorCollection notify={() => {}} />)
+    await screen.findByRole('button', { name: '导入作者' })
+    fireEvent.click(screen.getByRole('button', { name: '导入作者' }))
+    await screen.findByLabelText('导入平台')
+  }
+
+  it('导入面板有平台下拉，默认抖音', async () => {
+    await openImportPanel()
+    expect((screen.getByLabelText('导入平台') as HTMLSelectElement).value).toBe('douyin')
+    expect(screen.getByRole('option', { name: '快手' })).toBeInTheDocument()
+  })
+
+  it('选快手后粘贴 → importAuthors 收到 kuaishou', async () => {
+    await openImportPanel()
+    fireEvent.change(screen.getByLabelText('导入平台'), { target: { value: 'kuaishou' } })
+    fireEvent.change(screen.getByRole('textbox'), {
+      target: { value: '快手作者 https://www.kuaishou.com/profile/3xAUTHOR1' }
+    })
+    fireEvent.click(screen.getByRole('button', { name: '确定导入' }))
+
+    await waitFor(() => expect(window.api.importAuthors).toHaveBeenCalledWith(
+      [{ nickname: '快手作者', url: 'https://www.kuaishou.com/profile/3xAUTHOR1' }],
+      'kuaishou'
+    ))
+  })
+
+  it('粘贴示例跟随所选平台，不再永远写着 douyin.com', async () => {
+    await openImportPanel()
+    const box = screen.getByRole('textbox') as HTMLTextAreaElement
+    expect(box.placeholder).toContain('douyin.com')
+
+    fireEvent.change(screen.getByLabelText('导入平台'), { target: { value: 'kuaishou' } })
+    expect((screen.getByRole('textbox') as HTMLTextAreaElement).placeholder).toContain('kuaishou.com')
+    expect((screen.getByRole('textbox') as HTMLTextAreaElement).placeholder).not.toContain('douyin.com')
+  })
 })

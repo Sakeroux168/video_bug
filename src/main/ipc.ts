@@ -5,7 +5,6 @@ import { getSettings, saveSettings } from './settings'
 import { deleteVideoRows } from './videoDelete'
 import { scanFilesTree, deleteFileCategory, deleteFileAuthor, locateFileDir } from './fileManager'
 import { listAdapters, getAdapter } from './adapters'
-import { isDouyinShortLink } from './adapters/douyin'
 import type { Scheduler } from './scheduler'
 import type { Downloader } from './downloader'
 import { Analyzer } from './analyzer'
@@ -48,7 +47,14 @@ export function registerIpc(deps: IpcDeps): void {
     if (input.type === 'author') {
       const adapter = getAdapter(input.platform)
       const secUid = adapter?.parseAuthorInput(input.query) ?? null
-      if (secUid === null) return { id: null, skipped: true, reason: '未识别到抖音主页链接或作者 ID' }
+      if (secUid === null) {
+        // 文案跟随平台：选了快手却提示"未识别到抖音主页链接"会把人带沟里
+        const site = adapter?.displayName ?? input.platform
+        const reason = adapter?.isShortLink(input.query)
+          ? '暂不支持短链接，请粘贴完整主页链接' // 与批量导入同一句，别让同一件事有两种说法
+          : `未识别到${site}主页链接或作者 ID`
+        return { id: null, skipped: true, reason }
+      }
       input = { ...input, query: secUid }
     }
     // 作者去重：仅当该作者的"主页爬取"任务已完成才跳过（作者在搜索里出现过不算爬过主页）。
@@ -136,11 +142,22 @@ export function registerIpc(deps: IpcDeps): void {
     }
   })
 
-  ipcMain.handle('authors:import', (_e, items: Array<{ nickname: string; url: string }>) => {
-    const adapter = getAdapter('douyin')
+  // platform 由调用方给出（导入面板的平台下拉）。默认 douyin 保持老调用方行为不变。
+  // 不能继续写死抖音：粘快手链接会得到「未识别到抖音主页链接」，用户完全看不出问题在哪。
+  ipcMain.handle('authors:import', (_e, items: Array<{ nickname: string; url: string }>, platform = 'douyin') => {
+    const adapter = getAdapter(platform)
     let created = 0
     const seen = new Set<string>()
     const results: Array<{ line: number; raw: string; ok: boolean; reason?: string }> = []
+    if (!adapter) {
+      // 未注册平台：逐行明确失败，不静默按抖音解析后把作者落到错误平台下
+      return {
+        created: 0,
+        results: items.map((item, idx) => ({
+          line: idx + 1, raw: item.url, ok: false, reason: `不支持的平台：${platform}`
+        }))
+      }
+    }
     items.forEach((item, idx) => {
       const line = idx + 1
       const raw = item.url
@@ -148,9 +165,12 @@ export function registerIpc(deps: IpcDeps): void {
         results.push({ line, raw, ok: false, reason: '缺少作者名称' })
         return
       }
-      const secUid = adapter?.parseAuthorInput(item.url) ?? null
+      const secUid = adapter.parseAuthorInput(item.url) ?? null
       if (secUid === null) {
-        const reason = isDouyinShortLink(item.url) ? '暂不支持短链接，请粘贴完整主页链接' : '未识别到抖音主页链接'
+        // 短链与「压根不是本平台链接」分开报：前者让用户去粘完整主页，后者说明平台选错了
+        const reason = adapter.isShortLink(item.url)
+          ? '暂不支持短链接，请粘贴完整主页链接'
+          : `未识别到${adapter.displayName}主页链接`
         results.push({ line, raw, ok: false, reason })
         return
       }
@@ -159,8 +179,8 @@ export function registerIpc(deps: IpcDeps): void {
         return
       }
       seen.add(secUid)
-      const homeUrl = adapter!.buildAuthorUrl(secUid)
-      const { created: wasCreated } = insertAuthorIfAbsent(db, { platform: 'douyin', secUid, nickname: item.nickname.trim(), homeUrl })
+      const homeUrl = adapter.buildAuthorUrl(secUid)
+      const { created: wasCreated } = insertAuthorIfAbsent(db, { platform, secUid, nickname: item.nickname.trim(), homeUrl })
       if (wasCreated) {
         created++
         results.push({ line, raw, ok: true })

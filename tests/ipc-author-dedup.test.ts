@@ -158,10 +158,25 @@ describe('task:create 作者 URL 归一化（P1.5）', () => {
     expect(r2).toEqual({ id: null, skipped: true, reason: '该作者主页已爬取过，可在作者表格中直接管理' })
   })
 
-  it('无法解析的作者输入（短链/非法字符）→ skipped:true 且给出对应 reason，不建任务', async () => {
+  it('短链接 → skipped:true 且提示去粘完整主页链接，不建任务', async () => {
     const { enqueued, create } = setup()
     const r = await create(input({ type: 'author', query: 'https://v.douyin.com/iZZZZZZZ/' }))
+    // 短链不联网解析，必须让用户自己粘完整主页；这句与批量导入路径完全一致
+    expect(r).toEqual({ id: null, skipped: true, reason: '暂不支持短链接，请粘贴完整主页链接' })
+    expect(enqueued).toEqual([])
+  })
+
+  it('非本平台链接/非法字符 → reason 指名当前平台，不建任务', async () => {
+    const { enqueued, create } = setup()
+    const r = await create(input({ type: 'author', query: 'https://www.baidu.com/user/x' }))
     expect(r).toEqual({ id: null, skipped: true, reason: '未识别到抖音主页链接或作者 ID' })
+    expect(enqueued).toEqual([])
+  })
+
+  it('快手任务的提示说的是快手，不再张冠李戴', async () => {
+    const { enqueued, create } = setup()
+    const r = await create(input({ platform: 'kuaishou', type: 'author', query: 'https://www.douyin.com/user/SEC_X' }))
+    expect(r).toEqual({ id: null, skipped: true, reason: '未识别到快手主页链接或作者 ID' })
     expect(enqueued).toEqual([])
   })
 })

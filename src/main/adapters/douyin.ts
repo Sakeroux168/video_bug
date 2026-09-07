@@ -164,6 +164,8 @@ export const douyinAdapter: PlatformAdapter = {
   displayName: '抖音',
   sourceHosts: ['www.douyin.com'],
   sessionPartition: 'persist:douyin',
+  authorInputPlaceholder: 'https://www.douyin.com/user/xxx',
+  downloadReferer: 'https://www.douyin.com/',
   apiUrlPatterns: [/aweme\/v1\/web\//, /aweme\/v1\/app\//],
   // 与泛化前写死在注入脚本里的两条特征逐字一致，不收窄
   rawUrlHints: ['/aweme/', '/search/'],
@@ -172,6 +174,7 @@ export const douyinAdapter: PlatformAdapter = {
   buildHashtagUrl: (q: string) => `https://www.douyin.com/search/%23${encodeURIComponent(q)}`,
   buildVideoUrl,
   parseAuthorInput,
+  isShortLink: isDouyinShortLink,
   matchesTaskResponse: (type: TaskType, url: string) => matchesTaskResponse(type, url),
   parseApiJson: (_url: string, json: unknown) => {
     const diags: DurationDiag[] = []

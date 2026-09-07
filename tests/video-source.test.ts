@@ -26,3 +26,30 @@ describe('resolveVideoSourceUrl', () => {
     expect(resolveVideoSourceUrl('unknown', 'AW1', 'https://www.douyin.com/video/AW1')).toBeNull()
   })
 })
+
+describe('resolveVideoSourceUrl 快手', () => {
+  it('旧行无存储链接时生成快手规范作品页', () => {
+    expect(resolveVideoSourceUrl('kuaishou', '3xPHOTO1', null))
+      .toBe('https://www.kuaishou.com/short-video/3xPHOTO1')
+  })
+
+  it('保留通过快手白名单校验的存储链接', () => {
+    expect(resolveVideoSourceUrl('kuaishou', '3xPHOTO1', 'https://www.kuaishou.com/short-video/3xPHOTO1?fid=1'))
+      .toBe('https://www.kuaishou.com/short-video/3xPHOTO1?fid=1')
+  })
+
+  it.each([
+    'javascript:alert(1)',
+    'http://www.kuaishou.com/short-video/3xPHOTO1',
+    'https://evil.example/short-video/3xPHOTO1',
+    'https://www.kuaishou.com.evil.example/short-video/3xPHOTO1',
+    'https://v.kuaishou.com/ABC123'
+  ])('拒绝不安全或非快手作品链接：%s', (url) => {
+    expect(resolveVideoSourceUrl('kuaishou', '3xPHOTO1', url)).toBeNull()
+  })
+
+  it('跨平台不串台：快手行里存着抖音地址也拒绝', () => {
+    expect(resolveVideoSourceUrl('kuaishou', '3xPHOTO1', 'https://www.douyin.com/video/AW1')).toBeNull()
+    expect(resolveVideoSourceUrl('douyin', 'AW1', 'https://www.kuaishou.com/short-video/3xPHOTO1')).toBeNull()
+  })
+})
