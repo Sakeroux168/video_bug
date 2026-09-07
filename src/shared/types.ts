@@ -115,6 +115,14 @@ export interface AppSettings {
   stallThresholdSec: number
   /** R12：重搜冷却秒数（停滞自救两次重搜的最小间隔，默认 10；到底文案命中可忽略冷却立即重搜） */
   rescueCooldownSec: number
+  /** 归档层级：按品类建目录（需要 AI 解析品类；关闭后不再调用 resolveCategory） */
+  organizeByCategory: boolean
+  /** 归档层级：按作者建目录 */
+  organizeByAuthor: boolean
+  /** 归档层级：按横屏/竖屏/未识别建目录（关闭后不再对缺尺寸的视频跑 ffprobe） */
+  organizeByOrientation: boolean
+  /** 归档层级：按一分钟内/一分钟外建目录 */
+  organizeByDuration: boolean
 }
 
 /** ASR 单个模型文件的状态（models.status() 的结果形状，跨进程用） */

@@ -178,7 +178,17 @@ app.whenReady().then(() => {
       }
       return author.category ?? null
     }
-    organizer = new Organizer({ db, downloadDir: s.downloadDir, resolveCategory })
+    // 归档层级来自设置；设置保存会调 reloadOrganizer，改完不用重启即生效
+    organizer = new Organizer({
+      db, downloadDir: s.downloadDir,
+      levels: {
+        category: s.organizeByCategory,
+        author: s.organizeByAuthor,
+        orientation: s.organizeByOrientation,
+        duration: s.organizeByDuration
+      },
+      resolveCategory
+    })
     scheduler?.updateOrganizer(organizer)
   }
 

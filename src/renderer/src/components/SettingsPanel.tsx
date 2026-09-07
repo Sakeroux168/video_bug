@@ -78,7 +78,9 @@ export default function SettingsPanel() {
     setOrganizing(true)
     try {
       const r = await api.organizeAll()
-      if (r.ok) ok(`已整理 ${r.count} 个作者`); else err(`整理失败：${r.error}`)
+      if (!r.ok) err(`整理失败：${r.error}`)
+      else if (r.skipped) ok('未开启任何分类层级，视频保持在下载目录里，无需整理')
+      else ok(`已整理 ${r.count} 个作者`)
     } finally { setOrganizing(false) }
   }
 
@@ -139,6 +141,31 @@ export default function SettingsPanel() {
               <span>保留原视频</span>
             </label>
             <p className="pl-5 leading-5 text-slate-400">仅在发生转码时额外保留原片，会占用更多磁盘空间。</p>
+          </div>
+          <div className="mt-3 space-y-2 border-t border-slate-100 pt-3 text-xs text-slate-600">
+            <p className="font-medium text-slate-700">下载后分文件夹整理</p>
+            <p className="leading-5 text-slate-400">勾选的项会按「品类 / 作者 / 横竖屏 / 时长」的固定顺序建子文件夹；一项都不勾就直接放在下载目录里。</p>
+            <label className="flex items-center gap-2">
+              <input type="checkbox" checked={s.organizeByCategory} onChange={e => set('organizeByCategory', e.target.checked)} />
+              <span>按品类分文件夹</span>
+            </label>
+            <p className="pl-5 leading-5 text-slate-400">需要 AI 判断品类；不勾选就不会产生这部分调用。</p>
+            <label className="flex items-center gap-2">
+              <input type="checkbox" checked={s.organizeByAuthor} onChange={e => set('organizeByAuthor', e.target.checked)} />
+              <span>按作者分文件夹</span>
+            </label>
+            <label className="flex items-center gap-2">
+              <input type="checkbox" checked={s.organizeByOrientation} onChange={e => set('organizeByOrientation', e.target.checked)} />
+              <span>按横屏/竖屏分文件夹</span>
+            </label>
+            <label className="flex items-center gap-2">
+              <input type="checkbox" checked={s.organizeByDuration} onChange={e => set('organizeByDuration', e.target.checked)} />
+              <span>按时长分文件夹</span>
+            </label>
+            {!s.organizeByCategory && !s.organizeByAuthor && !s.organizeByOrientation && !s.organizeByDuration && (
+              <p className="leading-5 text-slate-500">当前：所有视频直接放在下载目录，不分文件夹。</p>
+            )}
+            <p className="leading-5 text-amber-600">改这里只影响之后下载的视频；已经归好的文件不会自动搬家。</p>
           </div>
           <label className="mt-3 flex items-start gap-2 text-xs leading-5 text-slate-600">
             <input className="mt-1" type="checkbox" checked={s.allowDuplicateAuthor} onChange={e => set('allowDuplicateAuthor', e.target.checked)} />

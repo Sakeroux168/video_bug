@@ -28,8 +28,8 @@ const api = {
   writeClipboard: (text: string): Promise<void> => ipcRenderer.invoke('clipboard:write', text),
   openVideoSource: (id: number): Promise<{ ok: boolean; url?: string; error?: string }> => ipcRenderer.invoke('video:source:open', id),
   importAuthors: (items: Array<{ nickname: string; url: string }>): Promise<{ created: number; results: Array<{ line: number; raw: string; ok: boolean; reason?: string }> }> => ipcRenderer.invoke('authors:import', items),
-  organizeAuthor: (id: number): Promise<{ ok: boolean; moved?: number; category?: string; state?: string; error?: string }> => ipcRenderer.invoke('authors:organize', id),
-  organizeAll: (): Promise<{ ok: boolean; count?: number; error?: string }> => ipcRenderer.invoke('organize:all'),
+  organizeAuthor: (id: number): Promise<{ ok: boolean; moved?: number; category?: string; state?: string; skipped?: boolean; error?: string }> => ipcRenderer.invoke('authors:organize', id),
+  organizeAll: (): Promise<{ ok: boolean; count?: number; skipped?: boolean; error?: string }> => ipcRenderer.invoke('organize:all'),
   getAsrStatus: (): Promise<AsrStatus> => ipcRenderer.invoke('asr:status'),
   downloadAsrModels: (): Promise<{ ok: boolean; ready?: boolean; downloaded?: string[]; error?: string }> => ipcRenderer.invoke('asr:download'),
   onAsrProgress: (cb: (p: AsrProgress) => void): (() => void) => {

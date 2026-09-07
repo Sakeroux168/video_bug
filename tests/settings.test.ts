@@ -36,6 +36,10 @@ function fullSettings(over: Partial<AppSettings> = {}): AppSettings {
     asrMaxSec: 120,
     stallThresholdSec: 10,
     rescueCooldownSec: 10,
+    organizeByCategory: false,
+    organizeByAuthor: true,
+    organizeByOrientation: false,
+    organizeByDuration: true,
     ...over
   }
 }
@@ -61,6 +65,42 @@ describe('settings', () => {
     expect(s.stallThresholdSec).toBe(25)
     expect(s.rescueCooldownSec).toBe(10)
     expect(s.scrollIntervalMs).toBe(3500) // R12：默认滚动间隔放慢降风控
+    // 归档层级：全新安装默认四层全关 —— 视频平铺在下载目录，不再套四层文件夹
+    expect(s.organizeByCategory).toBe(false)
+    expect(s.organizeByAuthor).toBe(false)
+    expect(s.organizeByOrientation).toBe(false)
+    expect(s.organizeByDuration).toBe(false)
+  })
+
+  it('已有配置文件但缺归档层级键 → 视为升级前老用户，四层全开（行为不变）', () => {
+    writeFileSync(join(mockPaths.userData, 'settings.json'), JSON.stringify({ downloadConcurrency: 5 }))
+    const s = getSettings()
+    // 老用户升级不能静默停掉归档：settings.json 存在即证明是升级而非全新安装
+    expect(s.organizeByCategory).toBe(true)
+    expect(s.organizeByAuthor).toBe(true)
+    expect(s.organizeByOrientation).toBe(true)
+    expect(s.organizeByDuration).toBe(true)
+    expect(s.downloadConcurrency).toBe(5) // 其它字段照常合并
+  })
+
+  it('已有配置文件且显式存了归档层级 → 按存的值读回，不被老用户兜底覆盖', () => {
+    writeFileSync(join(mockPaths.userData, 'settings.json'), JSON.stringify({
+      organizeByCategory: false, organizeByAuthor: true, organizeByOrientation: false, organizeByDuration: false
+    }))
+    const s = getSettings()
+    expect(s.organizeByCategory).toBe(false)
+    expect(s.organizeByAuthor).toBe(true)
+    expect(s.organizeByOrientation).toBe(false)
+    expect(s.organizeByDuration).toBe(false)
+  })
+
+  it('已有配置文件只关了一层 → 其余缺失键仍按老用户兜底为开', () => {
+    writeFileSync(join(mockPaths.userData, 'settings.json'), JSON.stringify({ organizeByCategory: false }))
+    const s = getSettings()
+    expect(s.organizeByCategory).toBe(false)
+    expect(s.organizeByAuthor).toBe(true)
+    expect(s.organizeByOrientation).toBe(true)
+    expect(s.organizeByDuration).toBe(true)
   })
 
   it('部分字段已保存 → 读回合并默认值（不丢失未存字段）', () => {

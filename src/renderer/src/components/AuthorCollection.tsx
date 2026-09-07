@@ -106,8 +106,9 @@ export default function AuthorCollection({ notify }: { notify: (text: string) =>
 
   async function organizeOne(a: AuthorRow): Promise<void> {
     const r = await api.organizeAuthor(a.id)
-    if (r.ok) notify(`已整理 ${a.nickname}：${r.moved} 个视频 → ${r.category}`)
-    else notify(`整理 ${a.nickname} 失败：${r.error}`)
+    if (!r.ok) notify(`整理 ${a.nickname} 失败：${r.error}`)
+    else if (r.skipped) notify('未开启任何分类层级，视频保持在下载目录里，无需整理')
+    else notify(`已整理 ${a.nickname}：${r.moved} 个视频 → ${r.category}`)
     refresh()
   }
 

@@ -6,7 +6,7 @@ import { basename, dirname, join } from 'node:path'
 import { tmpdir } from 'node:os'
 import { initDb, createTask, insertVideos, listVideos } from '../src/main/db'
 import { Downloader } from '../src/main/downloader'
-import { Organizer } from '../src/main/organizer'
+import { Organizer, ALL_ORGANIZE_LEVELS } from '../src/main/organizer'
 import { scanFilesTree } from '../src/main/fileManager'
 import { deleteVideoRows } from '../src/main/videoDelete'
 
@@ -43,7 +43,7 @@ describe('下载 → 封面 → 方向归档 → 删除联动', () => {
         playUrl: `${base}/${v.awemeId}.mp4`, coverUrl: `${base}/${v.awemeId}.png`,
         publishTime: 1710000000, likes: 0
       })), taskId, 'douyin')
-      const org = new Organizer({ db, downloadDir: dir, resolveCategory: async () => '美食' })
+      const org = new Organizer({ db, downloadDir: dir, levels: ALL_ORGANIZE_LEVELS, resolveCategory: async () => '美食' })
       // 本测试验证业务流程和实际 HTTP/文件流；视频编码校验另由 asr-media 与探测测试覆盖。
       const normalizer = vi.fn(async ({ inputPath, outputPath }: { inputPath: string; outputPath: string }) => {
         const id = Number(/\.video-(\d+)\.download\.part\.mp4$/.exec(inputPath)?.[1])
