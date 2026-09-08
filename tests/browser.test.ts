@@ -91,3 +91,33 @@ describe('VideoBrowser 记住当前平台', () => {
   // tests/browser-platform-window.test.ts 用 BrowserWindow mock 走真实路径覆盖
   // （比这里的假 win 桩更强）；此处只保留不需要窗口的初始状态断言。
 })
+
+// 真机日志：
+//   Error occurred in handler for 'browser:open': ERR_ABORTED (-3) loading 'https://www.kuaishou.com/'
+//
+// Chromium 在「导航被后续导航取代」或「服务端重定向」时会中止原始导航，
+// 让 loadURL 以 errno -3 拒绝——而页面通常已经正常打开了。
+// 当成加载失败会把任务白白判死（真机上抖音连着三次记成 network 失败）。
+describe('页面加载：ERR_ABORTED 不是失败', () => {
+  function browserWith(loadURL: () => Promise<void>): VideoBrowser {
+    const b = new VideoBrowser({} as never)
+    const stub = { sessionPartition: 'persist:douyin', rawUrlHints: ['/aweme/'] } as never
+    ;(b as unknown as { current: unknown }).current = stub
+    ;(b as unknown as { win: unknown }).win = { loadURL, isDestroyed: () => false }
+    return b
+  }
+
+  const stub = { sessionPartition: 'persist:douyin', rawUrlHints: ['/aweme/'] } as never
+
+  it('loadURL 以 ERR_ABORTED 拒绝 → load 正常返回，不抛错', async () => {
+    const err = Object.assign(new Error('ERR_ABORTED (-3) loading'), { errno: -3, code: 'ERR_ABORTED' })
+    const b = browserWith(() => Promise.reject(err))
+    await expect(b.load(stub, 'https://www.kuaishou.com/')).resolves.toBeUndefined()
+  })
+
+  it('其它加载错误照常抛出（真打不开还是要判失败）', async () => {
+    const err = Object.assign(new Error('ERR_CONNECTION_REFUSED'), { errno: -102, code: 'ERR_CONNECTION_REFUSED' })
+    const b = browserWith(() => Promise.reject(err))
+    await expect(b.load(stub, 'https://www.douyin.com/')).rejects.toThrow('ERR_CONNECTION_REFUSED')
+  })
+})

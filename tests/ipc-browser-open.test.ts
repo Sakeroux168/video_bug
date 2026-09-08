@@ -101,3 +101,31 @@ describe('平台适配器都要有首页地址', () => {
     }
   })
 })
+
+describe('browser:open 不把异常抛出处理器', () => {
+  it('加载失败 → 返回 { ok:false, error }，而不是让 IPC 以异常收场', async () => {
+    mockIpc.handlers.clear()
+    const db = new DatabaseSync(':memory:')
+    initDb(db)
+    registerIpc({
+      db,
+      scheduler: { get isRunning() { return false }, get currentTaskId() { return 0 } } as never,
+      downloader: {} as never,
+      analyzer: null,
+      browser: { load: vi.fn(async () => { throw new Error('ERR_CONNECTION_REFUSED') }) } as never,
+      getWindow: () => ({}) as never,
+      reloadAnalyzer: () => {},
+      reloadOrganizer: () => {},
+      getOrganizer: () => null,
+      enqueueTask: () => {},
+      dequeueTask: () => {},
+      kickQueue: () => {},
+      setBrowserVisible: () => {}
+    } as never)
+
+    const open = mockIpc.handlers.get('browser:open')!
+    const r = await open(null, 'kuaishou') as { ok: boolean; error?: string }
+    expect(r.ok).toBe(false)
+    expect(r.error).toContain('ERR_CONNECTION_REFUSED')
+  })
+})

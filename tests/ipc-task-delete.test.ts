@@ -49,6 +49,7 @@ function setup(runningTaskId = 0) {
   const paused: number[] = []
   const dequeued: number[] = []
   const cancelled: number[][] = []
+  const kicked: boolean[] = []
   const scheduler = {
     get currentTaskId() { return runningTaskId },
     get isRunning() { return runningTaskId !== 0 },
@@ -68,10 +69,11 @@ function setup(runningTaskId = 0) {
     getOrganizer: () => null,
     enqueueTask: () => {},
     dequeueTask: (id: number) => { dequeued.push(id) },
+    kickQueue: () => { kicked.push(true) },
     setBrowserVisible: () => {}
   } as never)
   const del = mockIpc.handlers.get('task:delete')!
-  return { db, del: (id: number) => del(null, id) as Promise<unknown>, paused, dequeued, cancelled, scheduler }
+  return { db, del: (id: number) => del(null, id) as Promise<unknown>, paused, dequeued, cancelled, kicked, scheduler }
 }
 
 beforeEach(() => { mockIpc.handlers.clear() })
@@ -129,5 +131,18 @@ describe('task:delete 必须停掉这个任务相关的活', () => {
 
     expect(db.prepare('SELECT COUNT(*) c FROM videos WHERE task_id=?').get(taskId)).toEqual({ c: 0 })
     expect(db.prepare('SELECT COUNT(*) c FROM tasks WHERE id=?').get(taskId)).toEqual({ c: 0 })
+  })
+
+  it('停掉正在跑的任务后要放行队列——否则排队中的任务永远没人叫醒', async () => {
+    const probe = setup()
+    const taskId = createTask(probe.db, input)
+    const { db, del, kicked } = setup(taskId)
+    createTask(db, input)
+
+    await del(taskId)
+
+    // dequeueAndRun 只在 task:done 时被调用（刻意如此，暂停不放行下一个）。
+    // 删除走的是 pause()，不发任何事件——不显式踢一脚，后面排队的任务就卡死在「等待」。
+    expect(kicked).toEqual([true])
   })
 })

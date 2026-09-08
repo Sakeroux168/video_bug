@@ -31,6 +31,9 @@ export interface IpcDeps {
   enqueueTask: (id: number) => void
   /** 把任务从 FIFO 队列里摘掉（删任务时用，避免轮到它时再跑一遍已删除的任务） */
   dequeueTask: (id: number) => void
+  /** 放行队列里的下一个任务。dequeueAndRun 只在 task:done 时触发，
+   *  删除运行中的任务走的是 pause()、不发事件，必须显式踢一脚。 */
+  kickQueue: () => void
   /** 渲染层切换浏览器标签时通知主进程（主进程据此结合任务状态决定显示/小窗/隐藏） */
   setBrowserVisible: (v: boolean) => void
 }
@@ -97,6 +100,9 @@ export function registerIpc(deps: IpcDeps): void {
     if (videoIds.length > 0) downloader.cancel(videoIds)
     db.prepare('DELETE FROM videos WHERE task_id=?').run(id)
     db.prepare('DELETE FROM tasks WHERE id=?').run(id)
+    // 放行队列：dequeueAndRun 只在 task:done 时触发（刻意如此，暂停不放行下一个），
+    // 而删除走的是 pause()、不发任何事件——不踢这一脚，排队中的任务会永远卡在「等待」。
+    deps.kickQueue()
   })
 
   ipcMain.handle('video:retry', (_e, ids: number[]) => {
@@ -266,7 +272,13 @@ export function registerIpc(deps: IpcDeps): void {
     if (!adapter) return { ok: false, error: `不支持的平台：${platform}` }
     // 切平台会销毁重建窗口（分区只能建窗口时定死）。任务正在用这个窗口，切了就等于打断它。
     if (scheduler.isRunning) return { ok: false, error: '有任务正在运行，切换平台会打断它，请先暂停任务' }
-    await browser.load(adapter, adapter.homeUrl)
+    try {
+      await browser.load(adapter, adapter.homeUrl)
+    } catch (err) {
+      // 异常抛出 IPC 处理器只会在主进程打一行 Electron 报错，渲染层什么都收不到，
+      // 用户看到的是"点了没反应"。一律转成可读结果返回。
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    }
     deps.setBrowserVisible(true)
     return { ok: true }
   })

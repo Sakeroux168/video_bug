@@ -201,7 +201,15 @@ export class VideoBrowser {
     if (!this.win) throw new Error('browser_not_initialized')
     // R11-4：页面加载 30s 强制超时——loadURL 永不 resolve（网络挂起/页面卡死）时不永久卡住；
     // 超时抛 code=OP_TIMEOUT 标记错误，调度器按"加载失败"处理（重搜超时计数消耗后继续）
-    await withTimeout(this.win.loadURL(url), LOAD_TIMEOUT_MS, '页面加载')
+    try {
+      await withTimeout(this.win.loadURL(url), LOAD_TIMEOUT_MS, '页面加载')
+    } catch (err) {
+      // ERR_ABORTED(-3) 不是加载失败。Chromium 在「导航被后续导航取代」或「服务端重定向」时
+      // 会中止原始导航并让 loadURL 以 -3 拒绝，而页面通常已经正常打开。
+      // 当成失败会把任务白白判死——真机上抖音连着三次记成 network 失败、
+      // 「打开快手窗口」三次全抛异常，都是它。
+      if ((err as { code?: string } | null)?.code !== 'ERR_ABORTED') throw err
+    }
   }
 
   /** 渐进滚动到底：滚 window + 所有可滚容器，多轮小步，并点击"加载更多"，尽力触发抖音加载更多。

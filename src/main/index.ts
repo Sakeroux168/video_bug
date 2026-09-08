@@ -62,7 +62,15 @@ function dequeueAndRun(): void {
     const next = pendingTasks.shift()
     if (next === undefined) return
     queuedTaskIds.delete(next)
-    void scheduler?.run(next)
+    // run() 进入自身 try 之前若抛错（取任务行、取适配器等），异常会被 void 吞掉：
+    // 任务已被移出队列、状态还停在 pending、日志一个字没有 —— 真机上排查了很久。
+    // 这里兜住并打日志，同时把队列继续往下踢，别让一次异常卡死整条队列。
+    void scheduler?.run(next).catch((err: unknown) => {
+      const detail = err instanceof Error ? err.message : String(err)
+      console.error(`[任务] 启动任务 ${next} 时异常：${detail}`)
+      pushFilterLog(`启动任务 ${next} 时异常：${detail}`)
+      dequeueAndRun()
+    })
   })
 }
 
@@ -222,6 +230,7 @@ app.whenReady().then(() => {
     getOrganizer: () => organizer,
     enqueueTask,
     dequeueTask,
+    kickQueue: dequeueAndRun,
     setBrowserVisible
   })
 
