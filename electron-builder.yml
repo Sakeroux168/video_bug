@@ -43,6 +43,10 @@ extraResources:
     to: licenses/TRADEMARKS.md
 
 win:
+  # 应用图标。不设时 electron-builder 用 Electron 默认图标（构建日志会提示
+  # "default Electron icon is used"），员工在任务栏/桌面上看到的是 Electron 的原子标。
+  # 源文件是 1254x1254 PNG，electron-builder 自行转成多尺寸 .ico 嵌进 EXE。
+  icon: build/icon.png
   target:
     - target: portable
       arch:
