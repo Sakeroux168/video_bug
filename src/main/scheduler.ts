@@ -336,8 +336,14 @@ export class Scheduler {
         // organizePending 只处理 organize_state='pending' 的作者，幂等；organizer 缺失时无副作用。
         void this.deps.organizer?.organizePending()
       }
-    } catch {
-      this.fail(taskId, 'network')
+    } catch (err) {
+      // 这里原本是个不带参数的兜底 catch，任何异常一律记成 'network'：用户看到「网络错误」，
+      // 而真实原因（页面 30 秒没打开、代码抛错…）被整个吞掉，日志里一个字都没有。
+      // 真机排查抖音「一直转圈爬不到」时就卡在这一步，只能靠猜。
+      const code = (err as { code?: unknown } | null)?.code === 'OP_TIMEOUT' ? 'page_timeout' : 'network'
+      const detail = err instanceof Error ? err.message : String(err)
+      this.deps.onFilterLog?.(`任务失败（${code}）：${detail}`)
+      this.fail(taskId, code)
       this.deps.emit({ type: 'task:paused', taskId, reason: 'scheduler_error' })
     } finally {
       this.running = false

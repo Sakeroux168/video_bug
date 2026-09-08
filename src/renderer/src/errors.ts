@@ -7,6 +7,7 @@ export function describeError(code: string | null | undefined): string {
   if (!code) return '未知错误'
   switch (code) {
     case 'network': return '网络错误（已自动重试2次）'
+    case 'page_timeout': return '页面 30 秒没打开（网络不通、代理挂了，或被平台拦下了）'
     case 'address_expired': return '下载链接已过期'
     case 'forbidden': return '平台拒绝（可能风控）'
     case 'login_expired': return '登录已过期'

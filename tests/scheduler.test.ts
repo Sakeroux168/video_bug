@@ -22,6 +22,8 @@ type DlEvent = { type: 'video:status'; id: number; status: string; error?: strin
 
 class FakeBrowser {
   failLoad = false
+  /** 指定 load 抛出的错误对象；不设则抛通用 Error（配合 failLoad） */
+  loadError: unknown = null
   /** 模拟页面底部文案（如抖音「暂时没有更多了」）；null 表示未滚到底/未命中 */
   bottomText: string | null = '暂时没有更多了'
   private loadBlocked = false
@@ -41,7 +43,7 @@ class FakeBrowser {
   async init(): Promise<void> {}
   async load(_adapter: PlatformAdapter, url: string): Promise<void> {
     this.lastUrl = url
-    if (this.failLoad) throw new Error('load_failed')
+    if (this.failLoad) throw (this.loadError ?? new Error('load_failed'))
     if (this.loadBlocked) {
       this.loadBlocked = false
       await new Promise<void>(r => { this.pendingLoad = r })
@@ -130,15 +132,17 @@ function newDb(): DatabaseSync {
 
 function setup(db: DatabaseSync, dl: FakeDownloader, browser: FakeBrowser, scrollIntervalMs = 1) {
   const events: unknown[] = []
+  const logs: string[] = []
   const s = new Scheduler({
     db, browser, analyzer: null, downloader: dl, emit: e => events.push(e),
+    onFilterLog: msg => logs.push(msg),
     getScrollParams: () => ({ scrollSpeed: 'slow' as const, scrollPageWaitMs: 8000, scrollIntervalMs }),
     // R11：默认测试阈值 0.01 秒（10ms）——Task4 加了动态下限后，实际生效阈值会被抬高到 ≥12s
     // （(scrollIntervalMs+1500)/1000+5.5+5）。依赖"自然停滞"收尾的用例改用 advancingClock() 让虚拟时钟
     // 快进，不再单靠这个 0.01s raw 值拖快；只关心其它行为、不关心停滞原因的用例改用 s.pause() 收尾。
     getStallThresholdSec: () => 0.01
   })
-  return { s, events }
+  return { s, events, logs }
 }
 
 // 固定随机数让滚动 sleep 稳定为 scrollIntervalMs，跑得快且不依赖真实时长
@@ -1445,5 +1449,49 @@ describe('handleRaw 把任务接口匹配委托给适配器', () => {
     expect(douyinAdapter.matchesTaskResponse('keyword', post, rawJson)).toBe(false)
     expect(douyinAdapter.matchesTaskResponse('author', post, rawJson)).toBe(true)
     expect(douyinAdapter.matchesTaskResponse('author', search, rawJson)).toBe(false)
+  })
+})
+
+// 真机踩到的诊断黑洞：run() 外面是个兜底 catch，任何异常一律记成 error='network'。
+// 用户看到「网络错误」，而真实原因（页面 30 秒没打开、代码抛错…）被整个吞掉，
+// 日志里一个字都没有，只能靠猜。
+describe('任务失败要留下可读原因（不再是"network"黑洞）', () => {
+  it('页面加载超时 → 错误码是 page_timeout，不再笼统记成 network', async () => {
+    const db = newDb()
+    const taskId = createTask(db, input)
+    const browser = new FakeBrowser()
+    browser.failLoad = true
+    browser.loadError = Object.assign(new Error('页面加载超时'), { code: 'OP_TIMEOUT' })
+    const { s } = setup(db, new FakeDownloader(), browser)
+
+    await s.run(taskId)
+    const row = db.prepare('SELECT status, error FROM tasks WHERE id=?').get(taskId) as { status: string; error: string }
+    expect(row.status).toBe('failed')
+    expect(row.error).toBe('page_timeout')
+  })
+
+  it('任何失败都把真实原因写进日志面板，排查不用再猜', async () => {
+    const db = newDb()
+    const taskId = createTask(db, input)
+    const browser = new FakeBrowser()
+    browser.failLoad = true
+    browser.loadError = new Error('ERR_CONNECTION_TIMED_OUT')
+    const { s, logs } = setup(db, new FakeDownloader(), browser)
+
+    await s.run(taskId)
+    expect(logs.some(l => l.includes('ERR_CONNECTION_TIMED_OUT'))).toBe(true)
+  })
+
+  it('非超时异常仍记 network（既有分类不变），但日志里能看到它到底是什么', async () => {
+    const db = newDb()
+    const taskId = createTask(db, input)
+    const browser = new FakeBrowser()
+    browser.failLoad = true
+    browser.loadError = new Error('boom')
+    const { s, logs } = setup(db, new FakeDownloader(), browser)
+
+    await s.run(taskId)
+    expect((db.prepare('SELECT error FROM tasks WHERE id=?').get(taskId) as { error: string }).error).toBe('network')
+    expect(logs.some(l => l.includes('boom'))).toBe(true)
   })
 })
