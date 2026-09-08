@@ -6,6 +6,7 @@ import { useMarqueeSelect } from './useMarqueeSelect'
 import { useTableSelection } from './useTableSelection'
 import { useCoalescedRefresh } from './useCoalescedRefresh'
 import { describeError } from '../errors'
+import { buildVideosCsv, toVideoExportRows, saveCsvFile, csvFileName } from './videosCsv'
 
 const TASK_STATUS_LABEL: Record<string, string> = { pending: '等待中', running: '进行中', done: '完成', paused: '已暂停', failed: '失败' }
 
@@ -63,6 +64,8 @@ type SortKey = 'title' | 'author' | 'duration' | 'publish_time' | 'likes' | 'com
 
 interface Derived {
   filtered: VideoRow[]
+  /** 导出范围：选中优先，未选则是当前筛选后的这一批 */
+  exportVideos: VideoRow[]
   pageCount: number
   curPage: number
   pageVideos: VideoRow[]
@@ -170,6 +173,12 @@ export default function TaskList({ notify }: { notify: (text: string) => void })
     })
   }, [])
   const platformLabel = (name: string): string => platformNames[name] ?? name
+
+  /** 导出视频数据表：员工要拿去交差/做选题分析的那份 */
+  function exportVideos(rows: VideoRow[]): void {
+    saveCsvFile(buildVideosCsv(toVideoExportRows(rows, platformLabel)), csvFileName('视频数据'))
+    notify(`已导出 ${rows.length} 条视频数据`)
+  }
 
   useEffect(() => { refreshRef.current = refresh })
 
@@ -325,8 +334,12 @@ export default function TaskList({ notify }: { notify: (text: string) => void })
       const selFailed = [...selected].filter(vid => vmap.get(vid)?.status === 'failed')
       // Task3：删除对任何状态都可用，可删项 = 本任务 selected 全集（跨任务勾选经 vmap 排除）
       const selDeletable = [...selected].filter(vid => vmap.has(vid))
+      // 导出范围：选中了就导选中的，没选就导当前看到的这一批（受「只看失败」筛选影响，
+      // 所见即所得比"偷偷把筛掉的也导出去"更不容易出错）
+      const selVideos = [...selected].map(vid => vmap.get(vid)).filter((v): v is VideoRow => !!v)
+      const exportVideos = selVideos.length > 0 ? selVideos : filtered
       const collectedIds = vs.filter(v => v.status === 'collected').map(v => v.id)
-      out[id] = { filtered, pageCount, curPage, pageVideos, selectableIds, allOnPageSelected, someOnPageSelected, selDownloadable, selCancellable, selPausable, selResumable, selFailed, selDeletable, collectedIds }
+      out[id] = { filtered, pageCount, curPage, pageVideos, selectableIds, allOnPageSelected, someOnPageSelected, selDownloadable, selCancellable, selPausable, selResumable, selFailed, selDeletable, collectedIds, exportVideos }
     }
     return out
   }, [expanded, videos, sortState, searchText, page, selected, onlyFailed])
@@ -491,6 +504,11 @@ export default function TaskList({ notify }: { notify: (text: string) => void })
                               disabled={d.selDeletable.length === 0}
                               onClick={() => handleDeleteVideos(d.selDeletable)}
                             >删除选中({d.selDeletable.length})</button>
+                            <button
+                              className={btnSmall}
+                              disabled={d.exportVideos.length === 0}
+                              onClick={() => exportVideos(d.exportVideos)}
+                            >导出表格({d.exportVideos.length})</button>
                             <button
                               className={onlyFailed[t.id] ? `${btn('secondary', 'sm')} border-danger-300 bg-danger-50 text-danger-600 hover:bg-danger-100` : btn('secondary', 'sm')}
                               onClick={() => {

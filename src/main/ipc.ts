@@ -1,6 +1,6 @@
 import { ipcMain, BrowserWindow, dialog, shell, clipboard } from 'electron'
 import type { DatabaseSync } from 'node:sqlite'
-import { createTask, listTasks, listVideos, listAuthors, setTaskStatus, setVideoStatus, updateAuthorCategory, deleteAuthors, taskStats, insertAuthorIfAbsent, globalStats, recentDownloads } from './db'
+import { createTask, listTasks, listVideos, listDownloadedVideos, listAuthors, setTaskStatus, setVideoStatus, updateAuthorCategory, deleteAuthors, taskStats, insertAuthorIfAbsent, globalStats, recentDownloads } from './db'
 import { getSettings, saveSettings } from './settings'
 import { deleteVideoRows } from './videoDelete'
 import { scanFilesTree, deleteFileCategory, deleteFileAuthor, locateFileDir } from './fileManager'
@@ -125,6 +125,8 @@ export function registerIpc(deps: IpcDeps): void {
   // 概览页：两条聚合查询代替原来的 1 + N 次调用
   ipcMain.handle('stats:global', () => globalStats(db))
   ipcMain.handle('stats:recent', (_e, limit?: number) => recentDownloads(db, limit ?? 8))
+  // 「导出全部已下载」用：跨任务取 done 的视频（含作者昵称）
+  ipcMain.handle('videos:downloaded', () => listDownloadedVideos(db))
 
   ipcMain.handle('clipboard:write', (_e, text: string) => { clipboard.writeText(String(text ?? '')) })
 

@@ -329,6 +329,16 @@ export function listVideos(db: DatabaseSync, taskId: number): VideoRow[] {
   ).all(taskId) as unknown as VideoRow[]
 }
 
+/** 跨任务列出所有已下载完成的视频，供「导出全部已下载」用。
+ *  只取 done：collected/pending/failed 的行在磁盘上没有文件，混进导出表会误导人。 */
+export function listDownloadedVideos(db: DatabaseSync): VideoRow[] {
+  return db.prepare(
+    `SELECT v.*, a.nickname AS author_nickname
+     FROM videos v LEFT JOIN authors a ON a.id = v.author_id
+     WHERE v.status = 'done' ORDER BY v.id`
+  ).all() as unknown as VideoRow[]
+}
+
 export interface TaskStats {
   total: number; done: number; failed: number; downloading: number; pending: number; filtered: number
   collected: number; cancelled: number; paused: number

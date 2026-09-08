@@ -24,6 +24,7 @@ const api = {
   updateAuthorCategory: (id: number, category: string): Promise<boolean> => ipcRenderer.invoke('authors:updateCategory', id, category),
   deleteAuthors: (ids: number[]): Promise<boolean> => ipcRenderer.invoke('authors:delete', ids),
   getGlobalStats: (): Promise<GlobalStats> => ipcRenderer.invoke('stats:global'),
+  listDownloadedVideos: (): Promise<VideoRow[]> => ipcRenderer.invoke('videos:downloaded'),
   getRecentDownloads: (limit?: number): Promise<RecentDownload[]> => ipcRenderer.invoke('stats:recent', limit),
   writeClipboard: (text: string): Promise<void> => ipcRenderer.invoke('clipboard:write', text),
   openVideoSource: (id: number): Promise<{ ok: boolean; url?: string; error?: string }> => ipcRenderer.invoke('video:source:open', id),
