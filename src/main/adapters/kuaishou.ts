@@ -171,6 +171,15 @@ function isRestSearchFeed(json: unknown): boolean {
   if (!Array.isArray(root.feeds)) return false
   return typeof root.searchSessionId === 'string' || typeof root.webPageArea === 'string'
 }
+
+/** 2026-09-08 真机：作者主页走 POST /rest/v/profile/feed。
+ *  与搜索页不同——搜索页拿到了完整响应结构，作者页目前只确知 URL，
+ *  所以判据锚在 URL 上，再要求 feeds 是数组（错误页/风控页没有它）。
+ *  不去猜根上还有哪些字段：解析器本来就是按 { photo, author } 的形状取，不依赖根字段名。 */
+function isRestProfileFeed(url: string, json: unknown): boolean {
+  if (!/\/rest\/v\/profile\/feed/i.test(url)) return false
+  return Array.isArray(asObj(json).feeds)
+}
 /** 作者主页作品列表。 */
 const AUTHOR_OPERATIONS = ['visionProfilePhotoList']
 
@@ -185,10 +194,12 @@ function responseOperations(json: unknown): string[] {
 /** 快手所有业务共用 https://www.kuaishou.com/graphql，URL 区分不了任务类型，只能看 operation。
  *  白名单判定：visionVideoDetail（用户手点的详情）、推荐流等未知 operation 一律拒绝，
  *  不拿"能解析出视频"当放行理由——那会让无关响应污染正在跑的任务。 */
-export function matchesKuaishouTaskResponse(type: TaskType, json: unknown): boolean {
+export function matchesKuaishouTaskResponse(type: TaskType, url: string, json: unknown): boolean {
   if (type === 'keyword' || type === 'hashtag') {
-    if (isRestSearchFeed(json)) return true
+    // 搜索响应不能被 URL 单独放行：作者页与搜索页同为 /rest/v/... ，靠会话字段区分
+    if (isRestSearchFeed(json) && !isRestProfileFeed(url, json)) return true
   }
+  if (type === 'author' && isRestProfileFeed(url, json)) return true
   const operations = responseOperations(json)
   const wanted = type === 'author' ? AUTHOR_OPERATIONS
     : (type === 'keyword' || type === 'hashtag') ? SEARCH_OPERATIONS
@@ -260,8 +271,9 @@ export const kuaishouAdapter: PlatformAdapter = {
   sessionPartition: 'persist:kuaishou',
   authorInputPlaceholder: 'https://www.kuaishou.com/profile/xxx',
   downloadReferer: 'https://www.kuaishou.com/',
-  // 真机搜索走 /rest/v/search/feed；/graphql 保留，详情等路由可能仍在用
-  apiUrlPatterns: [/\/graphql(?:[/?#]|$)/i, /\/rest\/v\/search\/feed/i],
+  // 真机：搜索走 /rest/v/search/feed，作者主页走 /rest/v/profile/feed；
+  // /graphql 保留，详情等路由可能仍在用
+  apiUrlPatterns: [/\/graphql(?:[/?#]|$)/i, /\/rest\/v\/search\/feed/i, /\/rest\/v\/profile\/feed/i],
   rawUrlHints: ['/graphql', '/rest/v/'],
   buildSearchUrl: (query: string) => `https://www.kuaishou.com/search/video?searchKey=${encodeURIComponent(query)}`,
   buildAuthorUrl: (userId: string) => `https://www.kuaishou.com/profile/${encodeURIComponent(userId)}`,
@@ -269,7 +281,7 @@ export const kuaishouAdapter: PlatformAdapter = {
   buildVideoUrl,
   parseAuthorInput: parseKuaishouAuthorInput,
   isShortLink: isKuaishouShortLink,
-  matchesTaskResponse: (type: TaskType, _url: string, json: unknown) => matchesKuaishouTaskResponse(type, json),
+  matchesTaskResponse: (type: TaskType, url: string, json: unknown) => matchesKuaishouTaskResponse(type, url, json),
   parseApiJson: (_url: string, json: unknown) => collectKuaishouPhotos(json)
     .map(parsePhoto)
     .filter((item): item is VideoItem => item !== null),

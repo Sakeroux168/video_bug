@@ -13,7 +13,7 @@ export default function BrowserPanel() {
               <Icon name="browser" className="h-5 w-5" />
             </span>
             <div>
-              <h2 className="text-base font-semibold text-slate-800">抖音浏览器在独立窗口中运行</h2>
+              <h2 className="text-base font-semibold text-slate-800">平台浏览器在独立窗口中运行</h2>
               <p className="mt-1 text-sm text-slate-500">任务运行中，抖音窗口会自动显示；任务停止后，切换到此页面时也会自动显示，切换到其他页面时会自动隐藏。</p>
             </div>
           </div>

@@ -397,3 +397,49 @@ describe('kuaishouAdapter 解析 REST 搜索 feed（真机实测结构）', () =
     }
   })
 })
+
+// 2026-09-08 真机：作者主页走 POST /rest/v/profile/feed?__NS_hxfalcon=...
+// 拦截日志里连出现 5 次、全被标「忽略」——URL 特征只认了搜索那条。
+//
+// 与搜索页不同的是：搜索页我拿到了完整响应结构（root 有 searchSessionId/webPageArea），
+// 作者页目前只确知 URL。所以判据锚在 URL 上，再要求 feeds 是数组——
+// 不去猜 root 还有哪些字段。解析器本身是按形状找 { photo, author } 的，不依赖根字段名。
+const PROFILE_URL = 'https://www.kuaishou.com/rest/v/profile/feed?__NS_hxfalcon=REDACTED&caver=2'
+
+describe('kuaishouAdapter 解析 REST 作者主页 feed', () => {
+  const profileResponse = { result: 1, pcursor: '1', feeds: [REST_FEED] }
+
+  it('URL 特征认得 /rest/v/profile/feed（真机上它一直被标「忽略」）', () => {
+    expect(kuaishouAdapter.apiUrlPatterns.some(r => r.test(PROFILE_URL))).toBe(true)
+  })
+
+  it('作者任务收作者主页响应', () => {
+    expect(kuaishouAdapter.matchesTaskResponse('author', PROFILE_URL, profileResponse)).toBe(true)
+  })
+
+  it('关键词/话题任务不收作者主页响应（用户手点作者头像不能污染搜索任务）', () => {
+    expect(kuaishouAdapter.matchesTaskResponse('keyword', PROFILE_URL, profileResponse)).toBe(false)
+    expect(kuaishouAdapter.matchesTaskResponse('hashtag', PROFILE_URL, profileResponse)).toBe(false)
+  })
+
+  it('作者任务不收搜索响应（反向也不能串）', () => {
+    expect(kuaishouAdapter.matchesTaskResponse('author', REST_URL, REST_SEARCH_RESPONSE)).toBe(false)
+  })
+
+  it('URL 对但根本没有 feeds 数组 → 拒绝（错误页、风控页都长这样）', () => {
+    for (const json of [{ result: 0 }, { result: 1 }, null, 'text', []]) {
+      expect(kuaishouAdapter.matchesTaskResponse('author', PROFILE_URL, json)).toBe(false)
+    }
+  })
+
+  it('解析作者主页 feed：解析器按形状取，不依赖根字段名', () => {
+    const items = kuaishouAdapter.parseApiJson(PROFILE_URL, profileResponse)
+    expect(items).toHaveLength(1)
+    expect(items[0]).toMatchObject({
+      awemeId: '3xREALPHOTO01',
+      authorSecUid: '3xREALAUTHOR1',
+      playUrl: 'https://v23-3.kwaicdn.test/h264-a.mp4',
+      comments: null
+    })
+  })
+})

@@ -96,7 +96,7 @@ export default function App(): JSX.Element {
             className={btn('secondary', 'xs')}
             onClick={() => void api.openBrowserDevtools()}
           >
-            抖音调试控制台
+            浏览器调试控制台
           </button>
           <button
             type="button"
