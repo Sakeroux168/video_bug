@@ -26,6 +26,8 @@ export default function AuthorCollection({ notify }: { notify: (text: string) =>
   // 导入平台：解析器与落库平台都跟它走。以前写死抖音，粘快手链接会被抖音解析器拒绝，
   // 且提示说的是「未识别到抖音主页链接」，用户完全看不出问题在哪。
   const [importPlatform, setImportPlatform] = useState('douyin')
+  // 员工反馈：抖音和快手混在一张表里分不清谁是哪的 → 按平台分子 tab
+  const [tab, setTab] = useState('')
   const [platforms, setPlatforms] = useState<Array<{ name: string; displayName: string; authorInputPlaceholder: string }>>([])
   const [importText, setImportText] = useState('')
   const [importResult, setImportResult] = useState<ImportResult | null>(null)
@@ -48,9 +50,36 @@ export default function AuthorCollection({ notify }: { notify: (text: string) =>
 
   function refresh(): void { void api.listAuthors().then(setAuthors) }
 
-  const allSelected = authors.length > 0 && authors.every(a => selected.has(a.id))
+  // tab = 注册平台 ∪ 数据里实际出现过的平台。
+  // 后者不能漏：库里可能有已下架/未注册平台的历史作者，只按注册表生成 tab 会把它们藏起来，
+  // 用户会以为数据丢了。显示名取注册表，取不到就用原始平台名。
+  const platformTabs = (() => {
+    const names: string[] = []
+    for (const p of platforms) if (!names.includes(p.name)) names.push(p.name)
+    for (const a of authors) if (!names.includes(a.platform)) names.push(a.platform)
+    return names.map(name => ({
+      name,
+      label: platforms.find(p => p.name === name)?.displayName ?? name,
+      count: authors.filter(a => a.platform === name).length
+    }))
+  })()
+  // tab 尚未选择或所选平台已消失时回落到第一个，避免出现"选中了一个不存在的 tab"导致整页空白
+  const activeTab = platformTabs.some(t => t.name === tab) ? tab : (platformTabs[0]?.name ?? '')
+  const visible = authors.filter(a => a.platform === activeTab)
+  const activeLabel = platformTabs.find(t => t.name === activeTab)?.label ?? activeTab
+
+  /** 切 tab：必须清空选择。否则在抖音选了几行、切到快手再点「删除选中」，
+   *  删掉的是当前根本看不见的抖音作者。 */
+  function switchTab(name: string): void {
+    setTab(name)
+    setSelected(new Set())
+    setEditingId(null)
+    setImportPlatform(name) // 导入平台跟随当前 tab，省一次选择也避免选错
+  }
+
+  const allSelected = visible.length > 0 && visible.every(a => selected.has(a.id))
   function toggleAll(): void {
-    setSelected(allSelected ? new Set() : new Set(authors.map(a => a.id)))
+    setSelected(allSelected ? new Set() : new Set(visible.map(a => a.id)))
   }
 
   // 行选择终版语义（排他/ctrl 切换/shift 范围），锚点按本组件实例独立
@@ -65,7 +94,7 @@ export default function AuthorCollection({ notify }: { notify: (text: string) =>
   function handleRowClick(a: AuthorRow, e: React.MouseEvent): void {
     if (didDragRef.current) return
     if ((e.target as HTMLElement).closest('button, a, input')) return
-    setSelected(rowClick(a.id, authors.map(x => x.id), selected, { ctrlKey: e.ctrlKey, shiftKey: e.shiftKey }))
+    setSelected(rowClick(a.id, visible.map(x => x.id), selected, { ctrlKey: e.ctrlKey, shiftKey: e.shiftKey }))
   }
 
   // 点容器内空白区域（非行、非交互元素）→ 清空全部选择；
@@ -166,9 +195,10 @@ export default function AuthorCollection({ notify }: { notify: (text: string) =>
     setImportText(rows.map(r => `${r.nickname} ${r.url}`).join('\n'))
   }
 
-  /** 导出作者表 → 只导作者与主页链接两列（用户明确要求） */
+  /** 导出作者表 → 只导作者与主页链接两列（用户明确要求）。
+   *  只导当前平台 tab 的作者：分了 tab 还把两个平台导进同一张表就白分了。 */
   function exportCsv(): void {
-    const csv = buildAuthorsCsv(authors)
+    const csv = buildAuthorsCsv(visible)
     // 加 BOM：Excel 不带 BOM 打开 UTF-8 CSV 会把中文显示成乱码
     const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8' })
     const url = URL.createObjectURL(blob)
@@ -177,7 +207,7 @@ export default function AuthorCollection({ notify }: { notify: (text: string) =>
     a.download = `作者表-${new Date().toISOString().slice(0, 10)}.csv`
     a.click()
     URL.revokeObjectURL(url)
-    notify(`已导出 ${authors.length} 个作者`)
+    notify(`已导出 ${visible.length} 个${activeLabel}作者`)
   }
 
   async function submitImport(): Promise<void> {
@@ -195,8 +225,26 @@ export default function AuthorCollection({ notify }: { notify: (text: string) =>
 
   return (
     <Card title="作者收藏">
+      {platformTabs.length > 0 && (
+        <div role="tablist" className="mb-3 flex items-center gap-1 border-b border-slate-200 text-sm">
+          {platformTabs.map(t => (
+            <button
+              key={t.name}
+              role="tab"
+              aria-selected={t.name === activeTab}
+              className={t.name === activeTab
+                ? 'border-b-2 border-brand-600 px-3 py-1.5 font-medium text-brand-600'
+                : 'border-b-2 border-transparent px-3 py-1.5 text-slate-500 hover:text-slate-700'}
+              onClick={() => switchTab(t.name)}
+            >
+              {t.label}
+              <span className="ml-1.5 text-xs tabular-nums text-slate-400">{t.count}</span>
+            </button>
+          ))}
+        </div>
+      )}
       <div className="mb-2 flex items-center gap-3 text-xs">
-        {authors.length > 0 && (
+        {visible.length > 0 && (
           <button
             className={`rounded-md px-2 py-1 ${selected.size ? 'bg-red-50 text-red-500 hover:bg-red-100' : 'text-slate-300'}`}
             disabled={selected.size === 0}
@@ -205,7 +253,7 @@ export default function AuthorCollection({ notify }: { notify: (text: string) =>
             删除选中{selected.size > 0 ? `（${selected.size}）` : ''}
           </button>
         )}
-        {authors.length > 0 && (
+        {visible.length > 0 && (
           <button
             className={`rounded-md px-2 py-1 ${selected.size ? 'text-slate-600 hover:bg-slate-100' : 'text-slate-300'}`}
             disabled={selected.size === 0}
@@ -214,7 +262,7 @@ export default function AuthorCollection({ notify }: { notify: (text: string) =>
             复制所选{selected.size > 0 ? `（${selected.size}）` : ''}
           </button>
         )}
-        {authors.length > 0 && (
+        {visible.length > 0 && (
           <button
             className={`rounded-md px-2 py-1 ${selected.size ? 'text-slate-600 hover:bg-slate-100' : 'text-slate-300'}`}
             disabled={selected.size === 0}
@@ -223,7 +271,7 @@ export default function AuthorCollection({ notify }: { notify: (text: string) =>
             只复制作者
           </button>
         )}
-        {authors.length > 0 && (
+        {visible.length > 0 && (
           <button
             className={`rounded-md px-2 py-1 ${selected.size ? 'text-slate-600 hover:bg-slate-100' : 'text-slate-300'}`}
             disabled={selected.size === 0}
@@ -240,7 +288,7 @@ export default function AuthorCollection({ notify }: { notify: (text: string) =>
         </button>
         <button
           className="rounded-md px-2 py-1 text-slate-500 hover:bg-slate-100 disabled:text-slate-300"
-          disabled={authors.length === 0}
+          disabled={visible.length === 0}
           onClick={exportCsv}
         >
           导出 CSV
@@ -305,8 +353,12 @@ export default function AuthorCollection({ notify }: { notify: (text: string) =>
           )}
         </div>
       )}
-      {authors.length === 0 ? (
-        <span className="text-sm text-slate-400">暂无收藏的作者，抓取后自动收录，或点上方「导入作者」批量添加</span>
+      {visible.length === 0 ? (
+        <span className="text-sm text-slate-400">
+          {authors.length === 0
+            ? '暂无收藏的作者，抓取后自动收录，或点上方「导入作者」批量添加'
+            : `还没有${activeLabel}作者，抓取后自动收录，或点上方「导入作者」批量添加`}
+        </span>
       ) : (
         <div
           ref={containerRef} data-testid="authors-table" className="relative select-none overflow-auto"
@@ -326,7 +378,7 @@ export default function AuthorCollection({ notify }: { notify: (text: string) =>
               </tr>
             </thead>
             <tbody>
-              {authors.map(a => (
+              {visible.map(a => (
                 <tr
                   key={`${a.platform}:${a.sec_uid}`}
                   data-id={a.id}
@@ -334,7 +386,7 @@ export default function AuthorCollection({ notify }: { notify: (text: string) =>
                   className={`cursor-pointer border-b border-slate-100 transition-colors hover:bg-slate-50 ${selected.has(a.id) ? 'bg-brand-50' : ''}`}
                   onClick={e => handleRowClick(a, e)}
                 >
-                  <td className="py-2 pr-1"><input type="checkbox" checked={selected.has(a.id)} onChange={() => setSelected(rowClick(a.id, authors.map(x => x.id), selected, {}))} /></td>
+                  <td className="py-2 pr-1"><input type="checkbox" checked={selected.has(a.id)} onChange={() => setSelected(rowClick(a.id, visible.map(x => x.id), selected, {}))} /></td>
                   <td className="py-2 pr-2 font-medium">
                     {a.nickname}
                     {/* R16：导入的作者需要校验名称与链接是否对得上。
