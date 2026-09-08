@@ -312,7 +312,9 @@ describe('Downloader', () => {
     const taskId = createTask(db, input)
     insertVideos(db, [item('AW001', { coverUrl: 'https://img.test/c' })], taskId, 'douyin')
     const [v] = listVideos(db, taskId)
-    writeFileSync(join(dir, '标题_作者_AW001.webp'), 'old')
+    // 文件名主体现在只用标题（不再拼作者名和作品 ID），预占名跟着改；
+    // 本用例验的是「孤立封面占名 → 视频与新封面共用 _1 后缀」，该行为未变
+    writeFileSync(join(dir, '标题.webp'), 'old')
     const mp4 = Buffer.alloc(2048)
     mp4.writeUInt32BE(0x18, 0)
     mp4.write('ftypisom', 4)
@@ -325,8 +327,8 @@ describe('Downloader', () => {
     await new Promise(r => setTimeout(r, 80))
 
     const row = listVideos(db, taskId)[0]
-    expect(basename(row.local_path!)).toBe('标题_作者_AW001_1.mp4')
-    expect(basename(row.cover_path!)).toBe('标题_作者_AW001_1.jpg')
+    expect(basename(row.local_path!)).toBe('标题_1.mp4')
+    expect(basename(row.cover_path!)).toBe('标题_1.jpg')
   })
 
   it('下载中修改目录时，当前视频与封面仍使用启动目录且不覆盖新目录旧封面', async () => {
@@ -334,7 +336,7 @@ describe('Downloader', () => {
     insertVideos(db, [item('SWITCH', { coverUrl: 'https://img.test/c' })], taskId, 'douyin')
     const [v] = listVideos(db, taskId)
     const newDir = mkdtempSync(join(dir, 'switched-'))
-    const orphan = join(newDir, '标题_作者_SWITCH.jpg')
+    const orphan = join(newDir, '标题.jpg')
     writeFileSync(orphan, 'old cover')
     const fetchImpl = (async (url: unknown) => String(url).includes('img.test')
       ? new Response(new Uint8Array([1]), { headers: { 'content-type': 'image/jpeg' } })
