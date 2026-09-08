@@ -46,6 +46,13 @@ export function registerIpc(deps: IpcDeps): void {
 
   ipcMain.handle('task:create', (_e, rawInput: Parameters<typeof createTask>[1]) => {
     let input = rawInput
+    // 接入中的平台（解析器还没按真机接口写）不能建任务。
+    // 它仍然注册在平台表里，是为了让内置浏览器能打开它去扫码登录、抓真实接口；
+    // 但放进建任务这一侧就成了「平台能选、任务跑不通」的半成品。
+    const platformAdapter = getAdapter(input.platform)
+    if (platformAdapter && !platformAdapter.taskReady) {
+      return { id: null, skipped: true, reason: `${platformAdapter.displayName}还在接入中，暂不支持建任务；可在「内置浏览器」页打开并登录` }
+    }
     // P1.5：type=author 时先归一化 query（完整 URL / 裸 sec_uid 两种输入统一转成 sec_uid）——
     // 修复 FilterForm 存完整 URL、scheduler 又套一层 buildAuthorUrl 拼出双重 URL 的静默卡死 bug；
     // 顺带修复去重键分裂（FilterForm 存 URL、AuthorCollection 存 sec_uid，此前两个键互不相认）。

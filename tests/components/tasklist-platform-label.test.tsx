@@ -8,8 +8,8 @@ import { installFakeApi } from '../helpers/fake-api'
 // 平台显示名集中在适配器里（platforms:list 带出），界面不写 platform === 'douyin' 这类分支。
 
 const PLATFORMS = [
-  { name: 'douyin', displayName: '抖音', authorInputPlaceholder: 'https://www.douyin.com/user/xxx' },
-  { name: 'kuaishou', displayName: '快手', authorInputPlaceholder: 'https://www.kuaishou.com/profile/xxx' }
+  { name: 'douyin', displayName: '抖音', authorInputPlaceholder: 'https://www.douyin.com/user/xxx', taskReady: true },
+  { name: 'kuaishou', displayName: '快手', authorInputPlaceholder: 'https://www.kuaishou.com/profile/xxx', taskReady: true }
 ]
 
 const stats: TaskStats = {

@@ -10,8 +10,8 @@ import { installFakeApi } from '../helpers/fake-api'
 // 这里只验入口行为（导出范围、按钮可用性、文件名），CSV 内容由 videos-csv.test.ts 覆盖。
 
 const PLATFORMS = [
-  { name: 'douyin', displayName: '抖音', authorInputPlaceholder: 'x' },
-  { name: 'kuaishou', displayName: '快手', authorInputPlaceholder: 'y' }
+  { name: 'douyin', displayName: '抖音', authorInputPlaceholder: 'x', taskReady: true },
+  { name: 'kuaishou', displayName: '快手', authorInputPlaceholder: 'y', taskReady: true }
 ]
 
 const stats: TaskStats = {

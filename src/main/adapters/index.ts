@@ -1,10 +1,13 @@
 import type { PlatformAdapter } from './types'
 import { douyinAdapter } from './douyin'
 import { kuaishouAdapter } from './kuaishou'
+import { xiaohongshuAdapter } from './xiaohongshu'
 
 const registry: Record<string, PlatformAdapter> = {
   douyin: douyinAdapter,
-  kuaishou: kuaishouAdapter
+  kuaishou: kuaishouAdapter,
+  // 骨架阶段：只为内置浏览器登录与抓包而注册，taskReady=false 挡住建任务
+  xiaohongshu: xiaohongshuAdapter
 }
 
 export function getAdapter(name: string): PlatformAdapter | undefined {
@@ -16,12 +19,15 @@ export interface PlatformInfo {
   name: string
   displayName: string
   authorInputPlaceholder: string
+  /** false 的平台只在「内置浏览器」页出现（登录/抓包用），不进建任务与导入作者的下拉框 */
+  taskReady: boolean
 }
 
 export function listAdapters(): PlatformInfo[] {
   return Object.values(registry).map(a => ({
     name: a.name,
     displayName: a.displayName,
-    authorInputPlaceholder: a.authorInputPlaceholder
+    authorInputPlaceholder: a.authorInputPlaceholder,
+    taskReady: a.taskReady
   }))
 }

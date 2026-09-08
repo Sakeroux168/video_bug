@@ -162,6 +162,7 @@ export function matchesTaskResponse(type: TaskType, url: string): boolean {
 export const douyinAdapter: PlatformAdapter = {
   name: 'douyin',
   displayName: '抖音',
+  taskReady: true,
   sourceHosts: ['www.douyin.com'],
   sessionPartition: 'persist:douyin',
   homeUrl: 'https://www.douyin.com/',

@@ -267,6 +267,7 @@ export function parseKuaishouAuthorInput(raw: string): string | null {
 export const kuaishouAdapter: PlatformAdapter = {
   name: 'kuaishou',
   displayName: '快手',
+  taskReady: true,
   sourceHosts: ['www.kuaishou.com'],
   sessionPartition: 'persist:kuaishou',
   homeUrl: 'https://www.kuaishou.com/',

@@ -48,8 +48,8 @@ describe('BrowserPanel 使用指引', () => {
 // 没有入口就等于没法登录快手。
 describe('BrowserPanel 按平台打开窗口', () => {
   const PLATFORMS = [
-    { name: 'douyin', displayName: '抖音', authorInputPlaceholder: 'x' },
-    { name: 'kuaishou', displayName: '快手', authorInputPlaceholder: 'y' }
+    { name: 'douyin', displayName: '抖音', authorInputPlaceholder: 'x', taskReady: true },
+    { name: 'kuaishou', displayName: '快手', authorInputPlaceholder: 'y', taskReady: true }
   ]
 
   beforeEach(() => {

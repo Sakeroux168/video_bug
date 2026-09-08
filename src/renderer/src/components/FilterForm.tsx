@@ -4,6 +4,7 @@ import type { CreateTaskInput, Filters, TaskType } from '../../../shared/types'
 import { btnPrimary, inputCls, Card } from './ui'
 
 export default function FilterForm({ onSubmit }: { onSubmit: (t: CreateTaskInput) => Promise<{ id: number | null; skipped: boolean; reason?: string }> }) {
+  // 只列已就绪的平台：接入中的平台解析器还没写，选了也跑不通
   const [platforms, setPlatforms] = useState<Array<{ name: string; displayName: string; authorInputPlaceholder: string }>>([])
   const [platform, setPlatform] = useState('douyin')
   const [type, setType] = useState<TaskType>('keyword')
@@ -21,7 +22,7 @@ export default function FilterForm({ onSubmit }: { onSubmit: (t: CreateTaskInput
   const [err, setErr] = useState('')
 
   useEffect(() => {
-    void api.listPlatforms().then(setPlatforms)
+    void api.listPlatforms().then(list => setPlatforms(list.filter(p => p.taskReady)))
     // 默认跟随全局设置：未在表单改过时 allowDuplicateAuthor 保持与设置一致
     void api.getSettings().then(s => setAllowDuplicateAuthor(s.allowDuplicateAuthor))
   }, [])

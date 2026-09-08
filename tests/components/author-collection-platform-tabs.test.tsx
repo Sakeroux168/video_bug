@@ -9,8 +9,8 @@ import { installFakeApi } from '../helpers/fake-api'
 // 数据里出现的未注册平台也要给 tab——否则那些作者会被界面藏起来，用户以为丢了。
 
 const PLATFORMS = [
-  { name: 'douyin', displayName: '抖音', authorInputPlaceholder: 'https://www.douyin.com/user/xxx' },
-  { name: 'kuaishou', displayName: '快手', authorInputPlaceholder: 'https://www.kuaishou.com/profile/xxx' }
+  { name: 'douyin', displayName: '抖音', authorInputPlaceholder: 'https://www.douyin.com/user/xxx', taskReady: true },
+  { name: 'kuaishou', displayName: '快手', authorInputPlaceholder: 'https://www.kuaishou.com/profile/xxx', taskReady: true }
 ]
 
 function author(over: Partial<AuthorRow> = {}): AuthorRow {

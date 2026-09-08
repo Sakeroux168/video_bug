@@ -87,8 +87,8 @@ describe('视频时长筛选', () => {
 // 选了快手仍然写着 douyin.com，用户照着填必然失败。
 describe('作者输入提示跟随所选平台', () => {
   const platforms = [
-    { name: 'douyin', displayName: '抖音', authorInputPlaceholder: 'https://www.douyin.com/user/xxx' },
-    { name: 'kuaishou', displayName: '快手', authorInputPlaceholder: 'https://www.kuaishou.com/profile/xxx' }
+    { name: 'douyin', displayName: '抖音', authorInputPlaceholder: 'https://www.douyin.com/user/xxx', taskReady: true },
+    { name: 'kuaishou', displayName: '快手', authorInputPlaceholder: 'https://www.kuaishou.com/profile/xxx', taskReady: true }
   ]
 
   async function renderWithPlatforms() {
@@ -116,5 +116,25 @@ describe('作者输入提示跟随所选平台', () => {
   it('关键词/话题类型仍用通用提示，不显示任何平台 URL', async () => {
     await renderWithPlatforms()
     expect(await screen.findByPlaceholderText('输入内容')).toBeInTheDocument()
+  })
+})
+
+// 未就绪平台（解析器还没写）不能出现在建任务下拉框里。
+// 它仍会出现在「内置浏览器」页——扫码登录和抓包都要靠那个入口。
+describe('建任务下拉框只列已就绪平台', () => {
+  const PLATFORMS = [
+    { name: 'douyin', displayName: '抖音', authorInputPlaceholder: 'x', taskReady: true },
+    { name: 'kuaishou', displayName: '快手', authorInputPlaceholder: 'y', taskReady: true },
+    { name: 'xiaohongshu', displayName: '小红书', authorInputPlaceholder: 'z', taskReady: false }
+  ]
+
+  it('小红书不出现在平台下拉框里', async () => {
+    installFakeApi()
+    vi.mocked(window.api.listPlatforms).mockResolvedValue(PLATFORMS as never)
+    render(<FilterForm onSubmit={vi.fn(async () => ({ id: 1, skipped: false }))} />)
+
+    await screen.findByRole('option', { name: '抖音' })
+    expect(screen.getByRole('option', { name: '快手' })).toBeInTheDocument()
+    expect(screen.queryByRole('option', { name: '小红书' })).toBeNull()
   })
 })

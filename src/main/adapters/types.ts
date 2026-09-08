@@ -22,6 +22,9 @@ export interface VideoItem {
 export interface PlatformAdapter {
   name: string
   displayName: string
+  /** 解析器是否已按真机接口实现。false 表示只能在内置浏览器里打开（扫码登录、抓包），
+   *  不能建任务——避免「平台出现在下拉框里、选了却跑不通」的半成品状态。 */
+  taskReady: boolean
   /** 可由主进程打开的作品页精确主机白名单 */
   sourceHosts: readonly string[]
   /** 登录态分区，如 'persist:douyin' */

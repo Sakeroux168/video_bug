@@ -341,8 +341,8 @@ describe('AuthorCollection 批量导入作者', () => {
 // 现在面板上有平台下拉，选什么平台就用什么平台解析、落库。
 describe('AuthorCollection 批量导入按平台', () => {
   const PLATFORMS = [
-    { name: 'douyin', displayName: '抖音', authorInputPlaceholder: 'https://www.douyin.com/user/xxx' },
-    { name: 'kuaishou', displayName: '快手', authorInputPlaceholder: 'https://www.kuaishou.com/profile/xxx' }
+    { name: 'douyin', displayName: '抖音', authorInputPlaceholder: 'https://www.douyin.com/user/xxx', taskReady: true },
+    { name: 'kuaishou', displayName: '快手', authorInputPlaceholder: 'https://www.kuaishou.com/profile/xxx', taskReady: true }
   ]
 
   async function openImportPanel(): Promise<void> {

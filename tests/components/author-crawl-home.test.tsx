@@ -9,8 +9,8 @@ import { installFakeApi } from '../helpers/fake-api'
 // 改成先让他填。
 
 const PLATFORMS = [
-  { name: 'douyin', displayName: '抖音', authorInputPlaceholder: 'x' },
-  { name: 'kuaishou', displayName: '快手', authorInputPlaceholder: 'y' }
+  { name: 'douyin', displayName: '抖音', authorInputPlaceholder: 'x', taskReady: true },
+  { name: 'kuaishou', displayName: '快手', authorInputPlaceholder: 'y', taskReady: true }
 ]
 
 function author(over: Partial<AuthorRow> = {}): AuthorRow {

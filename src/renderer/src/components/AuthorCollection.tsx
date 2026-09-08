@@ -39,7 +39,8 @@ export default function AuthorCollection({ notify }: { notify: (text: string) =>
   const [importing, setImporting] = useState(false)
 
   useEffect(() => { void api.listAuthors().then(setAuthors) }, [])
-  useEffect(() => { void api.listPlatforms().then(setPlatforms) }, [])
+  // 只列已就绪平台：接入中的平台还不能建任务，导进来的作者也无从爬起
+  useEffect(() => { void api.listPlatforms().then(list => setPlatforms(list.filter(p => p.taskReady))) }, [])
 
   // 作者校验的结果是调度器写进库的，不订阅就永远停在旧数据上——
   // 用户只能看到一闪而过的 toast。任务暂停/完成都可能改变作者行
