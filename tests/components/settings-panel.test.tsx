@@ -30,7 +30,11 @@ const SETTING_LABELS: Record<keyof AppSettings, string> = {
   organizeDebounceMs: '自动归档延迟(秒)',
   asrMaxSec: '语音分析时长(秒)',
   stallThresholdSec: '停滞检测(秒)',
-  rescueCooldownSec: '重搜冷却(秒)'
+  rescueCooldownSec: '重搜冷却(秒)',
+  organizeByCategory: '按品类分文件夹',
+  organizeByAuthor: '按作者分文件夹',
+  organizeByOrientation: '按横屏/竖屏分文件夹',
+  organizeByDuration: '按时长分文件夹'
 }
 
 describe('SettingsPanel 消息的成功/失败配色', () => {
@@ -158,5 +162,81 @@ describe('SettingsPanel 分组与字段完整性', () => {
     expect(organizeCard).toContainElement(screen.getByRole('button', { name: '整理全部' }))
     expect(asrCard).toContainElement(screen.getByRole('button', { name: '下载模型' }))
     expect(asrCard).not.toContainElement(screen.getByRole('button', { name: '整理全部' }))
+  })
+})
+
+// 归档层级开关：员工反馈四层文件夹套下来翻不动，改成每层独立勾选。
+// 这里只测「勾选 → 保存值」和「全不勾时的状态提示」；实际建目录行为在 organizer 测试里。
+describe('SettingsPanel 归档层级开关', () => {
+  const FLAT_HINT = '当前：所有视频直接放在下载目录，不分文件夹。'
+
+  it('四项独立勾选：勾按作者只把该键置 true，其余仍为 false', async () => {
+    installFakeApi()
+    render(<SettingsPanel />)
+
+    fireEvent.click(await screen.findByLabelText('按作者分文件夹'))
+    fireEvent.click(screen.getByRole('button', { name: '保存设置' }))
+
+    await waitFor(() => expect(window.api.saveSettings).toHaveBeenCalledWith(expect.objectContaining({
+      organizeByAuthor: true,
+      organizeByCategory: false,
+      organizeByOrientation: false,
+      organizeByDuration: false
+    })))
+  })
+
+  it('可同时勾选多层，互不影响', async () => {
+    installFakeApi()
+    render(<SettingsPanel />)
+
+    fireEvent.click(await screen.findByLabelText('按作者分文件夹'))
+    fireEvent.click(screen.getByLabelText('按时长分文件夹'))
+    fireEvent.click(screen.getByRole('button', { name: '保存设置' }))
+
+    await waitFor(() => expect(window.api.saveSettings).toHaveBeenCalledWith(expect.objectContaining({
+      organizeByAuthor: true,
+      organizeByDuration: true,
+      organizeByCategory: false,
+      organizeByOrientation: false
+    })))
+  })
+
+  it('四项都不勾 → 明确提示视频直接放在下载目录；勾任意一项提示消失', async () => {
+    installFakeApi()
+    render(<SettingsPanel />)
+
+    expect(await screen.findByText(FLAT_HINT)).toBeInTheDocument()
+    fireEvent.click(screen.getByLabelText('按时长分文件夹'))
+    await waitFor(() => expect(screen.queryByText(FLAT_HINT)).toBeNull())
+  })
+
+  it('已归档文件不会自动搬家这件事必须写在面板上，不能只靠用户猜', async () => {
+    installFakeApi()
+    render(<SettingsPanel />)
+    expect(await screen.findByText(/已经归好的文件不会自动搬家/)).toBeInTheDocument()
+  })
+})
+
+// 全关层级时点「整理全部」，旧写法会显示「已整理 0 个作者」——读起来像坏了。
+// 这是配置状态不是失败，必须给出能看懂的话。
+describe('SettingsPanel 未启用层级时的整理反馈', () => {
+  it('整理全部返回 skipped → 提示未开启层级，不说"已整理 0 个作者"', async () => {
+    installFakeApi()
+    vi.mocked(window.api.organizeAll).mockResolvedValue({ ok: true, count: 0, skipped: true } as never)
+    render(<SettingsPanel />)
+
+    fireEvent.click(await screen.findByRole('button', { name: '整理全部' }))
+
+    await waitFor(() => expect(screen.getByText(/未开启任何分类层级/)).toBeInTheDocument())
+    expect(screen.queryByText(/已整理 0 个作者/)).toBeNull()
+  })
+
+  it('正常整理仍报作者数（不能被 skipped 分支吃掉）', async () => {
+    installFakeApi()
+    vi.mocked(window.api.organizeAll).mockResolvedValue({ ok: true, count: 2 } as never)
+    render(<SettingsPanel />)
+
+    fireEvent.click(await screen.findByRole('button', { name: '整理全部' }))
+    await waitFor(() => expect(screen.getByText('已整理 2 个作者')).toBeInTheDocument())
   })
 })

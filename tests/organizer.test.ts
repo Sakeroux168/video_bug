@@ -5,7 +5,8 @@ import { join, basename, dirname } from 'path'
 import { tmpdir } from 'os'
 import { rename } from 'fs/promises'
 import { initDb, createTask, insertVideos, listVideos, setVideoStatus } from '../src/main/db'
-import { Organizer, sanitizeCategory, sanitizeDirName, authorDirName } from '../src/main/organizer'
+import { Organizer, sanitizeCategory, sanitizeDirName, authorDirName, ALL_ORGANIZE_LEVELS } from '../src/main/organizer'
+import type { OrganizeLevels } from '../src/main/organizer'
 import type { CreateTaskInput } from '../src/shared/types'
 import type { VideoItem } from '../src/main/adapters/types'
 
@@ -53,7 +54,7 @@ function authorWithDoneVideos(secUid: string, nickname: string, count = 2, durat
 
 function organizer(category: string | null = '美食'): Organizer {
   return new Organizer({
-    db, downloadDir: dir,
+    db, downloadDir: dir, levels: ALL_ORGANIZE_LEVELS,
     resolveCategory: async () => category,
   })
 }
@@ -176,7 +177,7 @@ describe('Organizer.organizeAuthor', () => {
 
   it('resolveCategory 抛错 → 归未分类，state 仍 done（归档本身成功）', async () => {
     const { authorId, vids } = authorWithDoneVideos('SEC555555', '抛错')
-    const org = new Organizer({ db, downloadDir: dir, resolveCategory: async () => { throw new Error('ai_down') } })
+    const org = new Organizer({ db, downloadDir: dir, levels: ALL_ORGANIZE_LEVELS, resolveCategory: async () => { throw new Error('ai_down') } })
     const res = await org.organizeAuthor(authorId)
     expect(res).toEqual({ moved: 2, category: '未分类', state: 'done' })
     for (const v of vids) expect(existsSync(v.src)).toBe(false)
@@ -241,7 +242,7 @@ describe('横竖屏与封面成对归档', () => {
     writeFileSync(coverPath, 'cover')
     setVideoStatus(db, vids[0].id, 'done', { cover_path: coverPath, video_width: width, video_height: height })
     const probeDimensions = vi.fn(async () => null)
-    const org = new Organizer({ db, downloadDir: dir, resolveCategory: async () => '美食', probeDimensions })
+    const org = new Organizer({ db, downloadDir: dir, levels: ALL_ORGANIZE_LEVELS, resolveCategory: async () => '美食', probeDimensions })
     expect(await org.organizeAuthor(authorId)).toMatchObject({ moved: 1, state: 'done' })
     const row = db.prepare('SELECT local_path, cover_path FROM videos WHERE id=?').get(vids[0].id) as { local_path: string; cover_path: string }
     const expectedDir = join(dir, '美食', '配对', bucket, '一分钟内')
@@ -258,7 +259,7 @@ describe('横竖屏与封面成对归档', () => {
     const { authorId, vids } = authorWithDoneVideos('PROBE', '探测', 1)
     setVideoStatus(db, vids[0].id, 'done', { video_width: 0, video_height: 0 })
     const probeDimensions = vi.fn(async () => ({ width: 1920, height: 1080 }))
-    const org = new Organizer({ db, downloadDir: dir, resolveCategory: async () => '美食', probeDimensions })
+    const org = new Organizer({ db, downloadDir: dir, levels: ALL_ORGANIZE_LEVELS, resolveCategory: async () => '美食', probeDimensions })
     expect(await org.organizeAuthor(authorId)).toMatchObject({ moved: 1, state: 'done' })
     expect(probeDimensions).toHaveBeenCalledWith(vids[0].src)
     const row = db.prepare('SELECT video_width, video_height, local_path FROM videos WHERE id=?').get(vids[0].id) as { video_width: number; video_height: number; local_path: string }
@@ -270,7 +271,7 @@ describe('横竖屏与封面成对归档', () => {
     const { authorId, vids } = authorWithDoneVideos('UNKNOWN', '未知', 1)
     setVideoStatus(db, vids[0].id, 'done', { video_width: 0, video_height: 0 })
     const org = new Organizer({
-      db, downloadDir: dir, resolveCategory: async () => '美食',
+      db, downloadDir: dir, levels: ALL_ORGANIZE_LEVELS, resolveCategory: async () => '美食',
       probeDimensions: async () => { if (mode === 'throw') throw new Error('probe failed'); return null }
     })
     expect(await org.organizeAuthor(authorId)).toMatchObject({ moved: 1, state: 'done' })
@@ -323,7 +324,7 @@ describe('横竖屏与封面成对归档', () => {
     writeFileSync(originalPath, 'original')
     setVideoStatus(db, vids[0].id, 'done', { cover_path: coverPath, original_path: originalPath })
     const org = new Organizer({
-      db, downloadDir: dir, resolveCategory: async () => '美食',
+      db, downloadDir: dir, levels: ALL_ORGANIZE_LEVELS, resolveCategory: async () => '美食',
       renameFile: async (from, to) => {
         if (from === coverPath || to === vids[0].src) throw Object.assign(new Error('file locked'), { code: 'EPERM' })
         await rename(from, to)
@@ -448,9 +449,192 @@ describe('Organizer.organizePending / organizeAll / markAuthorPending', () => {
   it('onProgress 每作者回调一次归档结果', async () => {
     const { authorId } = authorWithDoneVideos('SEC930001', '进度')
     const calls: unknown[] = []
-    const org = new Organizer({ db, downloadDir: dir, resolveCategory: async () => '美食', onProgress: info => calls.push(info) })
+    const org = new Organizer({ db, downloadDir: dir, levels: ALL_ORGANIZE_LEVELS, resolveCategory: async () => '美食', onProgress: info => calls.push(info) })
     await org.organizeAuthor(authorId)
     expect(calls).toHaveLength(1)
     expect(calls[0]).toMatchObject({ authorId, authorName: '进度', moved: 2, category: '美食', state: 'done' })
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 归档层级开关：员工反馈 {品类}/{作者}/{横竖屏}/{时长} 四层套下来文件夹太多、翻不动。
+// 每层独立可关；一层不开时视频就平铺在下载目录，不再有"待归档"这回事。
+// ---------------------------------------------------------------------------
+const NO_LEVELS: OrganizeLevels = { category: false, author: false, orientation: false, duration: false }
+
+/** 只开指定层级的 organizer；resolveCategory / probeDimensions 用 spy 以便断言"没被调用" */
+function leveled(on: Partial<OrganizeLevels>) {
+  const resolveCategory = vi.fn(async () => '美食')
+  const probeDimensions = vi.fn(async () => ({ width: 1920, height: 1080 }))
+  const org = new Organizer({
+    db, downloadDir: dir,
+    levels: { ...NO_LEVELS, ...on },
+    resolveCategory, probeDimensions
+  })
+  return { org, resolveCategory, probeDimensions }
+}
+
+describe('归档层级开关', () => {
+  it('四层全关 → 不移动文件、作者标 done、不调 AI 也不探测', async () => {
+    const { authorId, vids } = authorWithDoneVideos('FLAT', '平铺', 2)
+    const { org, resolveCategory, probeDimensions } = leveled({})
+
+    expect(await org.organizeAuthor(authorId)).toMatchObject({ moved: 0, state: 'done' })
+    // 文件原地不动，数据库路径也不变
+    for (const v of vids) {
+      expect(existsSync(v.src)).toBe(true)
+      expect(dirname(v.src)).toBe(dir)
+      const row = db.prepare('SELECT local_path FROM videos WHERE id=?').get(v.id) as { local_path: string }
+      expect(row.local_path).toBe(v.src)
+    }
+    // 不建任何子目录
+    expect(readdirSync(dir).filter(n => !n.endsWith('.mp4'))).toEqual([])
+    // 关了品类就不该继续烧 AI 调用
+    expect(resolveCategory).not.toHaveBeenCalled()
+    expect(probeDimensions).not.toHaveBeenCalled()
+  })
+
+  it('四层全关 → markAuthorPending 不把作者标 pending（否则平铺文件永远"未归档"，反复空转）', () => {
+    const { authorId } = authorWithDoneVideos('SPIN', '空转', 1)
+    const { org } = leveled({})
+    org.markAuthorPending(authorId)
+    const row = db.prepare('SELECT organize_state FROM authors WHERE id=?').get(authorId) as { organize_state: string | null }
+    expect(row.organize_state).not.toBe('pending')
+  })
+
+  it('只开作者 → 只建一层作者目录', async () => {
+    const { authorId, vids } = authorWithDoneVideos('AUT', '张三', 1)
+    const { org, resolveCategory } = leveled({ author: true })
+
+    expect(await org.organizeAuthor(authorId)).toMatchObject({ moved: 1, state: 'done' })
+    const row = db.prepare('SELECT local_path FROM videos WHERE id=?').get(vids[0].id) as { local_path: string }
+    expect(dirname(row.local_path)).toBe(join(dir, '张三'))
+    expect(existsSync(row.local_path)).toBe(true)
+    expect(resolveCategory).not.toHaveBeenCalled()
+  })
+
+  it('只开品类 → 只建一层品类目录', async () => {
+    const { authorId, vids } = authorWithDoneVideos('CAT', '李四', 1)
+    const { org, resolveCategory } = leveled({ category: true })
+
+    expect(await org.organizeAuthor(authorId)).toMatchObject({ moved: 1, category: '美食', state: 'done' })
+    const row = db.prepare('SELECT local_path FROM videos WHERE id=?').get(vids[0].id) as { local_path: string }
+    expect(dirname(row.local_path)).toBe(join(dir, '美食'))
+    expect(resolveCategory).toHaveBeenCalled()
+  })
+
+  it('只开横竖屏 → 只建一层方向目录（1080x1920 → 竖屏）', async () => {
+    const { authorId, vids } = authorWithDoneVideos('ORI', '王五', 1)
+    const { org } = leveled({ orientation: true })
+
+    expect(await org.organizeAuthor(authorId)).toMatchObject({ moved: 1, state: 'done' })
+    const row = db.prepare('SELECT local_path FROM videos WHERE id=?').get(vids[0].id) as { local_path: string }
+    expect(dirname(row.local_path)).toBe(join(dir, '竖屏'))
+  })
+
+  it('只开时长 → 只建一层时长目录', async () => {
+    const { authorId, vids } = authorWithDoneVideos('DUR', '赵六', 1, 90)
+    const { org } = leveled({ duration: true })
+
+    expect(await org.organizeAuthor(authorId)).toMatchObject({ moved: 1, state: 'done' })
+    const row = db.prepare('SELECT local_path FROM videos WHERE id=?').get(vids[0].id) as { local_path: string }
+    expect(dirname(row.local_path)).toBe(join(dir, '一分钟外'))
+  })
+
+  it('作者+时长 → 中间层塌陷但顺序不变（作者在前、时长在后）', async () => {
+    const { authorId, vids } = authorWithDoneVideos('MID', '孙七', 1)
+    const { org } = leveled({ author: true, duration: true })
+
+    expect(await org.organizeAuthor(authorId)).toMatchObject({ moved: 1, state: 'done' })
+    const row = db.prepare('SELECT local_path FROM videos WHERE id=?').get(vids[0].id) as { local_path: string }
+    expect(dirname(row.local_path)).toBe(join(dir, '孙七', '一分钟内'))
+  })
+
+  it('关掉横竖屏 → 宽高缺失也不再跑 ffprobe', async () => {
+    const { authorId, vids } = authorWithDoneVideos('NOPROBE', '免探测', 1)
+    setVideoStatus(db, vids[0].id, 'done', { video_width: 0, video_height: 0 })
+    const { org, probeDimensions } = leveled({ author: true })
+
+    expect(await org.organizeAuthor(authorId)).toMatchObject({ moved: 1, state: 'done' })
+    expect(probeDimensions).not.toHaveBeenCalled()
+    const row = db.prepare('SELECT local_path FROM videos WHERE id=?').get(vids[0].id) as { local_path: string }
+    expect(dirname(row.local_path)).toBe(join(dir, '免探测'))
+  })
+
+  it('视频、封面、原片仍作为一组同名移动（只开作者层时也成立）', async () => {
+    const { authorId, vids } = authorWithDoneVideos('GRP', '同组', 1)
+    const coverPath = join(dir, 'GRP_0.webp')
+    const originalPath = join(dir, 'GRP_0.original.mp4')
+    writeFileSync(coverPath, 'cover')
+    writeFileSync(originalPath, 'original')
+    setVideoStatus(db, vids[0].id, 'done', { cover_path: coverPath, original_path: originalPath })
+    const { org } = leveled({ author: true })
+
+    expect(await org.organizeAuthor(authorId)).toMatchObject({ moved: 1, state: 'done' })
+    const row = db.prepare('SELECT local_path, cover_path, original_path FROM videos WHERE id=?').get(vids[0].id) as
+      { local_path: string; cover_path: string; original_path: string }
+    const expectedDir = join(dir, '同组')
+    expect(dirname(row.local_path)).toBe(expectedDir)
+    expect(dirname(row.cover_path)).toBe(expectedDir)
+    expect(dirname(row.original_path)).toBe(expectedDir)
+    expect(basename(row.local_path, '.mp4')).toBe(basename(row.cover_path, '.webp'))
+    expect(existsSync(row.local_path)).toBe(true)
+    expect(existsSync(row.cover_path)).toBe(true)
+    expect(existsSync(row.original_path)).toBe(true)
+  })
+
+  it('幂等：已归档的视频再次 organizeAll 不会被二次移动', async () => {
+    const { authorId, vids } = authorWithDoneVideos('IDEM', '幂等', 1)
+    const { org } = leveled({ author: true })
+
+    await org.organizeAuthor(authorId)
+    const first = db.prepare('SELECT local_path FROM videos WHERE id=?').get(vids[0].id) as { local_path: string }
+    await org.organizeAll()
+    const second = db.prepare('SELECT local_path FROM videos WHERE id=?').get(vids[0].id) as { local_path: string }
+    expect(second.local_path).toBe(first.local_path)
+    expect(existsSync(second.local_path)).toBe(true)
+  })
+
+  it('先平铺攒着、之后开启层级 → organizeAll 能把平铺文件补归档', async () => {
+    const { authorId, vids } = authorWithDoneVideos('LATER', '后开', 1)
+    const flat = leveled({})
+    await flat.org.organizeAuthor(authorId)
+    const stillFlat = db.prepare('SELECT local_path FROM videos WHERE id=?').get(vids[0].id) as { local_path: string }
+    expect(dirname(stillFlat.local_path)).toBe(dir)
+
+    const on = leveled({ author: true })
+    expect(await on.org.organizeAll()).toBe(1)
+    const row = db.prepare('SELECT local_path FROM videos WHERE id=?').get(vids[0].id) as { local_path: string }
+    expect(dirname(row.local_path)).toBe(join(dir, '后开'))
+  })
+
+  it('四层全开 → 保持原有 {品类}/{作者}/{横竖屏}/{时长} 路径不回退', async () => {
+    const { authorId, vids } = authorWithDoneVideos('ALL', '全开', 1)
+    const org = new Organizer({ db, downloadDir: dir, levels: ALL_ORGANIZE_LEVELS, resolveCategory: async () => '美食' })
+
+    expect(await org.organizeAuthor(authorId)).toMatchObject({ moved: 1, state: 'done' })
+    const row = db.prepare('SELECT local_path FROM videos WHERE id=?').get(vids[0].id) as { local_path: string }
+    expect(dirname(row.local_path)).toBe(join(dir, '美食', '全开', '竖屏', '一分钟内'))
+  })
+
+  it('四层全关 → 已 done 的作者被置回 null，之后开启层级仍能补归档（不能把文件永远锁在根目录）', async () => {
+    const { authorId, vids } = authorWithDoneVideos('REOPEN', '复归', 1)
+    db.prepare("UPDATE authors SET organize_state='done' WHERE id=?").run(authorId)
+    const { org } = leveled({})
+
+    org.markAuthorPending(authorId)
+    expect(db.prepare('SELECT organize_state FROM authors WHERE id=?').get(authorId)).toEqual({ organize_state: null })
+
+    // 若上一步留成 done，organizeAll 会按既有规则跳过它，用户开启层级后文件仍平铺在根目录
+    const on = leveled({ author: true })
+    expect(await on.org.organizeAll()).toBe(1)
+    const row = db.prepare('SELECT local_path FROM videos WHERE id=?').get(vids[0].id) as { local_path: string }
+    expect(dirname(row.local_path)).toBe(join(dir, '复归'))
+  })
+
+  it('isEnabled 反映是否还有层级开着（IPC 靠它区分"没启用"和"真的没东西可整理"）', () => {
+    expect(leveled({}).org.isEnabled()).toBe(false)
+    expect(leveled({ duration: true }).org.isEnabled()).toBe(true)
+    expect(leveled({ category: true, author: true }).org.isEnabled()).toBe(true)
   })
 })

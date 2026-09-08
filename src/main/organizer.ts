@@ -32,6 +32,21 @@ export function authorDirName(author: { nickname: string; sec_uid: string }, db:
   return clash ? `${cleaned}_${author.sec_uid.slice(-6)}` : cleaned
 }
 
+/** 归档层级开关：勾选哪几层就建哪几层目录。
+ *  路径顺序恒为 品类/作者/横竖屏/时长——关掉中间某层只会让路径塌陷，不会重排剩下的层。
+ *  一层都不开 = 视频平铺在下载目录根（员工反馈四层套下来文件夹太多、翻不动）。 */
+export interface OrganizeLevels {
+  category: boolean
+  author: boolean
+  orientation: boolean
+  duration: boolean
+}
+
+/** 升级前的归档行为：四层全开。老用户默认值与既有测试基线都用它。 */
+export const ALL_ORGANIZE_LEVELS: OrganizeLevels = {
+  category: true, author: true, orientation: true, duration: true
+}
+
 /** 品类解析函数：入参为作者行与已下载视频样本，返回品类名；null/抛错由调用方回退「未分类」 */
 export type ResolveCategoryFn = (author: AuthorRow, samples: VideoRow[]) => Promise<string | null>
 
@@ -44,6 +59,8 @@ export interface OrganizeResult {
 export interface OrganizerDeps {
   db: DatabaseSync
   downloadDir: string
+  /** 建哪几层目录。刻意设为必填：漏接线时应当是编译错误，而不是静默沿用旧的四层行为。 */
+  levels: OrganizeLevels
   resolveCategory: ResolveCategoryFn
   /** 元数据缺失时探测本地文件；注入点用于不依赖本机工具的测试。 */
   probeDimensions?: (file: string) => Promise<VideoDimensions | null>
@@ -65,12 +82,31 @@ export class Organizer {
     return this.isFlat(v) || v.organize_retry === 1
   }
 
+  /** 是否还有任何一层要建目录。全关时不存在"归档"这件事，视频本就该平铺。 */
+  private hasAnyLevel(): boolean {
+    const l = this.deps.levels
+    return l.category || l.author || l.orientation || l.duration
+  }
+
   /** 下载完成事件调用：该作者存在 ≥1 条 done 且仍平铺在下载目录根的视频时才置 'pending'。
    *  用视频状态佐证，不因 organize_state='done' 永久挡死 —— 分批下载时上一批归档后作者为 done，
    *  新下载完成的视频仍会把它再次置 pending 供归档。 */
   markAuthorPending(authorId: number): void {
     const hasFlatDone = listAuthorVideos(this.deps.db, authorId, 'done').some(v => this.needsOrganize(v))
+    if (!this.hasAnyLevel()) {
+      // 全关：平铺文件永远满足 isFlat，标 pending 会让归档器反复空转。
+      // 但也不能留成 done —— 用户之后重新开启层级点「整理全部」时会被跳过，文件永远平铺在根目录。
+      // 置回 null 两头都对：organizePending 只认 pending（不空转），organizeAll 认 null（能补归档）。
+      if (hasFlatDone) setAuthorOrganizeState(this.deps.db, authorId, null)
+      return
+    }
     if (hasFlatDone) setAuthorOrganizeState(this.deps.db, authorId, 'pending')
+  }
+
+  /** 当前是否还有层级开着。IPC 用它把"没启用分类"和"真的没东西可整理"区分开，
+   *  否则用户点「整理全部」只会看到"已整理 0 个作者"，读起来像坏了。 */
+  isEnabled(): boolean {
+    return this.hasAnyLevel()
   }
 
   /** 归档单个作者的 done 视频：品类解析失败归「未分类」但不算归档失败；仅"移动文件失败"记 failed */
@@ -78,6 +114,15 @@ export class Organizer {
     const db = this.deps.db
     const author = db.prepare('SELECT * FROM authors WHERE id = ?').get(authorId) as AuthorRow | undefined
     if (!author) return { moved: 0, category: '未分类', state: 'failed' }
+
+    // 一层都没开：视频就该留在下载目录根，直接标完成。
+    // 必须在 needsOrganize 之前短路——平铺文件永远"看起来未归档"。
+    // 刻意不写 organize_state：标成 done 会让用户之后开启层级时 organizeAll 跳过这些平铺文件
+    if (!this.hasAnyLevel()) {
+      this.deps.onProgress?.({ authorId, authorName: author.nickname, moved: 0, category: '未分类', state: 'done' })
+      return { moved: 0, category: '未分类', state: 'done' }
+    }
+    const levels = this.deps.levels
 
     // 只归档仍平铺在下载目录根（未归档）的 done 视频；已在 {品类}/{作者}/{时长分桶} 子目录里的跳过，保证重复整理幂等、分批安全
     const videos = listAuthorVideos(db, authorId, 'done').filter(v => this.needsOrganize(v))
@@ -88,17 +133,20 @@ export class Organizer {
       return { moved: 0, category: '未分类', state: 'done' }
     }
 
-    // 解析品类：AI 失败（返回 null 或抛错）→ 回退「未分类」，但不视为归档失败（文件照常移动）
-    let category: string
-    try {
-      const c = await this.deps.resolveCategory(author, videos)
-      category = c ? sanitizeCategory(c) : '未分类'
-    } catch {
-      category = '未分类'
+    // 解析品类：AI 失败（返回 null 或抛错）→ 回退「未分类」，但不视为归档失败（文件照常移动）。
+    // 关掉品类层就整个跳过——用户不要品类目录了，这个 AI 调用就不该继续花钱。
+    let category = '未分类'
+    if (levels.category) {
+      try {
+        const c = await this.deps.resolveCategory(author, videos)
+        category = c ? sanitizeCategory(c) : '未分类'
+      } catch {
+        category = '未分类'
+      }
     }
 
     // 作者目录名（重名后缀在昵称层）+ 时长分桶（每条视频各自进桶，目标目录逐条 mkdir）
-    const authorDir = authorDirName(author, db)
+    const authorDir = levels.author ? authorDirName(author, db) : '' 
     const moveFile = this.deps.renameFile ?? rename
     let moved = 0
     let failedMoves = 0
@@ -107,7 +155,8 @@ export class Organizer {
       try {
         let width = v.video_width
         let height = v.video_height
-        if (screenBucket(width, height) === '未识别') {
+        // 只有真的要按方向建目录时才值得跑 ffprobe
+        if (levels.orientation && screenBucket(width, height) === '未识别') {
           try {
             const dimensions = await (this.deps.probeDimensions ?? probeVideoDimensions)(v.local_path)
             if (dimensions && screenBucket(dimensions.width, dimensions.height) !== '未识别') {
@@ -116,7 +165,13 @@ export class Organizer {
             }
           } catch { /* 探测失败不影响归档，进入未识别目录 */ }
         }
-        const destDir = join(this.deps.downloadDir, category, authorDir, screenBucket(width, height), durBucket(v.duration))
+        // 固定顺序拼接已启用的层；hasAnyLevel 已保证至少一段，destDir 不会等于下载目录根
+        const segments: string[] = []
+        if (levels.category) segments.push(category)
+        if (levels.author) segments.push(authorDir)
+        if (levels.orientation) segments.push(screenBucket(width, height))
+        if (levels.duration) segments.push(durBucket(v.duration))
+        const destDir = join(this.deps.downloadDir, ...segments)
         mkdirSync(destDir, { recursive: true })
         const videoExt = extname(v.local_path)
         const coverExt = v.cover_path ? extname(v.cover_path) : '.jpg'

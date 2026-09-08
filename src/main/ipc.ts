@@ -207,6 +207,8 @@ export function registerIpc(deps: IpcDeps): void {
   ipcMain.handle('authors:organize', async (_e, authorId: number) => {
     const org = deps.getOrganizer()
     if (!org) return { ok: false, error: '整理器未就绪' }
+    // 未启用任何层级不是失败，是配置状态；照直说，别返回一个会被渲染成"整理 0 个"的空结果
+    if (!org.isEnabled()) return { ok: true, moved: 0, state: 'done', skipped: true }
     try {
       const r = await org.organizeAuthor(authorId)
       return { ok: true, moved: r.moved, category: r.category, state: r.state }
@@ -215,6 +217,7 @@ export function registerIpc(deps: IpcDeps): void {
   ipcMain.handle('organize:all', async () => {
     const org = deps.getOrganizer()
     if (!org) return { ok: false, error: '整理器未就绪' }
+    if (!org.isEnabled()) return { ok: true, count: 0, skipped: true }
     try {
       const count = await org.organizeAll()
       return { ok: true, count }

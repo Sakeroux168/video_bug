@@ -82,9 +82,13 @@ export default function HelpPanel(): React.ReactElement {
           <li>点「开始」</li>
         </ol>
         <p className="mt-3 rounded-md bg-slate-50 px-3 py-2 text-xs leading-5 text-slate-500">
-          爬取过程中程序会自己滚动页面加载更多，不用你手动操作。爬完会自动下载，并按
-          <code className="mx-1 rounded bg-slate-100 px-1 py-0.5">品类\作者\一分钟内|一分钟外\</code>
-          归档到你设的下载目录里。
+          爬取过程中程序会自己滚动页面加载更多，不用你手动操作。爬完会自动下载到你设的下载目录里。
+        </p>
+        <p className="mt-2 rounded-md bg-slate-50 px-3 py-2 text-xs leading-5 text-slate-500">
+          默认视频就直接放在下载目录，不分文件夹。想分类的话去「设置 → 下载后分文件夹整理」，
+          可以单独勾选
+          <code className="mx-1 rounded bg-slate-100 px-1 py-0.5">品类 / 作者 / 横竖屏 / 时长</code>
+          四层里的任意几层，勾了几层就建几层目录。改这里只影响之后下载的视频，已经归好的文件不会自动搬家。
         </p>
       </Card>
 
