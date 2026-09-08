@@ -35,6 +35,12 @@ describe('safeFilename', () => {
     expect(safeFilename('   ', '作者', '12345678')).toBe('12345678')
   })
 
+  it('话题紧跟中文标点也要剥（真机实测：「…点名。#搞笑」漏网过）', () => {
+    expect(safeFilename('早期人类军训被突然点名。#搞笑', '心海', 'AW1')).toBe('早期人类军训被突然点名。')
+    expect(safeFilename('好日子！#搞笑#动漫', '作者', 'AW1')).toBe('好日子！')
+    expect(safeFilename('结束了，#农村生活 #搞笑视频', '作者', 'AW1')).toBe('结束了，')
+  })
+
   it('词中间的 # 不误伤（C#教程 不该被剥成 C）', () => {
     expect(safeFilename('C#教程 第一讲', '作者', 'AW1')).toBe('C#教程 第一讲')
   })

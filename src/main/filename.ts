@@ -1,8 +1,28 @@
 import { existsSync } from 'fs'
 import { join } from 'path'
 
-/** 只在词首认 #：`#话题` 是话题，`C#教程` 里的 # 不是。捕获前导空白以便替换后不粘连。 */
-const HASHTAG_RE = /(^|\s)#([^#\s]+)/g
+/**
+ * 话题 token。
+ *
+ * 判据是「# 前面不是 ASCII 字母或数字」：
+ *   - `…点名。#搞笑`、`好日子！#搞笑`、`结束了，#农村生活` 都算话题
+ *     （真机实测漏网过——原来要求 # 前必须是空格，而中文标题里句号紧跟话题极常见）
+ *   - `C#教程`、`F#` 不算，井号前是字母
+ *
+ * 连续话题 `#a#b` 里第二个 # 前面是字母，单趟扫不掉，所以 stripHashtags 循环到稳定。
+ */
+const HASHTAG_RE = /(?<![A-Za-z0-9])#[^#\s]+/g
+
+/** 反复剥到不再变化：处理 `#a#b` 这种紧挨着的话题串 */
+function stripHashtags(value: string): string {
+  let out = value
+  for (let i = 0; i < 10; i++) {
+    const next = out.replace(HASHTAG_RE, ' ')
+    if (next === out) break
+    out = next
+  }
+  return out
+}
 
 /** Windows 非法字符替换 + 空白收敛 */
 function sanitize(value: string): string {
@@ -27,8 +47,8 @@ function sanitize(value: string): string {
  */
 export function safeFilename(title: string, author: string, awemeId: string): string {
   const raw = title ?? ''
-  const body = sanitize(raw.replace(HASHTAG_RE, '$1'))
-  const tagWords = sanitize([...raw.matchAll(HASHTAG_RE)].map(m => m[2]).join(' '))
+  const body = sanitize(stripHashtags(raw))
+  const tagWords = sanitize([...raw.matchAll(HASHTAG_RE)].map(m => m[0].slice(1)).join(' '))
   const base = body || tagWords || sanitize(awemeId) || sanitize(author) || 'video'
   return base.length > 80 ? base.slice(0, 80).trim() : base
 }
