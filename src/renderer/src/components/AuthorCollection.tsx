@@ -28,6 +28,11 @@ export default function AuthorCollection({ notify }: { notify: (text: string) =>
   const [importPlatform, setImportPlatform] = useState('douyin')
   // 员工反馈：抖音和快手混在一张表里分不清谁是哪的 → 按平台分子 tab
   const [tab, setTab] = useState('')
+  // 爬主页确认面板：以前点一下就按写死的 200 条 + 自动下载开跑，员工反馈"没人问过我要爬多少"。
+  // 200 条自动下载 = 一晚上几十 GB，而他当时只想看看这个作者有什么。
+  const [crawlTarget, setCrawlTarget] = useState<AuthorRow | null>(null)
+  const [crawlCount, setCrawlCount] = useState('200')
+  const [crawlAuto, setCrawlAuto] = useState(true)
   const [platforms, setPlatforms] = useState<Array<{ name: string; displayName: string; authorInputPlaceholder: string }>>([])
   const [importText, setImportText] = useState('')
   const [importResult, setImportResult] = useState<ImportResult | null>(null)
@@ -119,14 +124,28 @@ export default function AuthorCollection({ notify }: { notify: (text: string) =>
     refresh()
   }
 
-  async function crawlHome(a: AuthorRow): Promise<void> {
+  /** 点「爬主页」只是打开确认面板，不立刻建任务。默认值保持原行为（200 条 + 自动下载）。 */
+  function openCrawlPanel(a: AuthorRow): void {
+    setCrawlTarget(a)
+    setCrawlCount('200')
+    setCrawlAuto(true)
+  }
+
+  // 与筛选表单同一套校验：正整数 1-1000
+  const crawlCountValid = /^\d+$/.test(crawlCount.trim()) &&
+    Number(crawlCount) >= 1 && Number(crawlCount) <= 1000
+
+  async function startCrawl(): Promise<void> {
+    const a = crawlTarget
+    if (!a || !crawlCountValid) return
+    setCrawlTarget(null) // 先收面板，避免连点重复提交
     // Fix5: 点击立即反馈，让用户知道主页爬取已开始（此前静默启动，用户不知道）
     notify(`正在爬取 ${a.nickname} 的主页…`)
     const r = await api.createTask({
       platform: a.platform, type: 'author', query: a.sec_uid,
-      filters: { timeRange: 'all', duration: 'all', targetCount: 200 },
+      filters: { timeRange: 'all', duration: 'all', targetCount: Number(crawlCount) },
       aiFilterEnabled: false, aiOrganizeEnabled: false,
-      autoDownload: true // 爬作者主页当前默认自动下载
+      autoDownload: crawlAuto
     })
     if (r.skipped) notify(r.reason ?? '该作者主页已爬取过')
     else notify(`已开始爬取 ${a.nickname} 的主页，可在任务列表查看进度`)
@@ -296,6 +315,31 @@ export default function AuthorCollection({ notify }: { notify: (text: string) =>
         </button>
         <span className="text-slate-300">提示：点行排他选中，Ctrl 点选切换，Shift 点选范围，点空白取消，按住左键拖动框选替换</span>
       </div>
+      {crawlTarget && (
+        <div className="mb-3 flex flex-wrap items-center gap-3 rounded-md border border-brand-200 bg-brand-50/40 p-3 text-xs text-slate-600">
+          <span className="font-medium text-slate-700">爬取「{crawlTarget.nickname}」的主页</span>
+          <label htmlFor="crawl-count" className="flex items-center gap-1">
+            目标数量
+            <input
+              id="crawl-count"
+              className="w-20 rounded-md border border-slate-300 px-2 py-1 text-xs outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500"
+              value={crawlCount}
+              onChange={e => setCrawlCount(e.target.value)}
+            />
+          </label>
+          <label className="flex items-center gap-1">
+            <input type="radio" name="crawl-mode" checked={crawlAuto} onChange={() => setCrawlAuto(true)} />
+            <span>自动下载</span>
+          </label>
+          <label className="flex items-center gap-1">
+            <input type="radio" name="crawl-mode" checked={!crawlAuto} onChange={() => setCrawlAuto(false)} />
+            <span>手动挑选</span>
+          </label>
+          <button className={btn('primary', 'sm')} disabled={!crawlCountValid} onClick={() => void startCrawl()}>开始爬取</button>
+          <button className={btn('ghost', 'sm')} onClick={() => setCrawlTarget(null)}>取消</button>
+          {!crawlCountValid && <span className="text-danger-600">数量需在 1-1000</span>}
+        </div>
+      )}
       {importOpen && (
         <div className="mb-3 rounded-md border border-slate-200 bg-slate-50 p-3">
           <label htmlFor="import-platform" className="mb-2 flex items-center gap-2 text-xs text-slate-500">
@@ -431,7 +475,7 @@ export default function AuthorCollection({ notify }: { notify: (text: string) =>
                   <td className="py-2 pr-2 tabular-nums text-slate-500">{a.video_count}</td>
                   <td className="py-2">
                     <div className="flex items-center gap-1">
-                      <button className={btn('primary', 'sm')} onClick={() => void crawlHome(a)}>爬主页</button>
+                      <button className={btn('primary', 'sm')} onClick={() => openCrawlPanel(a)}>爬主页</button>
                       <button className="rounded px-2 py-1 text-xs text-emerald-600 hover:bg-emerald-50" onClick={() => void organizeOne(a)}>整理</button>
                       <button className="rounded px-2 py-1 text-xs text-red-400 hover:bg-red-50" onClick={() => void deleteOne(a.id)}>删除</button>
                     </div>

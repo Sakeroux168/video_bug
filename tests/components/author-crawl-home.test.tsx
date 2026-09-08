@@ -1,0 +1,120 @@
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import AuthorCollection from '../../src/renderer/src/components/AuthorCollection'
+import type { AuthorRow } from '../../src/shared/types'
+import { installFakeApi } from '../helpers/fake-api'
+
+// 员工反馈：点「爬主页」直接就开跑，写死 200 条 + 自动下载，没人问过他要爬多少。
+// 200 条自动下载 = 一晚上几十 GB，且当时只想看看这个作者有什么。
+// 改成先让他填。
+
+const PLATFORMS = [
+  { name: 'douyin', displayName: '抖音', authorInputPlaceholder: 'x' },
+  { name: 'kuaishou', displayName: '快手', authorInputPlaceholder: 'y' }
+]
+
+function author(over: Partial<AuthorRow> = {}): AuthorRow {
+  return {
+    id: 1, platform: 'kuaishou', sec_uid: '3xA1', nickname: '快手甲',
+    home_url: 'https://www.kuaishou.com/profile/3xA1', video_count: 5,
+    last_fetched_at: null, note: null, category: null,
+    organize_state: null, ai_classified_at: null,
+    verify_state: null, verify_error: null,
+    ...over
+  }
+}
+
+async function open(rows: AuthorRow[] = [author()]): Promise<void> {
+  vi.mocked(window.api.listAuthors).mockResolvedValue(rows)
+  vi.mocked(window.api.listPlatforms).mockResolvedValue(PLATFORMS as never)
+  render(<AuthorCollection notify={() => {}} />)
+  // 作者收藏按平台分 tab，默认停在第一个平台（抖音）；这些用例的作者是快手的，先切过去
+  fireEvent.click(await screen.findByRole('tab', { name: /快手/ }))
+  await screen.findByText(rows[0].nickname)
+}
+
+/** 点某一行的「爬主页」 */
+function clickCrawl(nickname: string): void {
+  const row = screen.getByText(nickname).closest('tr')!
+  fireEvent.click(Array.from(row.querySelectorAll('button')).find(b => b.textContent === '爬主页')!)
+}
+
+beforeEach(() => { installFakeApi() })
+
+describe('爬主页前先问清楚爬多少', () => {
+  it('点「爬主页」不立刻建任务，先出确认面板并写明是哪个作者', async () => {
+    await open()
+    clickCrawl('快手甲')
+
+    expect(await screen.findByText(/爬取「快手甲」的主页/)).toBeInTheDocument()
+    expect(window.api.createTask).not.toHaveBeenCalled()
+  })
+
+  it('默认 200 条、自动下载（保持原行为，只是现在看得见、改得了）', async () => {
+    await open()
+    clickCrawl('快手甲')
+
+    expect((await screen.findByLabelText('目标数量') as HTMLInputElement).value).toBe('200')
+    expect((screen.getByLabelText('自动下载') as HTMLInputElement).checked).toBe(true)
+  })
+
+  it('改成 20 条 + 手动挑选 → 按填的值建任务', async () => {
+    await open()
+    clickCrawl('快手甲')
+
+    fireEvent.change(await screen.findByLabelText('目标数量'), { target: { value: '20' } })
+    fireEvent.click(screen.getByLabelText('手动挑选'))
+    fireEvent.click(screen.getByRole('button', { name: '开始爬取' }))
+
+    await waitFor(() => expect(window.api.createTask).toHaveBeenCalledWith(expect.objectContaining({
+      platform: 'kuaishou',
+      type: 'author',
+      query: '3xA1',
+      autoDownload: false,
+      filters: expect.objectContaining({ targetCount: 20 })
+    })))
+  })
+
+  it('数量非法（0 / 1001 / 空）→ 开始按钮禁用，不让建一个必然出问题的任务', async () => {
+    await open()
+    clickCrawl('快手甲')
+    const box = await screen.findByLabelText('目标数量')
+
+    for (const bad of ['0', '1001', '', 'abc']) {
+      fireEvent.change(box, { target: { value: bad } })
+      expect(screen.getByRole('button', { name: '开始爬取' })).toBeDisabled()
+    }
+    fireEvent.change(box, { target: { value: '50' } })
+    expect(screen.getByRole('button', { name: '开始爬取' })).toBeEnabled()
+  })
+
+  it('取消 → 面板收起，一个任务都不建', async () => {
+    await open()
+    clickCrawl('快手甲')
+    fireEvent.click(await screen.findByRole('button', { name: '取消' }))
+
+    await waitFor(() => expect(screen.queryByText(/爬取「快手甲」的主页/)).toBeNull())
+    expect(window.api.createTask).not.toHaveBeenCalled()
+  })
+
+  it('开始后面板收起，不会重复提交', async () => {
+    await open()
+    clickCrawl('快手甲')
+    fireEvent.click(await screen.findByRole('button', { name: '开始爬取' }))
+
+    await waitFor(() => expect(screen.queryByText(/爬取「快手甲」的主页/)).toBeNull())
+    expect(window.api.createTask).toHaveBeenCalledTimes(1)
+  })
+
+  it('换一个作者点爬主页 → 面板跟着换人，不会拿上一个人的设置去爬', async () => {
+    await open([author(), author({ id: 2, sec_uid: '3xA2', nickname: '快手乙' })])
+    clickCrawl('快手甲')
+    await screen.findByText(/爬取「快手甲」的主页/)
+
+    clickCrawl('快手乙')
+    expect(await screen.findByText(/爬取「快手乙」的主页/)).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: '开始爬取' }))
+    await waitFor(() => expect(window.api.createTask).toHaveBeenCalledWith(expect.objectContaining({ query: '3xA2' })))
+  })
+})
