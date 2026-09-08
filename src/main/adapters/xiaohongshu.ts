@@ -26,6 +26,11 @@ function text(value: unknown): string {
   return typeof value === 'string' || typeof value === 'number' ? String(value).trim() : ''
 }
 
+function positiveNumber(value: unknown): number {
+  const n = Number(value)
+  return Number.isFinite(n) && n > 0 ? n : 0
+}
+
 /** 互动数是字符串："57914"、"1.2万"、"3千"；空串是未知，不是 0。 */
 export function parseXiaohongshuCount(value: unknown): number | null {
   const raw = text(value).replace(/,/g, '')
@@ -48,6 +53,15 @@ function buildSearchPage(query: string): string {
   return `https://www.xiaohongshu.com/search_result_ai?keyword=${encodeURIComponent(encodeURIComponent(query))}&source=unknown`
 }
 
+function buildAuthorPage(userId: string): string {
+  return `https://www.xiaohongshu.com/user/profile/${encodeURIComponent(userId)}`
+}
+
+/** 作品页地址。不带 xsec_token：那是一次性短期令牌，不能当永久身份存库。 */
+function buildNotePage(noteId: string): string {
+  return `https://www.xiaohongshu.com/explore/${encodeURIComponent(noteId)}`
+}
+
 const AUTHOR_URL_RE = /^https?:\/\/(?:www\.)?xiaohongshu\.com\/user\/profile\/([A-Za-z0-9]+)(?:[/?#].*)?$/i
 const BARE_USER_ID_RE = /^[A-Za-z0-9]+$/
 
@@ -65,16 +79,30 @@ export function parseXiaohongshuAuthorInput(raw: string): string | null {
 }
 
 // ---------------------------------------------------------------------------
-// 搜索接口：so.xiaohongshu.com/api/sns/web/v2/search/notes
-// 日志里是协议相对形态（//so.xiaohongshu.com/...），只按路径匹配，不要求 scheme。
-// 响应根：{ code, success, msg, data: { items: [...], has_more } }
+// 接口。日志里都是协议相对形态（//so.xiaohongshu.com/...），只按路径匹配，不要求 scheme。
+//   搜索：so.xiaohongshu.com/api/sns/web/v2/search/notes   根 { code, success, msg, data: { items, has_more } }
+//   详情：edith.xiaohongshu.com/api/sns/web/v1/feed        根 { code, success, msg, data: { items, cursor_score, current_time } }
 // ---------------------------------------------------------------------------
 const SEARCH_API_RE = /\/api\/sns\/web\/v2\/search\/notes(?:[/?#]|$)/i
+const DETAIL_API_RE = /\/api\/sns\/web\/v1\/feed(?:[/?#]|$)/i
+
+function itemsOf(json: unknown): unknown[] | null {
+  const items = asObj(asObj(json).data).items
+  return Array.isArray(items) ? items : null
+}
 
 function isSearchResponse(url: string, json: unknown): boolean {
-  if (!SEARCH_API_RE.test(url)) return false
-  return Array.isArray(asObj(asObj(json).data).items)
+  return SEARCH_API_RE.test(url) && itemsOf(json) !== null
 }
+
+/** 详情响应判定：调度器在详情阶段用它认出"这是我刚导航过去那条笔记的详情"。 */
+export function isXiaohongshuDetailResponse(url: string, json: unknown): boolean {
+  return DETAIL_API_RE.test(url) && itemsOf(json) !== null
+}
+
+// ---------------------------------------------------------------------------
+// 列表：笔记存根
+// ---------------------------------------------------------------------------
 
 /**
  * 笔记存根：列表阶段能拿到的全部信息。播放地址、时长、精确发布时间在详情里。
@@ -97,11 +125,14 @@ export interface NoteStubResult {
   skipped: { image: number; other: number }
 }
 
+/** 列表卡片与详情的封面都藏在同一种结构里：先 url_default / url_pre，再 image_list[0].info_list[0].url */
 function coverOf(card: Obj): string {
   const cover = asObj(card.cover)
   const direct = text(cover.url_default) || text(cover.url_pre)
   if (direct) return direct
   const first = asObj((card.image_list as unknown[] | undefined)?.[0])
+  const fromFirst = text(first.url_default) || text(first.url_pre)
+  if (fromFirst) return fromFirst
   const info = asObj((first.info_list as unknown[] | undefined)?.[0])
   return text(info.url)
 }
@@ -113,8 +144,8 @@ function coverOf(card: Obj): string {
  */
 export function parseXiaohongshuNoteStubs(json: unknown): NoteStubResult {
   const result: NoteStubResult = { stubs: [], skipped: { image: 0, other: 0 } }
-  const items = asObj(asObj(json).data).items
-  if (!Array.isArray(items)) return result
+  const items = itemsOf(json)
+  if (!items) return result
   for (const raw of items) {
     const item = asObj(raw)
     if (text(item.model_type) !== 'note') { result.skipped.other++; continue }   // hot_query 等推荐位
@@ -140,6 +171,132 @@ export function parseXiaohongshuNoteStubs(json: unknown): NoteStubResult {
   return result
 }
 
+// ---------------------------------------------------------------------------
+// 详情：完整条目
+// ---------------------------------------------------------------------------
+
+interface StreamCandidate {
+  url: string
+  width: number
+  height: number
+  bitrate: number
+  durationMs: number
+  /** 'EF4' | 'EF5' 等，小红书自有编码标识，含义未取证 */
+  codec: string
+}
+
+/** 播放地址容器：正常在 video.media；缺失时 video.media_v2 是同一份数据的 JSON 字符串副本 */
+function mediaOf(video: Obj): Obj {
+  const media = asObj(video.media)
+  if (Object.keys(media).length > 0) return media
+  const raw = video.media_v2
+  if (typeof raw !== 'string') return {}
+  try { return asObj(JSON.parse(raw)) } catch { return {} }
+}
+
+function collectStreams(media: Obj): StreamCandidate[] {
+  const out: StreamCandidate[] = []
+  const groups = asObj(media.stream)
+  for (const [group, list] of Object.entries(groups)) {
+    if (!Array.isArray(list)) continue
+    for (const raw of list) {
+      const s = asObj(raw)
+      // master_url 带签名与时效；backup_urls 无签名，作回退
+      const backups = Array.isArray(s.backup_urls) ? s.backup_urls.map(text).filter(Boolean) : []
+      const url = text(s.master_url) || backups[0] || ''
+      if (!url) continue
+      out.push({
+        url,
+        width: positiveNumber(s.width),
+        height: positiveNumber(s.height),
+        bitrate: positiveNumber(s.avg_bitrate) || positiveNumber(s.video_bitrate),
+        durationMs: positiveNumber(s.duration),
+        codec: text(s.video_codec) || group
+      })
+    }
+  }
+  return out
+}
+
+/**
+ * 清晰度选择。转码目标是 1080×1920，再高的档位是白花流量与转码时间
+ * （实测 2160p 单文件 212 MB）。所以：
+ *   1. 短边 ≤1080 的里面取最大
+ *   2. 全都高于 1080 时取最小的那档
+ *   3. 同分辨率优先 EF4：编码含义未取证，EF4 只有低档位、更像基础编码，更保守
+ *   4. 再同则取码率高的
+ */
+function pickStream(candidates: StreamCandidate[]): StreamCandidate | null {
+  if (candidates.length === 0) return null
+  const shortSide = (c: StreamCandidate): number => Math.min(c.width, c.height)
+  const tieBreak = (a: StreamCandidate, b: StreamCandidate): number => {
+    if (a.codec !== b.codec) return a.codec === 'EF4' ? -1 : b.codec === 'EF4' ? 1 : 0
+    return b.bitrate - a.bitrate
+  }
+  const fits = candidates.filter(c => shortSide(c) <= 1080)
+  if (fits.length > 0) {
+    return [...fits].sort((a, b) => (shortSide(b) - shortSide(a)) || tieBreak(a, b))[0]
+  }
+  return [...candidates].sort((a, b) => (shortSide(a) - shortSide(b)) || tieBreak(a, b))[0]
+}
+
+/** 标题为空时用正文顶上：去掉 `#xxx[话题]#` 标记，收敛空白 */
+function titleFromDesc(desc: string): string {
+  return desc.replace(/#[^#\n]*?\[话题\]#/g, ' ').replace(/\s+/g, ' ').trim()
+}
+
+/** 13 位毫秒 → 整秒；10 位秒保留；其余 0 */
+function unixSeconds(value: unknown): number {
+  const n = Number(value)
+  if (!Number.isFinite(n) || n <= 0) return 0
+  return Math.floor(n > 1_000_000_000_000 ? n / 1000 : n)
+}
+
+/**
+ * 从笔记详情响应组装完整条目。播放地址只有这里有。
+ * 一档地址都取不到、或不是视频笔记 → null，不入库一个点不开的视频。
+ */
+export function parseXiaohongshuNoteDetail(json: unknown): VideoItem | null {
+  const items = itemsOf(json)
+  if (!items) return null
+  const item = items.map(asObj).find(i => Object.keys(asObj(i.note_card)).length > 0)
+  if (!item) return null
+  const card = asObj(item.note_card)
+  if (text(card.type) !== 'video') return null
+
+  const noteId = text(card.note_id) || text(item.id)
+  const video = asObj(card.video)
+  const media = mediaOf(video)
+  const selected = pickStream(collectStreams(media))
+  if (!noteId || !selected) return null
+
+  const user = asObj(card.user)
+  const interact = asObj(card.interact_info)
+  const authorId = text(user.user_id)
+
+  // 时长：capa.duration（秒）→ media.video.duration（秒）→ 所选档位的毫秒时长
+  const durationSec = positiveNumber(asObj(video.capa).duration)
+    || positiveNumber(asObj(media.video).duration)
+    || (selected.durationMs > 0 ? selected.durationMs / 1000 : 0)
+
+  return {
+    awemeId: noteId,
+    title: text(card.title) || titleFromDesc(text(card.desc)),
+    authorSecUid: authorId,
+    authorNickname: text(user.nickname) || text(user.nick_name),
+    authorHomeUrl: authorId ? buildAuthorPage(authorId) : '',
+    playUrl: selected.url,
+    coverUrl: coverOf(card),
+    width: selected.width,
+    height: selected.height,
+    durationSec,
+    publishTime: unixSeconds(card.time),
+    likes: parseXiaohongshuCount(interact.liked_count) ?? 0,
+    comments: parseXiaohongshuCount(interact.comment_count),
+    sourceUrl: buildNotePage(noteId)
+  }
+}
+
 export const xiaohongshuAdapter: PlatformAdapter = {
   name: 'xiaohongshu',
   displayName: '小红书',
@@ -151,26 +308,27 @@ export const xiaohongshuAdapter: PlatformAdapter = {
   authorInputPlaceholder: 'https://www.xiaohongshu.com/user/profile/xxx',
   downloadReferer: 'https://www.xiaohongshu.com/',
 
-  apiUrlPatterns: [SEARCH_API_RE],
+  apiUrlPatterns: [SEARCH_API_RE, DETAIL_API_RE],
   // content-type 不标准时的兜底特征
   rawUrlHints: ['/api/sns/web/'],
 
   buildSearchUrl: (query: string) => buildSearchPage(query),
   buildHashtagUrl: (query: string) => buildSearchPage(`#${query}`),
-  // 以下两个是页面地址形态，未经真机验证
-  buildAuthorUrl: (userId: string) => `https://www.xiaohongshu.com/user/profile/${encodeURIComponent(userId)}`,
-  buildVideoUrl: (noteId: string) => `https://www.xiaohongshu.com/explore/${encodeURIComponent(noteId)}`,
+  buildAuthorUrl: buildAuthorPage,
+  buildVideoUrl: buildNotePage,
 
   parseAuthorInput: parseXiaohongshuAuthorInput,
   isShortLink: isXiaohongshuShortLink,
 
+  // 详情响应不属于任何任务类型的"列表"：用户手点笔记不能污染正在跑的任务。
+  // 调度器在详情阶段单独用 isXiaohongshuDetailResponse 认领。
   matchesTaskResponse: (type: TaskType, url: string, json: unknown) => {
     if (type === 'keyword' || type === 'hashtag') return isSearchResponse(url, json)
     return false // 作者主页接口未取证，不推测
   },
 
   // 列表没有播放地址，不能伪造成可下载的 VideoItem。
-  // 完整条目由调度器在详情阶段组装（任务 2/3），这里保持为空。
+  // 完整条目由调度器在详情阶段用 parseXiaohongshuNoteDetail 组装（任务 3）。
   parseApiJson: (_url: string, _json: unknown): VideoItem[] => [],
 
   normalizePlayUrl: (rawUrl: string) => rawUrl

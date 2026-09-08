@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { getAdapter, listAdapters } from '../src/main/adapters'
 import { douyinAdapter } from '../src/main/adapters/douyin'
 import { kuaishouAdapter } from '../src/main/adapters/kuaishou'
-import { xiaohongshuAdapter, parseXiaohongshuNoteStubs } from '../src/main/adapters/xiaohongshu'
+import { xiaohongshuAdapter, parseXiaohongshuNoteStubs, parseXiaohongshuNoteDetail, isXiaohongshuDetailResponse } from '../src/main/adapters/xiaohongshu'
 
 // 小红书接入第 1 步：只建骨架，不写解析器。
 //
@@ -204,5 +204,179 @@ describe('parseXiaohongshuNoteStubs 只收视频笔记', () => {
 
   it('parseApiJson 仍为空：列表没有播放地址，不能伪造成可下载的 VideoItem', () => {
     expect(xiaohongshuAdapter.parseApiJson(SEARCH_URL, SEARCH_RESPONSE)).toEqual([])
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 任务 2：笔记详情解析。结构来自 2026-09-08 用户本机抓取的
+// edith.xiaohongshu.com/api/sns/web/v1/feed 响应，字段名与层级一比一，值编造。
+//
+// 播放地址只在这里有：note_card.video.media.stream.{EF4|EF5|EF6|EF7}[].master_url
+// 实测一条视频给了 EF4 一档（720p）+ EF5 四档（720/1080/1440/2160p，2160p 单文件 212MB）。
+// ---------------------------------------------------------------------------
+const DETAIL_URL = '//edith.xiaohongshu.com/api/sns/web/v1/feed'
+
+function stream(codec: 'EF4' | 'EF5', type: number, w: number, h: number, bitrate: number, over: Record<string, unknown> = {}) {
+  return {
+    stream_type: type, stream_desc: `WEB_${type}`, default_stream: 0, format: 'mp4',
+    width: w, height: h, duration: 275436, size: 1000, volume: 0, avg_bitrate: bitrate, fps: 60,
+    video_codec: codec, video_bitrate: bitrate - 100000, video_duration: 275366,
+    audio_codec: 'aac', audio_bitrate: 128064, audio_duration: 275435, audio_channels: 2, rotate: 0,
+    master_url: `http://sns-video.test/stream/${type}.mp4?sign=SIG&t=6aa455a6`,
+    backup_urls: [`http://sns-bak.test/stream/${type}.mp4`],
+    hdr_type: 0, quality_type: 'HD', weight: 62,
+    ...over
+  }
+}
+
+const FULL_STREAMS = {
+  EF4: [stream('EF4', 259, 720, 1280, 1660659)],
+  EF5: [
+    stream('EF5', 114, 720, 1280, 1117011),
+    stream('EF5', 115, 1080, 1920, 1791480),
+    stream('EF5', 108, 1440, 2560, 3671723),
+    stream('EF5', 109, 2160, 3840, 6172777)
+  ],
+  EF6: [],
+  EF7: []
+}
+
+function detailCard(over: Record<string, unknown> = {}, streams: Record<string, unknown[]> = FULL_STREAMS) {
+  const media = {
+    video_id: 137673405018525020,
+    video: { stream_types: [259, 114, 115, 108, 109], biz_name: 110, biz_id: 'B', duration: 276, md5: 'M', hdr_type: 0, drm_type: 0 },
+    stream: streams
+  }
+  return {
+    note_id: 'NOTE1',
+    title: '详情标题',
+    desc: '#重庆美食[话题]# 正文 @某人',
+    type: 'video',
+    time: 1763540281000,
+    last_update_time: 1763523708000,
+    user: { user_id: 'USER1', nickname: '详情作者', avatar: 'http://a.test/x', xsec_token: 'UT' },
+    interact_info: { nice_count: '', liked: false, comment_count: '436', share_count: '1502', followed: false, relation: 'none', liked_count: '5373', collected: false, collected_count: '504' },
+    image_list: [{ url_default: 'http://cover.test/c.webp', url_pre: 'http://cover.test/p.webp', file_id: 'F', url: '', width: 1769, height: 2359, live_photo: false, stream: {}, trace_id: '', info_list: [{ image_scene: 'WB_DFT', url: 'http://cover.test/c.webp' }] }],
+    video: {
+      media_v2: JSON.stringify(media),
+      media,
+      image: { thumbnail_fileid: 'T' },
+      capa: { duration: 275 }
+    },
+    tag_list: [{ type: 'topic', id: 'TAG', name: '重庆美食' }],
+    at_user_list: [],
+    share_info: { un_share: false },
+    ...over
+  }
+}
+
+function detailResponse(card: Record<string, unknown> = detailCard()) {
+  return {
+    code: 0, success: true, msg: '成功',
+    data: { cursor_score: '', items: [{ id: 'NOTE1', model_type: 'note', note_card: card, ignore: false }], current_time: 1788852326725 }
+  }
+}
+
+describe('xiaohongshuAdapter 详情接口匹配', () => {
+  it('URL 特征认得详情接口（协议相对形态）', () => {
+    expect(xiaohongshuAdapter.apiUrlPatterns.some(r => r.test(DETAIL_URL))).toBe(true)
+    expect(xiaohongshuAdapter.apiUrlPatterns.some(r => r.test('https://edith.xiaohongshu.com/api/sns/web/v1/feed'))).toBe(true)
+  })
+
+  it('isXiaohongshuDetailResponse：URL 对 + items 是数组才算', () => {
+    expect(isXiaohongshuDetailResponse(DETAIL_URL, detailResponse())).toBe(true)
+    expect(isXiaohongshuDetailResponse(SEARCH_URL, detailResponse())).toBe(false)
+    expect(isXiaohongshuDetailResponse(DETAIL_URL, { data: {} })).toBe(false)
+  })
+
+  it('详情响应不会被关键词任务当成搜索结果（用户手点笔记不能污染任务）', () => {
+    expect(xiaohongshuAdapter.matchesTaskResponse('keyword', DETAIL_URL, detailResponse())).toBe(false)
+  })
+})
+
+describe('parseXiaohongshuNoteDetail 组装完整条目', () => {
+  it('取标题、作者、时长、发布时间、点赞、评论、封面、作品链接、播放地址与宽高', () => {
+    const item = parseXiaohongshuNoteDetail(detailResponse())
+    expect(item).toEqual({
+      awemeId: 'NOTE1',
+      title: '详情标题',
+      authorSecUid: 'USER1',
+      authorNickname: '详情作者',
+      authorHomeUrl: 'https://www.xiaohongshu.com/user/profile/USER1',
+      // 选 1080p：转码目标就是 1080×1920，再高是白花流量与转码时间
+      playUrl: 'http://sns-video.test/stream/115.mp4?sign=SIG&t=6aa455a6',
+      coverUrl: 'http://cover.test/c.webp',
+      width: 1080,
+      height: 1920,
+      durationSec: 275,
+      publishTime: 1763540281,
+      likes: 5373,
+      comments: 436,
+      // 作品链接不带 xsec_token：那是一次性短期令牌，不能当永久身份存库
+      sourceUrl: 'https://www.xiaohongshu.com/explore/NOTE1'
+    })
+  })
+
+  it('清晰度选择：短边 ≤1080 里取最大；2160p 与 1440p 有更小的可选时不要', () => {
+    const only720and2160 = { EF4: [], EF5: [stream('EF5', 114, 720, 1280, 1), stream('EF5', 109, 2160, 3840, 9)], EF6: [], EF7: [] }
+    expect(parseXiaohongshuNoteDetail(detailResponse(detailCard({}, only720and2160)))?.playUrl).toContain('/114.mp4')
+  })
+
+  it('全部高于 1080 时取最小的那档，不要 2160p', () => {
+    const big = { EF4: [], EF5: [stream('EF5', 108, 1440, 2560, 3), stream('EF5', 109, 2160, 3840, 6)], EF6: [], EF7: [] }
+    expect(parseXiaohongshuNoteDetail(detailResponse(detailCard({}, big)))?.playUrl).toContain('/108.mp4')
+  })
+
+  it('同分辨率时优先 EF4：编码含义未取证，EF4 更保守', () => {
+    const tie = { EF4: [stream('EF4', 259, 1080, 1920, 1)], EF5: [stream('EF5', 115, 1080, 1920, 9)], EF6: [], EF7: [] }
+    expect(parseXiaohongshuNoteDetail(detailResponse(detailCard({}, tie)))?.playUrl).toContain('/259.mp4')
+  })
+
+  it('master_url 缺失时回落 backup_urls（无签名版本）', () => {
+    const noMaster = { EF4: [], EF5: [stream('EF5', 115, 1080, 1920, 1, { master_url: '' })], EF6: [], EF7: [] }
+    expect(parseXiaohongshuNoteDetail(detailResponse(detailCard({}, noMaster)))?.playUrl).toBe('http://sns-bak.test/stream/115.mp4')
+  })
+
+  it('media 缺失但 media_v2（JSON 字符串副本）在 → 从副本里取', () => {
+    const card = detailCard()
+    const video = card.video as Record<string, unknown>
+    delete video.media
+    expect(parseXiaohongshuNoteDetail(detailResponse(card))?.playUrl).toContain('/115.mp4')
+  })
+
+  it('一档播放地址都取不到 → 整条丢弃，不入库一个点不开的视频', () => {
+    expect(parseXiaohongshuNoteDetail(detailResponse(detailCard({}, { EF4: [], EF5: [], EF6: [], EF7: [] })))).toBeNull()
+    const card = detailCard()
+    delete (card as Record<string, unknown>).video
+    expect(parseXiaohongshuNoteDetail(detailResponse(card))).toBeNull()
+  })
+
+  it('图文笔记（type≠video）→ null', () => {
+    expect(parseXiaohongshuNoteDetail(detailResponse(detailCard({ type: 'normal' })))).toBeNull()
+  })
+
+  it('时长回落：capa.duration → media.video.duration → 所选档位毫秒时长', () => {
+    const card = detailCard()
+    ;(card.video as Record<string, unknown>).capa = {}
+    expect(parseXiaohongshuNoteDetail(detailResponse(card))?.durationSec).toBe(276)
+    const media = ((card.video as Record<string, unknown>).media as Record<string, unknown>)
+    ;(media.video as Record<string, unknown>).duration = 0
+    expect(parseXiaohongshuNoteDetail(detailResponse(card))?.durationSec).toBeCloseTo(275.436, 3)
+  })
+
+  it('标题为空时用正文（去掉话题标记）顶上', () => {
+    const item = parseXiaohongshuNoteDetail(detailResponse(detailCard({ title: '', desc: '#重庆美食[话题]# 正文一句 #豆花饭[话题]#' })))
+    expect(item?.title).toBe('正文一句')
+  })
+
+  it('评论字符串为空 → null；「万」后缀能认', () => {
+    const a = detailCard({ interact_info: { liked_count: '1.2万', comment_count: '' } })
+    expect(parseXiaohongshuNoteDetail(detailResponse(a))).toMatchObject({ likes: 12000, comments: null })
+  })
+
+  it('畸形响应不抛错，返回 null', () => {
+    for (const json of [null, 'x', [], {}, { data: {} }, { data: { items: [] } }, { data: { items: [{}] } }]) {
+      expect(parseXiaohongshuNoteDetail(json)).toBeNull()
+    }
   })
 })
