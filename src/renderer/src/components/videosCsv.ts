@@ -92,3 +92,24 @@ export function saveCsvFile(csv: string, fileName: string): void {
 export function csvFileName(prefix: string): string {
   return `${prefix}-${new Date().toISOString().slice(0, 10)}.csv`
 }
+
+/** 路径归一：斜杠统一成 /，去掉末尾斜杠，转小写（Windows 文件系统大小写不敏感） */
+function normPath(p: string): string {
+  return p.replace(/\\/g, '/').replace(/\/{2,}/g, '/').replace(/\/+$/, '').toLowerCase()
+}
+
+/**
+ * 取出「文件位于 downloadDir/…segments 这个文件夹底下」的视频。
+ *
+ * 判据刻意用路径前缀，而不是去推算归档层级怎么配的——层级开关一改目录结构就变，
+ * 按路径判永远和磁盘上看到的一致。前缀后必须紧跟分隔符，
+ * 否则「搞笑」会把「搞笑视频」也一起收走。
+ */
+export function filterVideosUnder(rows: VideoRow[], downloadDir: string, segments: string[]): VideoRow[] {
+  const prefix = normPath([downloadDir, ...segments].join('/'))
+  return rows.filter(r => {
+    if (!r.local_path) return false // 没下载的不算在内
+    const p = normPath(r.local_path)
+    return p === prefix || p.startsWith(prefix + '/')
+  })
+}

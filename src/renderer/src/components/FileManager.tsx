@@ -4,7 +4,7 @@ import type { FilesTree, FilesTreeAuthor } from '../../../shared/types'
 import { Card, btn } from './ui'
 import { useMarqueeSelect } from './useMarqueeSelect'
 import { useTableSelection } from './useTableSelection'
-import { buildVideosCsv, toVideoExportRows, saveCsvFile, csvFileName } from './videosCsv'
+import { buildVideosCsv, toVideoExportRows, saveCsvFile, csvFileName, filterVideosUnder } from './videosCsv'
 
 /** 字节 → MB 字符串（保留 1 位小数，行内列用） */
 function formatMB(size: number): string {
@@ -51,16 +51,54 @@ export default function FileManager({ notify }: { notify: (text: string) => void
     void api.listPlatforms().then(list => setPlatformNames(Object.fromEntries(list.map(p => [p.name, p.displayName]))))
   }, [])
 
-  /** 跨任务导出所有已下载视频的数据表 */
-  async function exportAllDownloaded(): Promise<void> {
-    const rows = await api.listDownloadedVideos()
+  /**
+   * 导出视频数据表。segments 为空 = 全部已下载；给了就只导那个文件夹底下的。
+   * 按路径前缀筛而不是按品类字段筛：归档层级可配，目录结构会变，
+   * 按路径判永远和用户在这一页看到的一致。
+   */
+  async function exportUnder(segments: string[], label: string): Promise<void> {
+    const all = await api.listDownloadedVideos()
+    const rows = segments.length === 0 ? all : filterVideosUnder(all, downloadDir, segments)
     if (rows.length === 0) {
-      notify('还没有已下载的视频，没有可导出的数据')
+      notify(`${label}没有已下载的视频，没有可导出的数据`)
       return
     }
     const csv = buildVideosCsv(toVideoExportRows(rows, name => platformNames[name] ?? name))
-    saveCsvFile(csv, csvFileName('全部已下载视频数据'))
-    notify(`已导出 ${rows.length} 条视频数据`)
+    saveCsvFile(csv, csvFileName(`视频数据-${label}`))
+    notify(`已导出 ${rows.length} 条视频数据（${label}）`)
+  }
+
+  /** 跨任务导出所有已下载视频的数据表 */
+  async function exportAllDownloaded(): Promise<void> {
+    await exportUnder([], '全部已下载')
+  }
+
+  /** 导出勾选的多个品类：各自按目录取，合并成一张表 */
+  async function exportSelectedCats(): Promise<void> {
+    const names = [...selectedCats]
+    const all = await api.listDownloadedVideos()
+    const rows = names.flatMap(n => filterVideosUnder(all, downloadDir, [n]))
+    if (rows.length === 0) {
+      notify('选中的品类下没有已下载的视频，没有可导出的数据')
+      return
+    }
+    const csv = buildVideosCsv(toVideoExportRows(rows, name => platformNames[name] ?? name))
+    saveCsvFile(csv, csvFileName(`视频数据-${names.length} 个品类`))
+    notify(`已导出 ${rows.length} 条视频数据（${names.length} 个品类）`)
+  }
+
+  /** 导出勾选的多个作者（当前品类下）：各自按目录取，合并成一张表 */
+  async function exportSelectedAuthors(): Promise<void> {
+    const names = [...selectedAuthors]
+    const all = await api.listDownloadedVideos()
+    const rows = names.flatMap(n => filterVideosUnder(all, downloadDir, [current ?? '', n]))
+    if (rows.length === 0) {
+      notify('选中的作者下没有已下载的视频，没有可导出的数据')
+      return
+    }
+    const csv = buildVideosCsv(toVideoExportRows(rows, name => platformNames[name] ?? name))
+    saveCsvFile(csv, csvFileName(`视频数据-${names.length} 个作者`))
+    notify(`已导出 ${rows.length} 条视频数据（${names.length} 个作者）`)
   } // 定位路径基准（与 tree 同一次刷新快照，主进程按最新设置二次校验）
 
   // 两级各自独立锚点；普通点击：一级钻取 / 二级排他选择，Ctrl 切换，Shift 范围（与作者表格语义一致）
@@ -173,6 +211,14 @@ export default function FileManager({ notify }: { notify: (text: string) => void
           >
             删除选中作者({selectedAuthors.size})
           </button>
+          <button
+            className={hintCls + (selectedAuthors.size ? ' text-slate-600 hover:bg-slate-100' : ' text-slate-300')}
+            disabled={selectedAuthors.size === 0}
+            onClick={() => void exportSelectedAuthors()}
+          >
+            导出选中作者({selectedAuthors.size})
+          </button>
+          <button className={btn('secondary', 'sm')} onClick={() => void exportUnder([current], `品类「${current}」`)}>导出本品类</button>
           <button className={btn('secondary', 'sm')} onClick={() => void refresh()}>刷新</button>
           <span className="text-slate-300">提示：点行排他选中，Ctrl 点选切换，Shift 点选范围，点空白取消，按住左键拖动框选替换</span>
         </div>
@@ -210,6 +256,7 @@ export default function FileManager({ notify }: { notify: (text: string) => void
                     <td className="py-2 pr-2 text-slate-500">{formatMB(a.size)}</td>
                     <td className="py-2">
                       <button className="rounded px-2 py-1 text-xs text-brand-500 hover:bg-brand-50" onClick={() => void locateDir(joinPath(downloadDir, current, a.name), `作者「${a.name}」`)}>定位</button>
+                      <button className="rounded px-2 py-1 text-xs text-slate-600 hover:bg-slate-100" onClick={() => void exportUnder([current, a.name], `作者「${a.name}」`)}>导出</button>
                       <button className="rounded px-2 py-1 text-xs text-red-400 hover:bg-red-50" onClick={() => void deleteAuthorNames([a.name])}>删除</button>
                     </td>
                   </tr>
@@ -240,6 +287,13 @@ export default function FileManager({ notify }: { notify: (text: string) => void
           删除选中品类({selectedCats.size})
         </button>
         <button className={btn('secondary', 'sm')} onClick={() => void refresh()}>刷新</button>
+        <button
+          className={hintCls + (selectedCats.size ? ' text-slate-600 hover:bg-slate-100' : ' text-slate-300')}
+          disabled={selectedCats.size === 0}
+          onClick={() => void exportSelectedCats()}
+        >
+          导出选中品类({selectedCats.size})
+        </button>
         <button className={btn('secondary', 'sm')} onClick={() => void exportAllDownloaded()}>导出全部已下载</button>
         <span className="text-sm font-medium tabular-nums text-slate-700">总大小：{formatSize(tree?.totalSize ?? 0)}</span>
         <span className="text-slate-300">提示：点品类行进入二级页，Ctrl 点选切换，Shift 点选范围，按住左键拖动框选替换</span>

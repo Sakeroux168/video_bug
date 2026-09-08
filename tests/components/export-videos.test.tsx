@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
 import TaskList from '../../src/renderer/src/components/TaskList'
 import FileManager from '../../src/renderer/src/components/FileManager'
 import type { TaskRow, VideoRow, TaskStats } from '../../src/shared/types'
@@ -160,5 +160,100 @@ describe('文件管理导出全部已下载', () => {
 
     fireEvent.click(screen.getByRole('button', { name: /导出全部已下载/ }))
     await waitFor(() => expect(notify).toHaveBeenCalledWith(expect.stringMatching(/没有已下载/)))
+  })
+})
+
+// 员工在文件管理里点进「搞笑」，想导的就是这个品类的表，而不是全部。
+// 范围一律按"文件在不在这个文件夹底下"判定——归档层级可配，目录结构会变，
+// 按路径判永远和这一页看到的一致。
+describe('文件管理按品类/作者导出', () => {
+  const DIR = 'D:\\dl'
+  const TREE = {
+    downloadDir: DIR,
+    totalSize: 0,
+    categories: [
+      { name: '搞笑', videoCount: 2, size: 100, authors: [
+        { name: '张三', videoCount: 1, size: 50 },
+        { name: '李四', videoCount: 1, size: 50 }
+      ] },
+      { name: '美食', videoCount: 1, size: 50, authors: [{ name: '王五', videoCount: 1, size: 50 }] }
+    ]
+  }
+
+  const ROWS = [
+    makeVideo(1, { title: '搞笑张三', local_path: `${DIR}\\搞笑\\张三\\竖屏\\一分钟内\\a.mp4` }),
+    makeVideo(2, { title: '搞笑李四', local_path: `${DIR}\\搞笑\\李四\\竖屏\\一分钟内\\b.mp4` }),
+    makeVideo(3, { title: '美食王五', local_path: `${DIR}\\美食\\王五\\竖屏\\一分钟内\\c.mp4` })
+  ]
+
+  async function openFileManager(notify = (): void => {}): Promise<void> {
+    vi.mocked(window.api.getFilesTree).mockResolvedValue(TREE as never)
+    vi.mocked(window.api.listDownloadedVideos).mockResolvedValue(ROWS)
+    render(<FileManager notify={notify} />)
+    await screen.findByText('搞笑')
+  }
+
+  /** 进入某个品类的二级页 */
+  async function enterCategory(name: string): Promise<void> {
+    fireEvent.click(screen.getByText(name).closest('tr')!)
+    await screen.findByText(`当前品类：${name}`)
+  }
+
+  it('进入品类后「导出本品类」只导该品类下的视频', async () => {
+    const cap = captureDownload()
+    await openFileManager()
+    await enterCategory('搞笑')
+
+    fireEvent.click(screen.getByRole('button', { name: '导出本品类' }))
+    await waitFor(async () => expect(await cap.text()).toContain('搞笑张三'))
+
+    const csv = await cap.text()
+    expect(csv.split('\r\n')).toHaveLength(3) // 表头 + 2 行
+    expect(csv).toContain('搞笑李四')
+    expect(csv).not.toContain('美食王五')
+  })
+
+  it('作者行的「导出」只导那一个作者', async () => {
+    const cap = captureDownload()
+    await openFileManager()
+    await enterCategory('搞笑')
+
+    const row = screen.getByText('张三').closest('tr')!
+    fireEvent.click(within(row).getByRole('button', { name: '导出' }))
+    await waitFor(async () => expect(await cap.text()).toContain('搞笑张三'))
+
+    const csv = await cap.text()
+    expect(csv.split('\r\n')).toHaveLength(2)
+    expect(csv).not.toContain('搞笑李四')
+  })
+
+  it('品类列表页「导出选中品类」只导勾中的', async () => {
+    const cap = captureDownload()
+    await openFileManager()
+
+    fireEvent.click(screen.getByText('美食').closest('tr')!.querySelector('input[type=checkbox]')!)
+    fireEvent.click(screen.getByRole('button', { name: /导出选中品类\(1\)/ }))
+    await waitFor(async () => expect(await cap.text()).toContain('美食王五'))
+
+    const csv = await cap.text()
+    expect(csv.split('\r\n')).toHaveLength(2)
+    expect(csv).not.toContain('搞笑张三')
+  })
+
+  it('一个品类都没勾 → 按钮禁用', async () => {
+    await openFileManager()
+    expect(screen.getByRole('button', { name: /导出选中品类\(0\)/ })).toBeDisabled()
+  })
+
+  it('该品类磁盘上有文件夹但库里没有对应记录 → 明说没有可导出的，不甩空表', async () => {
+    const notify = vi.fn()
+    vi.mocked(window.api.getFilesTree).mockResolvedValue(TREE as never)
+    vi.mocked(window.api.listDownloadedVideos).mockResolvedValue([])
+    render(<FileManager notify={notify} />)
+    await screen.findByText('搞笑')
+    await enterCategory('搞笑')
+
+    fireEvent.click(screen.getByRole('button', { name: '导出本品类' }))
+    await waitFor(() => expect(notify).toHaveBeenCalledWith(expect.stringMatching(/没有已下载的视频/)))
   })
 })

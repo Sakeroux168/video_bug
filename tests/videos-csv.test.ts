@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { buildVideosCsv, toVideoExportRows } from '../src/renderer/src/components/videosCsv'
+import { buildVideosCsv, toVideoExportRows, filterVideosUnder } from '../src/renderer/src/components/videosCsv'
 import type { VideoRow } from '../src/shared/types'
 
 // 员工要一份可以交出去的表格：作者名、原视频标题、原视频链接、点赞、评论，
@@ -117,5 +117,55 @@ describe('buildVideosCsv', () => {
 
   it('空列表只输出表头，不产出空行', () => {
     expect(buildVideosCsv([])).toBe('平台,作者,标题,作品链接,点赞,评论,时长(秒),本地文件名')
+  })
+})
+
+// 文件管理里按品类/作者导出：判据是"文件在不在这个文件夹底下"，
+// 不去猜归档层级怎么配的——层级开关一改，目录结构就变，按路径前缀判永远对。
+describe('filterVideosUnder', () => {
+  const DIR = 'C:\\Users\\u\\Downloads\\爬取视频'
+  const rows = [
+    video({ id: 1, local_path: `${DIR}\\搞笑\\张三\\竖屏\\一分钟内\\a.mp4` }),
+    video({ id: 2, local_path: `${DIR}\\搞笑\\李四\\竖屏\\一分钟内\\b.mp4` }),
+    video({ id: 3, local_path: `${DIR}\\美食\\张三\\竖屏\\一分钟内\\c.mp4` }),
+    video({ id: 4, local_path: null })
+  ]
+
+  it('按品类过滤：只留该品类目录下的', () => {
+    expect(filterVideosUnder(rows, DIR, ['搞笑']).map(v => v.id)).toEqual([1, 2])
+    expect(filterVideosUnder(rows, DIR, ['美食']).map(v => v.id)).toEqual([3])
+  })
+
+  it('按品类+作者过滤', () => {
+    expect(filterVideosUnder(rows, DIR, ['搞笑', '张三']).map(v => v.id)).toEqual([1])
+  })
+
+  it('没下载的（local_path 为空）永远不算在内', () => {
+    expect(filterVideosUnder(rows, DIR, []).map(v => v.id)).toEqual([1, 2, 3])
+  })
+
+  it('正斜杠与反斜杠混用也认（库里两种路径都可能有）', () => {
+    const mixed = [video({ id: 9, local_path: `${DIR}/搞笑/张三/x.mp4` })]
+    expect(filterVideosUnder(mixed, DIR, ['搞笑', '张三']).map(v => v.id)).toEqual([9])
+  })
+
+  it('Windows 路径大小写不敏感', () => {
+    expect(filterVideosUnder(rows, DIR.toUpperCase(), ['搞笑']).map(v => v.id)).toEqual([1, 2])
+  })
+
+  it('前缀相同但不是同一个文件夹的不能误收（搞笑 不该匹配 搞笑视频）', () => {
+    const near = [
+      video({ id: 11, local_path: `${DIR}\\搞笑\\a.mp4` }),
+      video({ id: 12, local_path: `${DIR}\\搞笑视频\\b.mp4` })
+    ]
+    expect(filterVideosUnder(near, DIR, ['搞笑']).map(v => v.id)).toEqual([11])
+  })
+
+  it('下载目录尾部有没有斜杠都不影响', () => {
+    expect(filterVideosUnder(rows, DIR + '\\', ['搞笑']).map(v => v.id)).toEqual([1, 2])
+  })
+
+  it('目录下一个文件都没有 → 空数组，不抛错', () => {
+    expect(filterVideosUnder(rows, DIR, ['不存在的品类'])).toEqual([])
   })
 })
