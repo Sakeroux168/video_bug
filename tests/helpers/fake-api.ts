@@ -53,6 +53,7 @@ function freshApi(): Api {
     getSettings: vi.fn(async () => makeSettings()),
     saveSettings: vi.fn(async () => {}),
     testAi: vi.fn(async () => ({ ok: true })),
+    openBrowserFor: vi.fn(async () => ({ ok: true })),
     showBrowser: vi.fn(async () => {}),
     hideBrowser: vi.fn(async () => {}),
     pickDownloadDir: vi.fn(async () => null),

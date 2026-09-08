@@ -227,7 +227,7 @@ app.whenReady().then(() => {
 
   // 内嵌浏览器默认加载抖音首页（此前只创建视图未加载，导致「内置浏览器」标签空白）。
   // 窗口不再预先 init：load 时按目标平台创建，分区/标题都跟着平台走。
-  void browser.load(douyinAdapter, 'https://www.douyin.com/')
+  void browser.load(douyinAdapter, douyinAdapter.homeUrl)
   downloader.onEvent(e => push(e))
 
   // 断点续传：running→paused；downloading→pending，与已有 pending 一起重新入队

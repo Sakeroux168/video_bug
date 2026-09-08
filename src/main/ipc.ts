@@ -259,6 +259,17 @@ export function registerIpc(deps: IpcDeps): void {
     catch (err) { return { ok: false, error: String(err) } }
   })
 
+  // 按平台打开内置浏览器。此前只有 browser:show（显示"当前那个窗口"），
+  // 用户没有任何办法主动切到快手——而扫码登录只能在各自平台的窗口里做。
+  ipcMain.handle('browser:open', async (_e, platform: string) => {
+    const adapter = getAdapter(platform)
+    if (!adapter) return { ok: false, error: `不支持的平台：${platform}` }
+    // 切平台会销毁重建窗口（分区只能建窗口时定死）。任务正在用这个窗口，切了就等于打断它。
+    if (scheduler.isRunning) return { ok: false, error: '有任务正在运行，切换平台会打断它，请先暂停任务' }
+    await browser.load(adapter, adapter.homeUrl)
+    deps.setBrowserVisible(true)
+    return { ok: true }
+  })
   ipcMain.handle('browser:show', () => deps.setBrowserVisible(true))
   ipcMain.handle('browser:hide', () => deps.setBrowserVisible(false))
   ipcMain.handle('browser:devtools', () => browser.openDevTools())

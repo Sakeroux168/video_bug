@@ -164,6 +164,7 @@ export const douyinAdapter: PlatformAdapter = {
   displayName: '抖音',
   sourceHosts: ['www.douyin.com'],
   sessionPartition: 'persist:douyin',
+  homeUrl: 'https://www.douyin.com/',
   authorInputPlaceholder: 'https://www.douyin.com/user/xxx',
   downloadReferer: 'https://www.douyin.com/',
   apiUrlPatterns: [/aweme\/v1\/web\//, /aweme\/v1\/app\//],

@@ -41,6 +41,7 @@ const api = {
   getSettings: (): Promise<AppSettings> => ipcRenderer.invoke('settings:get'),
   saveSettings: (s: AppSettings): Promise<void> => ipcRenderer.invoke('settings:save', s),
   testAi: (): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke('ai:test'),
+  openBrowserFor: (platform: string): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke('browser:open', platform),
   showBrowser: (): Promise<void> => ipcRenderer.invoke('browser:show'),
   hideBrowser: (): Promise<void> => ipcRenderer.invoke('browser:hide'),
   pickDownloadDir: (): Promise<string | null> => ipcRenderer.invoke('dialog:pickDir'),

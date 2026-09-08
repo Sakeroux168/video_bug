@@ -269,6 +269,7 @@ export const kuaishouAdapter: PlatformAdapter = {
   displayName: '快手',
   sourceHosts: ['www.kuaishou.com'],
   sessionPartition: 'persist:kuaishou',
+  homeUrl: 'https://www.kuaishou.com/',
   authorInputPlaceholder: 'https://www.kuaishou.com/profile/xxx',
   downloadReferer: 'https://www.kuaishou.com/',
   // 真机：搜索走 /rest/v/search/feed，作者主页走 /rest/v/profile/feed；

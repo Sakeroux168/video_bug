@@ -26,6 +26,8 @@ export interface PlatformAdapter {
   sourceHosts: readonly string[]
   /** 登录态分区，如 'persist:douyin' */
   sessionPartition: string
+  /** 平台首页。用户在「内置浏览器」页主动打开某个平台（扫码登录只能在各自窗口里做）时加载它。 */
+  homeUrl: string
   /** 作者输入框 placeholder：该平台主页链接长什么样 */
   authorInputPlaceholder: string
   /** 下载媒体时带的 Referer。集中在适配器里，不靠 `www.{platform}.com` 拼字符串——
