@@ -103,6 +103,8 @@ export class Scheduler {
 
   /** 供主进程任务队列判断当前是否有任务在跑（避免重复入队/串行丢任务） */
   get isRunning(): boolean { return this.running }
+  /** 当前正在跑的任务 id；空闲为 0。删任务时要据此判断该不该叫停。 */
+  get currentTaskId(): number { return this.taskId }
 
   constructor(private deps: SchedulerDeps) {
     // 只订阅一次下载器事件；video 完成/失败后从 pendingVideoIds 移除，避免下载堆积放慢永久生效

@@ -73,6 +73,13 @@ function enqueueTask(id: number): void {
   void dequeueAndRun()
 }
 
+/** 把任务从队列里摘掉（删任务用）。已经开跑的不在队列里，由调度器那边叫停。 */
+function dequeueTask(id: number): void {
+  queuedTaskIds.delete(id)
+  const i = pendingTasks.indexOf(id)
+  if (i >= 0) pendingTasks.splice(i, 1)
+}
+
 function createWindow(): void {
   win = new BrowserWindow({
     width: 1280, height: 820, title: '视频爬取工具',
@@ -214,6 +221,7 @@ app.whenReady().then(() => {
     reloadOrganizer,
     getOrganizer: () => organizer,
     enqueueTask,
+    dequeueTask,
     setBrowserVisible
   })
 

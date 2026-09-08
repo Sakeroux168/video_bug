@@ -29,6 +29,8 @@ export interface IpcDeps {
   getOrganizer: () => Organizer | null
   /** 把新建任务投入 FIFO 队列（串行执行，去重） */
   enqueueTask: (id: number) => void
+  /** 把任务从 FIFO 队列里摘掉（删任务时用，避免轮到它时再跑一遍已删除的任务） */
+  dequeueTask: (id: number) => void
   /** 渲染层切换浏览器标签时通知主进程（主进程据此结合任务状态决定显示/小窗/隐藏） */
   setBrowserVisible: (v: boolean) => void
 }
@@ -83,7 +85,19 @@ export function registerIpc(deps: IpcDeps): void {
   ipcMain.handle('task:pause', async (_e, id: number) => { await scheduler.pause(); setTaskStatus(db, id, 'paused', 'user') })
   // A1：走 scheduler.resume（内含 run 退出守卫，并发 resume 不会被 running 挡回静默丢弃）
   ipcMain.handle('task:resume', (_e, id: number) => { void scheduler.resume(id) })
-  ipcMain.handle('task:delete', (_e, id: number) => { db.prepare('DELETE FROM videos WHERE task_id=?').run(id); db.prepare('DELETE FROM tasks WHERE id=?').run(id) })
+  // 删任务必须把这个任务相关的活全停掉，否则会留下"幽灵任务"：
+  // 调度器攥着内存里的 taskId 继续滚页面、继续停滞重搜，最后想标 paused 时那行已经没了，
+  // UPDATE 静默失败——用户在界面上什么都看不到，只看见浏览器自己在动（真机踩过）。
+  ipcMain.handle('task:delete', async (_e, id: number) => {
+    if (scheduler.currentTaskId === id) await scheduler.pause() // 正在跑 → 等 run 完全退出
+    deps.dequeueTask(id) // 还在排队 → 摘掉，别轮到它时再跑一遍
+    // 在途下载也要掐断，否则文件继续往磁盘写、对应的数据库行却已经删了 → 孤儿文件
+    const videoIds = (db.prepare('SELECT id FROM videos WHERE task_id=?').all(id) as unknown as Array<{ id: number }>)
+      .map(r => r.id)
+    if (videoIds.length > 0) downloader.cancel(videoIds)
+    db.prepare('DELETE FROM videos WHERE task_id=?').run(id)
+    db.prepare('DELETE FROM tasks WHERE id=?').run(id)
+  })
 
   ipcMain.handle('video:retry', (_e, ids: number[]) => {
     for (const id of ids) {
