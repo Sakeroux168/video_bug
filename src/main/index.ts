@@ -236,7 +236,12 @@ app.whenReady().then(() => {
 
   // 内嵌浏览器默认加载抖音首页（此前只创建视图未加载，导致「内置浏览器」标签空白）。
   // 窗口不再预先 init：load 时按目标平台创建，分区/标题都跟着平台走。
-  void browser.load(douyinAdapter, douyinAdapter.homeUrl)
+  // 落地页失败不能变成未处理拒绝：Node 22 默认会因此终止进程，
+  // 而首页加载失败（网络波动、平台风控）是常事，程序本身应该照常可用。
+  void browser.load(douyinAdapter, douyinAdapter.homeUrl).catch((err: unknown) => {
+    const detail = err instanceof Error ? err.message : String(err)
+    console.warn(`[启动] 默认落地页加载失败（不影响使用，可在「内置浏览器」页重开）：${detail}`)
+  })
   downloader.onEvent(e => push(e))
 
   // 断点续传：running→paused；downloading→pending，与已有 pending 一起重新入队
