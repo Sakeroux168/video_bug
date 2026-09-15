@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { CreateTaskInput, AppSettings, TaskRow, VideoRow, AuthorRow, TaskStats, AsrStatus, AsrProgress, FilesTree, FileDeleteResult, TaskProgressEvent, GlobalStats, RecentDownload } from '../shared/types'
+import type { CreateTaskInput, AppSettings, TaskRow, VideoRow, AuthorRow, TaskStats, AsrStatus, AsrProgress, FilesTree, FileDeleteResult, TaskProgressEvent, GlobalStats, RecentDownload, ProcessState } from '../shared/types'
 
 const api = {
   ping: () => ipcRenderer.sendSync('api:ping') as string,
@@ -45,14 +45,29 @@ const api = {
   showBrowser: (): Promise<void> => ipcRenderer.invoke('browser:show'),
   hideBrowser: (): Promise<void> => ipcRenderer.invoke('browser:hide'),
   pickDownloadDir: (): Promise<string | null> => ipcRenderer.invoke('dialog:pickDir'),
+  /** 视频处理页：选待处理文件夹（同一个目录选择框，只是标题不同） */
+  pickVideoDir: (): Promise<string | null> => ipcRenderer.invoke('dialog:pickDir', '选择要处理的视频文件夹'),
+  // 视频处理（统一分辨率批处理）：状态住在主进程，这里只发指令 + 订阅快照
+  getProcessState: (): Promise<ProcessState> => ipcRenderer.invoke('process:state'),
+  processStart: (dir: string): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke('process:start', dir),
+  processPause: (): Promise<void> => ipcRenderer.invoke('process:pause'),
+  processResume: (): Promise<void> => ipcRenderer.invoke('process:resume'),
+  processStop: (): Promise<void> => ipcRenderer.invoke('process:stop'),
+  onProcessState: (cb: (s: ProcessState) => void): (() => void) => {
+    const l = (_e: unknown, data: unknown) => cb(data as ProcessState)
+    ipcRenderer.on('evt:process:state', l)
+    return () => ipcRenderer.removeListener('evt:process:state', l)
+  },
   openDir: (p: string): Promise<void> => ipcRenderer.invoke('dialog:openDir', p),
   locateVideo: (p: string): Promise<void> => ipcRenderer.invoke('video:locate', p),
   openBrowserDevtools: (): Promise<void> => ipcRenderer.invoke('browser:devtools'),
   getRawLog: (): Promise<Array<{ at: string; url?: string; handled?: boolean; stats?: { items: number; kept: number }; durationZero?: boolean; topKeys?: string[]; filterLog?: string }>> => ipcRenderer.invoke('debug:rawLog'),
   getFilesTree: (): Promise<FilesTree> => ipcRenderer.invoke('files:tree'),
-  deleteFileCategory: (name: string): Promise<FileDeleteResult> => ipcRenderer.invoke('files:deleteCategory', name),
-  deleteFileAuthor: (category: string, author: string): Promise<FileDeleteResult> => ipcRenderer.invoke('files:deleteAuthor', category, author),
+  /** 文件管理删除/定位都以「相对下载目录的段落」寻址：任意层级通用，主进程逐段校验 + 路径防护 */
+  deleteFileDir: (segments: string[]): Promise<FileDeleteResult> => ipcRenderer.invoke('files:deleteDir', segments),
+  deleteFileVideo: (segments: string[]): Promise<FileDeleteResult> => ipcRenderer.invoke('files:deleteFile', segments),
   locateFileDir: (path: string): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke('files:locate', path),
+  locateVideoFile: (path: string): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke('files:locateFile', path),
   onTaskProgress: (cb: (e: TaskProgressEvent) => void): (() => void) => {
     const l = (_e: unknown, data: unknown) => cb(data as TaskProgressEvent)
     ipcRenderer.on('evt:task:progress', l)

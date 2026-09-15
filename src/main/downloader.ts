@@ -11,8 +11,6 @@ import { classifyDownloadError, AddressPolicy } from './errors'
 import { safeFilename, ensureUniqueStem } from './filename'
 import { downloadCover } from './cover'
 import { setVideoStatus } from './db'
-import { normalizeVideo } from './videoNormalizer'
-import type { NormalizeVideoRequest, NormalizeVideoResult } from './videoNormalizer'
 import { getAdapter } from './adapters'
 
 export function buildUserAgent(_platform: string): string {
@@ -28,9 +26,9 @@ export function buildRequestHeaders(platform: string): Record<string, string> {
     : { 'user-agent': buildUserAgent(platform) }
 }
 
+/** 下载链只认这三项。历史 settings.json 里残留的 normalizeVideo/keepOriginalVideo 即使随整份设置传进来也不会被读取——
+ *  下载任务保存平台解析到的原视频，统一分辨率是「视频处理」页的手动批处理，不再是下载的必经步骤。 */
 type DlSettings = Pick<AppSettings, 'downloadDir' | 'downloadConcurrency' | 'addressTtlMin'>
-  & Partial<Pick<AppSettings, 'normalizeVideo' | 'keepOriginalVideo'>>
-type VideoNormalizer = (request: NormalizeVideoRequest) => Promise<NormalizeVideoResult>
 type DlEvent =
   | { type: 'video:status'; id: number; status: string; error?: string; localPath?: string }
 
@@ -48,18 +46,16 @@ export class Downloader {
   private listeners: Array<(e: DlEvent) => void> = []
   private fetching: Record<number, boolean> = {}
   private validator: ((file: string) => Promise<boolean>) | null
-  private normalizer: VideoNormalizer
 
   constructor(
     private db: DatabaseSync,
     private settings: DlSettings,
     private fetchImpl: typeof fetch = fetch,
-    opts?: { validator?: (file: string) => Promise<boolean>; normalizer?: VideoNormalizer }
+    opts?: { validator?: (file: string) => Promise<boolean> }
   ) {
     // C1: 确保下载目录存在（recursive 幂等）；目录不可写时由下载错误分类兜底为 ERROR.DISK
     try { mkdirSync(this.settings.downloadDir, { recursive: true }) } catch { /* ignore */ }
     this.validator = opts?.validator ?? null
-    this.normalizer = opts?.normalizer ?? normalizeVideo
   }
 
   /** 设置保存后热更新下载参数（目录/并发/地址TTL），无需重建 Downloader */
@@ -175,7 +171,7 @@ export class Downloader {
 
   private emit(e: DlEvent): void { for (const l of this.listeners) l(e) }
 
-  /** AbortError 收尾：删除半成品；暂停发生在转码阶段时可保留已验证原片，继续后不重复请求。 */
+  /** AbortError 收尾：删除半成品；暂停发生在封面阶段时可保留已验证原片断点，继续后不重复请求视频。 */
   private finishAbort(id: number, status: VideoStatus, paths: string[], keepPath?: string): void {
     for (const path of paths) {
       if (path === keepPath) continue
@@ -218,16 +214,14 @@ export class Downloader {
         ? (this.db.prepare('SELECT nickname FROM authors WHERE id = ?').get(row.author_id) as { nickname: string } | undefined)
         : undefined
       const name = safeFilename(row.title, author?.nickname ?? 'unknown', row.aweme_id)
+      // .original.mp4 仍占位：旧版转码流程留下的原片可能与新下载同名主体，不能撞上
       const stem = ensureUniqueStem(downloadDir, name, ['.mp4', '.original.mp4', '.jpg', '.jpeg', '.png', '.webp'])
       const target = join(downloadDir, `${stem}.mp4`)
-      const originalPath = join(downloadDir, `${stem}.original.mp4`)
       sourcePart = join(downloadDir, `.video-${id}.download.part.mp4`)
-      const normalizedPart = join(downloadDir, `.video-${id}.normalized.part.mp4`)
-      cleanupPaths.push(target, originalPath, sourcePart, normalizedPart)
-      rmSync(normalizedPart, { force: true })
+      cleanupPaths.push(target, sourcePart)
       if (row.local_path !== sourcePart) rmSync(sourcePart, { force: true })
 
-      // 转码阶段暂停后，数据库会指向已验证的源文件断点。恢复时先复验，合格则跳过网络请求。
+      // 封面阶段暂停/重启后，数据库会指向已验证的源文件断点。恢复时先复验，合格则跳过网络请求。
       if (row.local_path === sourcePart && existsSync(sourcePart)) {
         const size = statSync(sourcePart).size
         const validContent = this.validator
@@ -291,22 +285,6 @@ export class Downloader {
 
       if (aborter.signal.aborted) throw new Error('AbortError')
 
-      let normalizationResult: NormalizeVideoResult | null = null
-      if (this.settings.normalizeVideo === true) {
-        try {
-          normalizationResult = await this.normalizer({
-            inputPath: sourcePart,
-            outputPath: normalizedPart,
-            signal: aborter.signal
-          })
-        } catch {
-          if (aborter.signal.aborted) throw new Error('AbortError')
-          normalizationResult = { status: 'failed', error: 'ffmpeg_failed' }
-        }
-        if (normalizationResult.status === 'aborted') throw new Error('AbortError')
-      }
-      if (aborter.signal.aborted) throw new Error('AbortError')
-
       const coverPart = join(downloadDir, `${stem}.cover.part`)
       cleanupPaths.push(coverPart)
       const coverPath = row.cover_url
@@ -323,40 +301,14 @@ export class Downloader {
       else if (row.cover_url) console.warn(`[downloader] 封面下载失败，视频继续完成: id=${id}`)
       if (aborter.signal.aborted) throw new Error('AbortError')
 
-      let originalFinalPath: string | null = null
-      let normalizationError: string | null = null
-      let videoWidth = row.video_width
-      let videoHeight = row.video_height
-      if (normalizationResult?.status === 'normalized') {
-        if (this.settings.keepOriginalVideo === true) {
-          renameSync(sourcePart, originalPath)
-          try {
-            renameSync(normalizedPart, target)
-          } catch (error) {
-            try { renameSync(originalPath, sourcePart) } catch { /* 后续统一清理 */ }
-            throw error
-          }
-          originalFinalPath = originalPath
-        } else {
-          renameSync(normalizedPart, target)
-          rmSync(sourcePart, { force: true })
-        }
-        videoWidth = normalizationResult.target.width
-        videoHeight = normalizationResult.target.height
-      } else {
-        renameSync(sourcePart, target)
-        if (normalizationResult?.status === 'skipped') {
-          videoWidth = normalizationResult.target.width
-          videoHeight = normalizationResult.target.height
-        } else if (normalizationResult?.status === 'failed') {
-          normalizationError = normalizationResult.error
-        }
-      }
+      // 原视频直下：已验证的源文件原子改名为成品，尺寸/编码沿用平台元数据，下载器不主动改动。
+      // original_path / normalization_error 留空——这两列只服务旧版转码流程的历史数据与「视频处理」页。
+      renameSync(sourcePart, target)
 
       const size = statSync(target).size
       const downloadedAt = new Date().toISOString()
-      this.db.prepare("UPDATE videos SET status='done', local_path=?, original_path=?, normalization_error=?, cover_path=?, video_width=?, video_height=?, file_size=?, downloaded_at=?, error=NULL WHERE id=?")
-        .run(target, originalFinalPath, normalizationError, coverPath, videoWidth, videoHeight, size, downloadedAt, id)
+      this.db.prepare("UPDATE videos SET status='done', local_path=?, original_path=NULL, normalization_error=NULL, cover_path=?, video_width=?, video_height=?, file_size=?, downloaded_at=?, error=NULL WHERE id=?")
+        .run(target, coverPath, row.video_width, row.video_height, size, downloadedAt, id)
       this.emit({ type: 'video:status', id, status: 'done', localPath: target })
     } catch (err) {
       // 取消分支（signal 已 abort，真实 AbortError 是 DOMException、非 Error，用 signal.aborted 判）：

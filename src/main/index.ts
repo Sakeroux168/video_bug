@@ -5,6 +5,7 @@ import { initDb } from './db'
 import { VideoBrowser } from './browser'
 import { Scheduler } from './scheduler'
 import { Downloader } from './downloader'
+import { VideoProcessor } from './videoProcessor'
 import { Analyzer } from './analyzer'
 import { Organizer } from './organizer'
 import type { ResolveCategoryFn } from './organizer'
@@ -22,6 +23,7 @@ import type { VideoRow } from '../shared/types'
 let win: BrowserWindow | null = null
 let browser: VideoBrowser | null = null
 let downloader: Downloader | null = null
+let processor: VideoProcessor | null = null
 let scheduler: Scheduler | null = null
 let analyzer: Analyzer | null = null
 let organizer: Organizer | null = null
@@ -147,6 +149,15 @@ app.whenReady().then(() => {
   const settings = getSettings()
   reloadAnalyzer()
   downloader = new Downloader(db, settings)
+  // 「视频处理」页：统一分辨率批处理，每次状态变化把完整快照推给渲染层。
+  // 替换成功的文件若在库里有记录，把备份路径与新尺寸回写，归档/删除才能继续把 .original.mp4 成对带走。
+  processor = new VideoProcessor({
+    onChange: s => win?.webContents.send('evt:process:state', s),
+    onReplaced: ({ path, backup, target }) => {
+      db.prepare('UPDATE videos SET original_path=?, video_width=?, video_height=? WHERE local_path=?')
+        .run(backup, target.width, target.height, path)
+    }
+  })
   browser = new VideoBrowser(win!)
 
   // Task14：ASR 依赖组装。ffmpeg 用 findFfmpeg()；模型路径从 asr 模型目录取。
@@ -223,7 +234,7 @@ app.whenReady().then(() => {
   })
 
   registerIpc({
-    db, scheduler, downloader, analyzer, browser,
+    db, scheduler, downloader, processor, analyzer, browser,
     getWindow: () => win!,
     reloadAnalyzer,
     reloadOrganizer,

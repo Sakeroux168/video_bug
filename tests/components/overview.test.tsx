@@ -32,7 +32,7 @@ describe('概览页', () => {
   it('点「扫描」按钮才真的扫，扫完显示总大小', async () => {
     vi.mocked(window.api.getGlobalStats).mockResolvedValue(gstats() as never)
     vi.mocked(window.api.getFilesTree).mockResolvedValue({
-      categories: [{ name: '美食', videoCount: 10, size: 1024 * 1024 * 500, authors: [] }],
+      root: { name: '', videoCount: 10, size: 1024 * 1024 * 500, files: [], dirs: [{ name: '美食', videoCount: 10, size: 1024 * 1024 * 500, dirs: [], files: [] }] },
       totalSize: 1024 * 1024 * 500, downloadDir: 'D:/x'
     } as never)
     const { container } = render(<Overview onGoto={() => {}} />)

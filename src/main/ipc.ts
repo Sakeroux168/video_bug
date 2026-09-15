@@ -3,10 +3,11 @@ import type { DatabaseSync } from 'node:sqlite'
 import { createTask, listTasks, listVideos, listDownloadedVideos, listAuthors, setTaskStatus, setVideoStatus, updateAuthorCategory, deleteAuthors, taskStats, insertAuthorIfAbsent, globalStats, recentDownloads } from './db'
 import { getSettings, saveSettings } from './settings'
 import { deleteVideoRows } from './videoDelete'
-import { scanFilesTree, deleteFileCategory, deleteFileAuthor, locateFileDir } from './fileManager'
+import { scanFilesTree, deleteFileDir, deleteFileVideo, locateFileDir, locateVideoFile } from './fileManager'
 import { listAdapters, getAdapter } from './adapters'
 import type { Scheduler } from './scheduler'
 import type { Downloader } from './downloader'
+import type { VideoProcessor } from './videoProcessor'
 import { Analyzer } from './analyzer'
 import type { VideoBrowser } from './browser'
 import type { Organizer } from './organizer'
@@ -18,6 +19,8 @@ export interface IpcDeps {
   db: DatabaseSync
   scheduler: Scheduler
   downloader: Downloader
+  /** 「视频处理」页的批处理器（统一分辨率），状态住在主进程，渲染层只发指令 */
+  processor: VideoProcessor
   analyzer: Analyzer | null
   browser: VideoBrowser
   getWindow: () => BrowserWindow
@@ -293,26 +296,39 @@ export function registerIpc(deps: IpcDeps): void {
   ipcMain.handle('browser:hide', () => deps.setBrowserVisible(false))
   ipcMain.handle('browser:devtools', () => browser.openDevTools())
 
-  // Task4：文件管理——扫描下载目录（品类/作者/视频）+ 递归删除品类/作者（路径防护 + DB 前缀联动）
+  // 文件管理——扫描下载目录成通用目录树（任意归档层级组合、根目录平铺视频都可见）
+  // + 按相对段落删除任意层级的文件夹 / 单个视频（逐段校验 + 路径防护 + DB 联动）。
   // downloadDir 每次取最新（设置可能已热更），扫描纯函数在主进程 fileManager.ts 中可单测
   ipcMain.handle('files:tree', () => scanFilesTree(getSettings().downloadDir))
-  ipcMain.handle('files:deleteCategory', (_e, name: string) =>
-    deleteFileCategory({ db, downloadDir: getSettings().downloadDir }, name)
+  ipcMain.handle('files:deleteDir', (_e, segments: string[]) =>
+    deleteFileDir({ db, downloadDir: getSettings().downloadDir }, segments)
   )
-  ipcMain.handle('files:deleteAuthor', (_e, category: string, author: string) =>
-    deleteFileAuthor({ db, downloadDir: getSettings().downloadDir }, category, author)
+  ipcMain.handle('files:deleteFile', (_e, segments: string[]) =>
+    deleteFileVideo({ db, downloadDir: getSettings().downloadDir, downloader }, segments)
   )
-  // 定位品类/作者文件夹（资源管理器选中该目录）：路径防护 + 目录存在才调 shell，其余返回错误提示
+  // 定位文件夹 / 视频文件（资源管理器选中）：路径防护 + 存在才调 shell，其余返回错误提示
   ipcMain.handle('files:locate', (_e, dirPath: string) => {
     const r = locateFileDir(getSettings().downloadDir, dirPath)
     if (r.ok) shell.showItemInFolder(dirPath)
     return r
   })
+  ipcMain.handle('files:locateFile', (_e, filePath: string) => {
+    const r = locateVideoFile(getSettings().downloadDir, filePath)
+    if (r.ok) shell.showItemInFolder(filePath)
+    return r
+  })
 
-  // 选择下载目录（#1）
-  ipcMain.handle('dialog:pickDir', async () => {
+  // 视频处理（统一分辨率批处理）：start 返回能否开始的原因；暂停/继续/停止只发指令，结果经 evt:process:state 推回
+  ipcMain.handle('process:state', () => deps.processor.getState())
+  ipcMain.handle('process:start', (_e, dir: string) => deps.processor.start(String(dir ?? '')))
+  ipcMain.handle('process:pause', () => { deps.processor.pause() })
+  ipcMain.handle('process:resume', () => { deps.processor.resume() })
+  ipcMain.handle('process:stop', () => { deps.processor.stop() })
+
+  // 选择目录（#1 下载目录；视频处理页复用，只换标题）
+  ipcMain.handle('dialog:pickDir', async (_e, title?: string) => {
     const { canceled, filePaths } = await dialog.showOpenDialog(deps.getWindow(), {
-      title: '选择下载目录', properties: ['openDirectory', 'createDirectory']
+      title: title || '选择下载目录', properties: ['openDirectory', 'createDirectory']
     })
     return canceled || filePaths.length === 0 ? null : filePaths[0]
   })

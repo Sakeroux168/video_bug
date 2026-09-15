@@ -25,8 +25,6 @@ function fullSettings(over: Partial<AppSettings> = {}): AppSettings {
     aiApiKey: 'sk-test',
     aiModel: 'gpt-4o-mini',
     downloadConcurrency: 5,
-    normalizeVideo: false,
-    keepOriginalVideo: true,
     scrollIntervalMs: 1500,
     scrollSpeed: 'fast',
     scrollPageWaitMs: 3000,
@@ -52,8 +50,6 @@ describe('settings', () => {
     const s = getSettings()
     expect(s.downloadDir).toBe(join(mockPaths.downloads, '爬取视频'))
     expect(s.downloadConcurrency).toBe(3)
-    expect(s.normalizeVideo).toBe(true)
-    expect(s.keepOriginalVideo).toBe(false)
     expect(s.scrollSpeed).toBe('slow')
     expect(s.scrollPageWaitMs).toBe(8000)
     expect(s.allowDuplicateAuthor).toBe(false)
@@ -108,10 +104,22 @@ describe('settings', () => {
     const s = getSettings()
     expect(s.downloadConcurrency).toBe(5)
     expect(s.allowDuplicateAuthor).toBe(true)
-    expect(s.normalizeVideo).toBe(true)
-    expect(s.keepOriginalVideo).toBe(false)
     expect(s.aiModel).toBe('gpt-4o-mini') // 未存字段回落到默认
     expect(s.downloadDir).toBe(join(mockPaths.downloads, '爬取视频'))
+  })
+
+  it('旧配置文件里的 normalizeVideo/keepOriginalVideo 被丢弃：不进设置对象，保存后也不写回', () => {
+    writeFileSync(join(mockPaths.userData, 'settings.json'), JSON.stringify({
+      downloadConcurrency: 4, normalizeVideo: true, keepOriginalVideo: true
+    }))
+    const s = getSettings() as AppSettings & Record<string, unknown>
+    expect(s.downloadConcurrency).toBe(4)
+    expect('normalizeVideo' in s).toBe(false)
+    expect('keepOriginalVideo' in s).toBe(false)
+    saveSettings(s)
+    const written = JSON.parse(readFileSync(join(mockPaths.userData, 'settings.json'), 'utf-8')) as Record<string, unknown>
+    expect('normalizeVideo' in written).toBe(false)
+    expect('keepOriginalVideo' in written).toBe(false)
   })
 
   it('配置文件损坏（非法 JSON）→ 回落默认值，不抛错', () => {

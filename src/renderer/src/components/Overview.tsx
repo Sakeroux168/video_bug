@@ -168,7 +168,7 @@ export default function Overview({ onGoto }: { onGoto: (tab: string) => void }):
             <>
               <div className="text-xl font-semibold tabular-nums text-slate-800">{fmtSize(tree.totalSize)}</div>
               <div className="mt-1 space-y-1">
-                {tree.categories.slice(0, 3).map(c => (
+                {tree.root.dirs.slice(0, 3).map(c => (
                   <div key={c.name} className="flex items-baseline justify-between text-xs">
                     <span className="truncate text-slate-500">{c.name}</span>
                     <span className="tabular-nums text-slate-600">{fmtSize(c.size)}</span>
