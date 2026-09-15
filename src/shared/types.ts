@@ -76,10 +76,45 @@ export interface AuthorRow {
   verify_state: string | null; verify_error: string | null
 }
 
-/** 文件管理：下载目录扫描结果（品类 → 作者 → 视频，以磁盘为准；totalSize 所有 mp4 合计，downloadDir 供前端拼定位路径） */
-export interface FilesTreeAuthor { name: string; videoCount: number; size: number }
-export interface FilesTreeCategory { name: string; videoCount: number; size: number; authors: FilesTreeAuthor[] }
-export interface FilesTree { categories: FilesTreeCategory[]; totalSize: number; downloadDir: string }
+/** 文件管理：下载目录扫描结果——通用目录树（以磁盘为准，不假定任何一层是品类或作者）。
+ *  归档层级四个开关各自可关，目录结构完全由设置决定；根目录直属的 mp4 与子目录同样可见。
+ *  videoCount/size 是递归合计（.original.mp4 与隐藏/临时项不计）；totalSize = 根节点合计；downloadDir 供前端拼定位路径。 */
+export interface FilesVideoFile { name: string; size: number }
+export interface FilesDirNode { name: string; videoCount: number; size: number; dirs: FilesDirNode[]; files: FilesVideoFile[] }
+export interface FilesTree { root: FilesDirNode; totalSize: number; downloadDir: string }
+
+/** 视频处理页：一个待处理文件的生命周期。skipped = 已符合 1080p 标准无需转码；stopped = 用户点停止后未处理/被中止 */
+export type ProcessItemStatus = 'pending' | 'processing' | 'done' | 'skipped' | 'failed' | 'stopped'
+export interface ProcessItem {
+  /** 绝对路径（主进程用）；界面只显示 name */
+  path: string
+  name: string
+  status: ProcessItemStatus
+  /** 源显示尺寸 / 目标尺寸，探测到才有 */
+  source?: { width: number; height: number }
+  target?: { width: number; height: number }
+  /** 稳定错误码（media_probe_failed / ffmpeg_not_found / ffmpeg_failed / output_invalid / backup_exists / replace_failed） */
+  error?: string
+}
+/** 视频处理页整体阶段：idle → running ⇄ paused → finished；stop 后 stopping → stopped */
+export type ProcessPhase = 'idle' | 'running' | 'paused' | 'stopping' | 'finished' | 'stopped'
+export interface ProcessState {
+  phase: ProcessPhase
+  dir: string | null
+  total: number
+  /** 已完成 = 转码成功 + 已兼容跳过 */
+  completed: number
+  done: number
+  skipped: number
+  failed: number
+  processing: number
+  remaining: number
+  /** 正在处理的文件（并发 1 时最多一个；尺寸在探测后补上） */
+  current: Pick<ProcessItem, 'name' | 'source' | 'target'> | null
+  items: ProcessItem[]
+  /** 简洁运行日志（最新在后，最多保留 200 行） */
+  log: string[]
+}
 
 /** 文件管理删除结果：deleted = DB 删除的视频行数（文件夹删除成功与否看 ok/filesRemoved） */
 export interface FileDeleteResult {
@@ -95,10 +130,6 @@ export interface AppSettings {
   aiApiKey: string
   aiModel: string
   downloadConcurrency: number
-  /** 新下载视频是否统一输出为横屏 1920x1080 / 竖屏 1080x1920。 */
-  normalizeVideo: boolean
-  /** 标准化成功后是否把原片以 .original.mp4 同行保留。 */
-  keepOriginalVideo: boolean
   scrollIntervalMs: number
   /** T2：滚动速度三档（档位预设 scrollPageWaitMs 初始值：慢8s/中5s/快3s；数字微调直接生效） */
   scrollSpeed: 'slow' | 'medium' | 'fast'

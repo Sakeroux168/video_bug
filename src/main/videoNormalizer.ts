@@ -28,13 +28,16 @@ export interface NormalizeVideoRequest {
   inputPath: string
   outputPath: string
   signal?: AbortSignal
+  /** 探测完源文件、还没开始转码时回调一次：源显示尺寸与目标尺寸。「视频处理」页用它在转码进行中就显示尺寸，不必等结果。 */
+  onProbe?: (info: { source: VideoSize; target: VideoSize }) => void
 }
 
+/** source = 源文件按旋转元数据折算后的显示尺寸；探测失败的分支拿不到，故可选 */
 export type NormalizeVideoResult =
-  | { status: 'normalized'; target: VideoSize }
-  | { status: 'skipped'; target: VideoSize }
-  | { status: 'failed'; error: 'media_probe_failed' | 'ffmpeg_not_found' | 'ffmpeg_failed' | 'output_invalid'; target?: VideoSize }
-  | { status: 'aborted'; target?: VideoSize }
+  | { status: 'normalized'; target: VideoSize; source: VideoSize }
+  | { status: 'skipped'; target: VideoSize; source: VideoSize }
+  | { status: 'failed'; error: 'media_probe_failed' | 'ffmpeg_not_found' | 'ffmpeg_failed' | 'output_invalid'; target?: VideoSize; source?: VideoSize }
+  | { status: 'aborted'; target?: VideoSize; source?: VideoSize }
 
 export interface VideoNormalizerDeps {
   findFfmpeg: () => string | null
@@ -213,10 +216,12 @@ export async function normalizeVideo(
   const source = await deps.probeMedia(request.inputPath)
   if (!source) return { status: 'failed', error: 'media_probe_failed' }
   const target = targetDimensions(source)
-  if (!target) return { status: 'failed', error: 'media_probe_failed' }
-  if (isAlreadyCompatible(source)) return { status: 'skipped', target }
+  const display = displayDimensions(source)
+  if (!target || !display) return { status: 'failed', error: 'media_probe_failed' }
+  request.onProbe?.({ source: display, target })
+  if (isAlreadyCompatible(source)) return { status: 'skipped', target, source: display }
   const ffmpeg = deps.findFfmpeg()
-  if (!ffmpeg) return { status: 'failed', error: 'ffmpeg_not_found', target }
+  if (!ffmpeg) return { status: 'failed', error: 'ffmpeg_not_found', target, source: display }
 
   try {
     await deps.runFfmpeg(
@@ -226,8 +231,8 @@ export async function normalizeVideo(
     )
   } catch (error) {
     deps.removeFile(request.outputPath)
-    if (request.signal?.aborted || (error as Error).name === 'AbortError') return { status: 'aborted', target }
-    return { status: 'failed', error: 'ffmpeg_failed', target }
+    if (request.signal?.aborted || (error as Error).name === 'AbortError') return { status: 'aborted', target, source: display }
+    return { status: 'failed', error: 'ffmpeg_failed', target, source: display }
   }
 
   let size = 0
@@ -235,9 +240,9 @@ export async function normalizeVideo(
   const output = size >= 1024 ? await deps.probeMedia(request.outputPath) : null
   if (!validNormalizedOutput(source, output, target, size)) {
     deps.removeFile(request.outputPath)
-    return { status: 'failed', error: 'output_invalid', target }
+    return { status: 'failed', error: 'output_invalid', target, source: display }
   }
-  return { status: 'normalized', target }
+  return { status: 'normalized', target, source: display }
 }
 
 export async function probeMedia(file: string, deps: MediaProbeDeps = realProbeDeps): Promise<MediaProbe | null> {

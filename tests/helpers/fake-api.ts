@@ -57,14 +57,25 @@ function freshApi(): Api {
     showBrowser: vi.fn(async () => {}),
     hideBrowser: vi.fn(async () => {}),
     pickDownloadDir: vi.fn(async () => null),
+    pickVideoDir: vi.fn(async () => null),
+    getProcessState: vi.fn(async () => ({
+      phase: 'idle' as const, dir: null, total: 0, completed: 0, done: 0, skipped: 0, failed: 0,
+      processing: 0, remaining: 0, current: null, items: [], log: []
+    })),
+    processStart: vi.fn(async () => ({ ok: true })),
+    processPause: vi.fn(async () => {}),
+    processResume: vi.fn(async () => {}),
+    processStop: vi.fn(async () => {}),
+    onProcessState: vi.fn(() => () => {}),
     openDir: vi.fn(async () => {}),
     locateVideo: vi.fn(async () => {}),
     openBrowserDevtools: vi.fn(async () => {}),
     getRawLog: vi.fn(async () => []),
-    getFilesTree: vi.fn(async () => ({ categories: [], totalSize: 0, downloadDir: '' })),
-    deleteFileCategory: vi.fn(async () => ({ ok: true, deleted: 0, filesRemoved: true })),
-    deleteFileAuthor: vi.fn(async () => ({ ok: true, deleted: 0, filesRemoved: true })),
+    getFilesTree: vi.fn(async () => ({ root: { name: '', videoCount: 0, size: 0, dirs: [], files: [] }, totalSize: 0, downloadDir: '' })),
+    deleteFileDir: vi.fn(async () => ({ ok: true, deleted: 0, filesRemoved: true })),
+    deleteFileVideo: vi.fn(async () => ({ ok: true, deleted: 0, filesRemoved: true })),
     locateFileDir: vi.fn(async () => ({ ok: true })),
+    locateVideoFile: vi.fn(async () => ({ ok: true })),
     onTaskProgress: vi.fn(() => () => {}),
     onTaskNotice: vi.fn(() => () => {})
   }
@@ -73,7 +84,6 @@ function freshApi(): Api {
 function makeSettings(): AppSettings {
   return {
     downloadDir: '', aiBaseUrl: '', aiApiKey: '', aiModel: '', downloadConcurrency: 3,
-    normalizeVideo: true, keepOriginalVideo: false,
     scrollIntervalMs: 3000, scrollSpeed: 'medium', scrollPageWaitMs: 8000,
     addressTtlMin: 10, allowDuplicateAuthor: false, organizeDebounceMs: 5000, asrMaxSec: 90,
     stallThresholdSec: 5, rescueCooldownSec: 10,

@@ -9,8 +9,6 @@ const DEFAULTS: AppSettings = {
   aiApiKey: '',
   aiModel: 'gpt-4o-mini',
   downloadConcurrency: 3,
-  normalizeVideo: true,
-  keepOriginalVideo: false,
   scrollIntervalMs: 3500, // R12：默认滚动间隔放慢（2000→3500）降风控
   scrollSpeed: 'slow',
   scrollPageWaitMs: 8000,
@@ -44,6 +42,10 @@ const LEGACY_ORGANIZE_LEVELS: Pick<
   organizeByDuration: true
 }
 
+/** 已从产品里撤下的旧键：统一分辨率曾是下载行为设置，现在是「视频处理」页的手动批处理。
+ *  读取时直接丢弃，既不进 AppSettings 也不会在下次保存时被写回，老配置文件不用手工清理。 */
+const RETIRED_KEYS = ['normalizeVideo', 'keepOriginalVideo'] as const
+
 export function settingsFile(): string {
   return join(app.getPath('userData'), 'settings.json')
 }
@@ -51,8 +53,10 @@ export function settingsFile(): string {
 export function getSettings(): AppSettings {
   try {
     const raw = readFileSync(settingsFile(), 'utf-8')
+    const stored = JSON.parse(raw) as Record<string, unknown>
+    for (const key of RETIRED_KEYS) delete stored[key]
     // 配置文件存在 = 老用户升级：归档层级缺失键按升级前行为（全开）兜底，再让文件里的显式值覆盖
-    return { ...DEFAULTS, ...LEGACY_ORGANIZE_LEVELS, ...(JSON.parse(raw) as Partial<AppSettings>) }
+    return { ...DEFAULTS, ...LEGACY_ORGANIZE_LEVELS, ...(stored as Partial<AppSettings>) }
   } catch { return { ...DEFAULTS } }
 }
 

@@ -128,9 +128,10 @@ describe('任务列表导出表格', () => {
 })
 
 describe('文件管理导出全部已下载', () => {
+  const EMPTY_ROOT = { name: '', videoCount: 0, size: 0, dirs: [], files: [] }
   async function openFiles(): Promise<void> {
     vi.mocked(window.api.getFilesTree).mockResolvedValue({
-      categories: [], totalSize: 0, downloadDir: 'D:\\dl'
+      root: EMPTY_ROOT, totalSize: 0, downloadDir: 'D:\\dl'
     })
     render(<FileManager notify={() => {}} />)
     await screen.findByRole('button', { name: '刷新' })
@@ -154,7 +155,7 @@ describe('文件管理导出全部已下载', () => {
   it('一条已下载都没有 → 提示而不是产出空表', async () => {
     const notify = vi.fn()
     vi.mocked(window.api.listDownloadedVideos).mockResolvedValue([])
-    vi.mocked(window.api.getFilesTree).mockResolvedValue({ categories: [], totalSize: 0, downloadDir: 'D:\\dl' })
+    vi.mocked(window.api.getFilesTree).mockResolvedValue({ root: EMPTY_ROOT, totalSize: 0, downloadDir: 'D:\\dl' })
     render(<FileManager notify={notify} />)
     await screen.findByRole('button', { name: '刷新' })
 
@@ -163,27 +164,31 @@ describe('文件管理导出全部已下载', () => {
   })
 })
 
-// 员工在文件管理里点进「搞笑」，想导的就是这个品类的表，而不是全部。
+// 员工在文件管理里点进「搞笑」，想导的就是这个文件夹的表，而不是全部。
 // 范围一律按"文件在不在这个文件夹底下"判定——归档层级可配，目录结构会变，
 // 按路径判永远和这一页看到的一致。
-describe('文件管理按品类/作者导出', () => {
+describe('文件管理按文件夹导出', () => {
   const DIR = 'D:\\dl'
+  const leaf = (name: string, files: string[]) => ({
+    name, videoCount: files.length, size: 50 * files.length, dirs: [], files: files.map(f => ({ name: f, size: 50 }))
+  })
   const TREE = {
     downloadDir: DIR,
     totalSize: 0,
-    categories: [
-      { name: '搞笑', videoCount: 2, size: 100, authors: [
-        { name: '张三', videoCount: 1, size: 50 },
-        { name: '李四', videoCount: 1, size: 50 }
-      ] },
-      { name: '美食', videoCount: 1, size: 50, authors: [{ name: '王五', videoCount: 1, size: 50 }] }
-    ]
+    root: {
+      name: '', videoCount: 3, size: 150, files: [],
+      dirs: [
+        { name: '搞笑', videoCount: 2, size: 100, files: [], dirs: [leaf('张三', ['a.mp4']), leaf('李四', ['b.mp4'])] },
+        { name: '美食', videoCount: 1, size: 50, files: [], dirs: [leaf('王五', ['c.mp4'])] }
+      ]
+    }
   }
 
   const ROWS = [
-    makeVideo(1, { title: '搞笑张三', local_path: `${DIR}\\搞笑\\张三\\竖屏\\一分钟内\\a.mp4` }),
-    makeVideo(2, { title: '搞笑李四', local_path: `${DIR}\\搞笑\\李四\\竖屏\\一分钟内\\b.mp4` }),
-    makeVideo(3, { title: '美食王五', local_path: `${DIR}\\美食\\王五\\竖屏\\一分钟内\\c.mp4` })
+    // 路径与上面的树一致（仅品类/作者两层）；文件管理按路径前缀筛，所以树和库里的路径必须对得上
+    makeVideo(1, { title: '搞笑张三', local_path: `${DIR}\\搞笑\\张三\\a.mp4` }),
+    makeVideo(2, { title: '搞笑李四', local_path: `${DIR}\\搞笑\\李四\\b.mp4` }),
+    makeVideo(3, { title: '美食王五', local_path: `${DIR}\\美食\\王五\\c.mp4` })
   ]
 
   async function openFileManager(notify = (): void => {}): Promise<void> {
@@ -193,18 +198,18 @@ describe('文件管理按品类/作者导出', () => {
     await screen.findByText('搞笑')
   }
 
-  /** 进入某个品类的二级页 */
+  /** 进入某个顶层文件夹 */
   async function enterCategory(name: string): Promise<void> {
     fireEvent.click(screen.getByText(name).closest('tr')!)
-    await screen.findByText(`当前品类：${name}`)
+    await screen.findByText(`当前文件夹：${name}`)
   }
 
-  it('进入品类后「导出本品类」只导该品类下的视频', async () => {
+  it('进入文件夹后「导出当前文件夹」只导该文件夹下的视频', async () => {
     const cap = captureDownload()
     await openFileManager()
     await enterCategory('搞笑')
 
-    fireEvent.click(screen.getByRole('button', { name: '导出本品类' }))
+    fireEvent.click(screen.getByRole('button', { name: '导出当前文件夹' }))
     await waitFor(async () => expect(await cap.text()).toContain('搞笑张三'))
 
     const csv = await cap.text()
@@ -213,7 +218,7 @@ describe('文件管理按品类/作者导出', () => {
     expect(csv).not.toContain('美食王五')
   })
 
-  it('作者行的「导出」只导那一个作者', async () => {
+  it('子文件夹行的「导出」只导那一个文件夹', async () => {
     const cap = captureDownload()
     await openFileManager()
     await enterCategory('搞笑')
@@ -227,12 +232,12 @@ describe('文件管理按品类/作者导出', () => {
     expect(csv).not.toContain('搞笑李四')
   })
 
-  it('品类列表页「导出选中品类」只导勾中的', async () => {
+  it('「导出选中」只导勾中的文件夹', async () => {
     const cap = captureDownload()
     await openFileManager()
 
     fireEvent.click(screen.getByText('美食').closest('tr')!.querySelector('input[type=checkbox]')!)
-    fireEvent.click(screen.getByRole('button', { name: /导出选中品类\(1\)/ }))
+    fireEvent.click(screen.getByRole('button', { name: /导出选中\(1\)/ }))
     await waitFor(async () => expect(await cap.text()).toContain('美食王五'))
 
     const csv = await cap.text()
@@ -240,12 +245,28 @@ describe('文件管理按品类/作者导出', () => {
     expect(csv).not.toContain('搞笑张三')
   })
 
-  it('一个品类都没勾 → 按钮禁用', async () => {
+  it('勾中单个视频文件 → 只导那一条', async () => {
+    const cap = captureDownload()
     await openFileManager()
-    expect(screen.getByRole('button', { name: /导出选中品类\(0\)/ })).toBeDisabled()
+    await enterCategory('搞笑')
+    fireEvent.click(screen.getByText('张三').closest('tr')!)
+    await screen.findByText('a.mp4')
+
+    fireEvent.click(screen.getByText('a.mp4').closest('tr')!.querySelector('input[type=checkbox]')!)
+    fireEvent.click(screen.getByRole('button', { name: /导出选中\(1\)/ }))
+    await waitFor(async () => expect(await cap.text()).toContain('搞笑张三'))
+
+    const csv = await cap.text()
+    expect(csv.split('\r\n')).toHaveLength(2)
+    expect(csv).not.toContain('搞笑李四')
   })
 
-  it('该品类磁盘上有文件夹但库里没有对应记录 → 明说没有可导出的，不甩空表', async () => {
+  it('一项都没勾 → 按钮禁用', async () => {
+    await openFileManager()
+    expect(screen.getByRole('button', { name: /导出选中\(0\)/ })).toBeDisabled()
+  })
+
+  it('该文件夹磁盘上存在但库里没有对应记录 → 明说没有可导出的，不甩空表', async () => {
     const notify = vi.fn()
     vi.mocked(window.api.getFilesTree).mockResolvedValue(TREE as never)
     vi.mocked(window.api.listDownloadedVideos).mockResolvedValue([])
@@ -253,7 +274,7 @@ describe('文件管理按品类/作者导出', () => {
     await screen.findByText('搞笑')
     await enterCategory('搞笑')
 
-    fireEvent.click(screen.getByRole('button', { name: '导出本品类' }))
+    fireEvent.click(screen.getByRole('button', { name: '导出当前文件夹' }))
     await waitFor(() => expect(notify).toHaveBeenCalledWith(expect.stringMatching(/没有已下载的视频/)))
   })
 })

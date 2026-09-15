@@ -8,6 +8,11 @@ import { tmpdir } from 'os'
 import type { CreateTaskInput } from '../src/shared/types'
 import type { VideoItem } from '../src/main/adapters/types'
 
+// 下载链已拆掉自动转码：任何路径都不得调到 normalizeVideo。这里把模块整个替换成会记录调用的 spy，
+// 若 Downloader 重新把它接回主流程，下面「原视频直下」用例会直接红。
+const normalizeVideoSpy = vi.hoisted(() => vi.fn(async () => { throw new Error('下载链不得调用 normalizeVideo') }))
+vi.mock('../src/main/videoNormalizer', () => ({ normalizeVideo: normalizeVideoSpy }))
+
 let db: DatabaseSync
 let dir: string
 
@@ -68,82 +73,43 @@ describe('Downloader', () => {
     expect(events).toContain('video:status:done')
   })
 
-  it('标准化成功：最终文件使用转码结果，默认不保留原片', async () => {
+  it('原视频直下：需要转码的输入也按原样保存，normalizer 不被调用，尺寸不被改动', async () => {
     const taskId = createTask(db, input)
-    insertVideos(db, [item('NORMALIZED')], taskId, 'douyin')
+    insertVideos(db, [item('RAW-720P', { width: 720, height: 1280 })], taskId, 'douyin')
     const [v] = listVideos(db, taskId)
     const source = Buffer.alloc(2048, 1)
     source.write('ftypisom', 4)
-    const normalized = Buffer.alloc(3072, 2)
-    normalized.write('ftypisom', 4)
-    const normalizer = vi.fn(async ({ outputPath }: { outputPath: string }) => {
-      writeFileSync(outputPath, normalized)
-      return { status: 'normalized' as const, target: { width: 1920, height: 1080 } }
-    })
-    const dl = new Downloader(db, {
-      downloadDir: dir, downloadConcurrency: 1, addressTtlMin: 30,
-      normalizeVideo: true, keepOriginalVideo: false
-    }, (async () => new Response(source)) as typeof fetch, { validator: async () => true, normalizer })
+    const dl = new Downloader(db, { downloadDir: dir, downloadConcurrency: 1, addressTtlMin: 30 },
+      (async () => new Response(source)) as typeof fetch, { validator: async () => true })
 
     dl.enqueue(v.id)
     await vi.waitFor(() => expect(dl.isIdle()).toBe(true))
 
     const row = listVideos(db, taskId)[0]
     expect(row.status).toBe('done')
-    expect(readFileSync(row.local_path!)).toEqual(normalized)
+    expect(readFileSync(row.local_path!)).toEqual(source)
+    expect(row.local_path).toMatch(/\.mp4$/)
+    expect(row.local_path).not.toMatch(/\.part\./)
+    // 720×1280 就保留 720×1280：下载器不主动改尺寸，也不产生原片副本或转码诊断
+    expect(row.video_width).toBe(720)
+    expect(row.video_height).toBe(1280)
     expect(row.original_path).toBeNull()
     expect(row.normalization_error).toBeNull()
-    expect(row.video_width).toBe(1920)
-    expect(row.video_height).toBe(1080)
-    expect(normalizer).toHaveBeenCalledOnce()
+    expect(normalizeVideoSpy).not.toHaveBeenCalled()
     expect(readdirSync(dir).some(name => name.includes('.part.'))).toBe(false)
+    expect(readdirSync(dir).some(name => name.endsWith('.original.mp4'))).toBe(false)
   })
 
-  it('保留原片开启：转码成品与 .original.mp4 同名主体并存', async () => {
+  it('历史 settings.json 里残留 normalizeVideo/keepOriginalVideo=true 也不再影响下载链', async () => {
     const taskId = createTask(db, input)
-    insertVideos(db, [item('KEEP')], taskId, 'douyin')
+    insertVideos(db, [item('LEGACY-SETTING', { width: 720, height: 1280 })], taskId, 'douyin')
     const [v] = listVideos(db, taskId)
-    const source = Buffer.alloc(2048, 3)
+    const source = Buffer.alloc(2048, 2)
     source.write('ftypisom', 4)
-    const normalized = Buffer.alloc(3072, 4)
-    normalized.write('ftypisom', 4)
-    const normalizer = vi.fn(async ({ outputPath }: { outputPath: string }) => {
-      writeFileSync(outputPath, normalized)
-      return { status: 'normalized' as const, target: { width: 1080, height: 1920 } }
-    })
-    const dl = new Downloader(db, {
-      downloadDir: dir, downloadConcurrency: 1, addressTtlMin: 30,
-      normalizeVideo: true, keepOriginalVideo: true
-    }, (async () => new Response(source)) as typeof fetch, { validator: async () => true, normalizer })
-
-    dl.enqueue(v.id)
-    await vi.waitFor(() => expect(dl.isIdle()).toBe(true))
-
-    const row = listVideos(db, taskId)[0]
-    expect(row.status).toBe('done')
-    expect(readFileSync(row.local_path!)).toEqual(normalized)
-    expect(readFileSync(row.original_path!)).toEqual(source)
-    expect(row.original_path).toBe(row.local_path!.replace(/\.mp4$/i, '.original.mp4'))
-    expect(row.video_width).toBe(1080)
-    expect(row.video_height).toBe(1920)
-  })
-
-  it.each([
-    ['skipped', null],
-    ['failed', 'ffmpeg_failed']
-  ] as const)('标准化返回 %s：已验证原片成为最终视频且不复制原片', async (status, expectedError) => {
-    const taskId = createTask(db, input)
-    insertVideos(db, [item(`FALLBACK-${status}`)], taskId, 'douyin')
-    const [v] = listVideos(db, taskId)
-    const source = Buffer.alloc(2048, 5)
-    source.write('ftypisom', 4)
-    const normalizer = vi.fn(async () => status === 'skipped'
-      ? { status, target: { width: 1920, height: 1080 } }
-      : { status, error: 'ffmpeg_failed' as const, target: { width: 1920, height: 1080 } })
-    const dl = new Downloader(db, {
-      downloadDir: dir, downloadConcurrency: 1, addressTtlMin: 30,
-      normalizeVideo: true, keepOriginalVideo: true
-    }, (async () => new Response(source)) as typeof fetch, { validator: async () => true, normalizer })
+    // 旧版设置对象原样传入（updateSettings 收的是整份 AppSettings，老配置文件里仍可能带这两个键）
+    const legacy = { downloadDir: dir, downloadConcurrency: 1, addressTtlMin: 30, normalizeVideo: true, keepOriginalVideo: true }
+    const dl = new Downloader(db, legacy as never, (async () => new Response(source)) as typeof fetch, { validator: async () => true })
+    dl.updateSettings(legacy as never)
 
     dl.enqueue(v.id)
     await vi.waitFor(() => expect(dl.isIdle()).toBe(true))
@@ -152,58 +118,33 @@ describe('Downloader', () => {
     expect(row.status).toBe('done')
     expect(readFileSync(row.local_path!)).toEqual(source)
     expect(row.original_path).toBeNull()
-    expect(row.normalization_error).toBe(expectedError)
+    expect(row.normalization_error).toBeNull()
+    expect(normalizeVideoSpy).not.toHaveBeenCalled()
   })
 
-  it('关闭标准化时不调用 normalizer，直接原子落为最终视频', async () => {
+  it('封面下载期间全局暂停：保留已验证下载断点，继续后不重复请求视频', async () => {
     const taskId = createTask(db, input)
-    insertVideos(db, [item('DISABLED')], taskId, 'douyin')
-    const [v] = listVideos(db, taskId)
-    const source = Buffer.alloc(2048, 6)
-    source.write('ftypisom', 4)
-    const normalizer = vi.fn()
-    const dl = new Downloader(db, {
-      downloadDir: dir, downloadConcurrency: 1, addressTtlMin: 30,
-      normalizeVideo: false, keepOriginalVideo: true
-    }, (async () => new Response(source)) as typeof fetch, { validator: async () => true, normalizer })
-
-    dl.enqueue(v.id)
-    await vi.waitFor(() => expect(dl.isIdle()).toBe(true))
-
-    const row = listVideos(db, taskId)[0]
-    expect(row.status).toBe('done')
-    expect(readFileSync(row.local_path!)).toEqual(source)
-    expect(row.original_path).toBeNull()
-    expect(normalizer).not.toHaveBeenCalled()
-  })
-
-  it('标准化期间全局暂停：保留已验证下载断点，继续后不重复请求视频', async () => {
-    const taskId = createTask(db, input)
-    insertVideos(db, [item('PAUSE-NORMALIZE')], taskId, 'douyin')
+    insertVideos(db, [item('PAUSE-COVER', { coverUrl: 'https://img.test/c' })], taskId, 'douyin')
     const [v] = listVideos(db, taskId)
     const source = Buffer.alloc(2048, 7)
     source.write('ftypisom', 4)
-    const normalized = Buffer.alloc(3072, 8)
-    normalized.write('ftypisom', 4)
-    let fetchCount = 0
-    let normalizationStarted!: () => void
-    const started = new Promise<void>(resolve => { normalizationStarted = resolve })
-    let normalizeCount = 0
-    const normalizer = vi.fn(async ({ outputPath, signal }: { outputPath: string; signal?: AbortSignal }) => {
-      normalizeCount++
-      if (normalizeCount === 1) {
-        normalizationStarted()
-        await new Promise<void>(resolve => signal?.addEventListener('abort', () => resolve(), { once: true }))
-        return { status: 'aborted' as const, target: { width: 1920, height: 1080 } }
+    let videoFetchCount = 0
+    let coverFetchCount = 0
+    let coverStarted!: () => void
+    const started = new Promise<void>(resolve => { coverStarted = resolve })
+    const fetchImpl = (async (url: unknown, init?: RequestInit) => {
+      if (!String(url).includes('img.test')) { videoFetchCount++; return new Response(source) }
+      coverFetchCount++
+      if (coverFetchCount === 1) {
+        coverStarted()
+        const signal = init?.signal!
+        await new Promise((_, reject) => {
+          signal.addEventListener('abort', () => reject(Object.assign(new Error('The operation was aborted.'), { name: 'AbortError' })))
+        })
       }
-      writeFileSync(outputPath, normalized)
-      return { status: 'normalized' as const, target: { width: 1920, height: 1080 } }
-    })
-    const fetchImpl = (async () => { fetchCount++; return new Response(source) }) as typeof fetch
-    const dl = new Downloader(db, {
-      downloadDir: dir, downloadConcurrency: 1, addressTtlMin: 30,
-      normalizeVideo: true, keepOriginalVideo: false
-    }, fetchImpl, { validator: async () => true, normalizer })
+      return new Response(new Uint8Array([1]), { status: 200, headers: { 'content-type': 'image/jpeg' } })
+    }) as typeof fetch
+    const dl = new Downloader(db, { downloadDir: dir, downloadConcurrency: 1, addressTtlMin: 30 }, fetchImpl, { validator: async () => true })
 
     dl.enqueue(v.id)
     await started
@@ -212,77 +153,40 @@ describe('Downloader', () => {
     const paused = listVideos(db, taskId)[0]
     expect(paused.local_path).toMatch(/\.download\.part\.mp4$/)
     expect(existsSync(paused.local_path!)).toBe(true)
-    expect(fetchCount).toBe(1)
+    expect(videoFetchCount).toBe(1)
 
     dl.resume()
     await vi.waitFor(() => expect(dl.isIdle()).toBe(true))
     const row = listVideos(db, taskId)[0]
     expect(row.status).toBe('done')
-    expect(readFileSync(row.local_path!)).toEqual(normalized)
-    expect(fetchCount).toBe(1)
-    expect(normalizer).toHaveBeenCalledTimes(2)
+    expect(readFileSync(row.local_path!)).toEqual(source)
+    expect(row.cover_path).toBeTruthy()
+    expect(videoFetchCount).toBe(1)
+    expect(coverFetchCount).toBe(2)
   })
 
   it('程序重启后复用数据库中的已验证源文件断点，不再请求过期视频地址', async () => {
     const taskId = createTask(db, input)
-    insertVideos(db, [item('RESTART-NORMALIZE')], taskId, 'douyin')
+    insertVideos(db, [item('RESTART-CHECKPOINT')], taskId, 'douyin')
     const [v] = listVideos(db, taskId)
     const source = Buffer.alloc(2048, 9)
     source.write('ftypisom', 4)
-    const normalized = Buffer.alloc(3072, 10)
-    normalized.write('ftypisom', 4)
     const checkpoint = join(dir, `.video-${v.id}.download.part.mp4`)
     writeFileSync(checkpoint, source)
     db.prepare("UPDATE videos SET status='pending', local_path=?, fetched_at='2000-01-01T00:00:00.000Z' WHERE id=?")
       .run(checkpoint, v.id)
     const fetchImpl = vi.fn(async () => { throw new Error('不应重新请求') })
-    const normalizer = vi.fn(async ({ outputPath }: { outputPath: string }) => {
-      writeFileSync(outputPath, normalized)
-      return { status: 'normalized' as const, target: { width: 1920, height: 1080 } }
-    })
-    const dl = new Downloader(db, {
-      downloadDir: dir, downloadConcurrency: 1, addressTtlMin: 1,
-      normalizeVideo: true, keepOriginalVideo: false
-    }, fetchImpl as unknown as typeof fetch, { validator: async () => true, normalizer })
+    const dl = new Downloader(db, { downloadDir: dir, downloadConcurrency: 1, addressTtlMin: 1 },
+      fetchImpl as unknown as typeof fetch, { validator: async () => true })
 
     dl.enqueue(v.id)
     await vi.waitFor(() => expect(dl.isIdle()).toBe(true))
 
     const row = listVideos(db, taskId)[0]
     expect(row.status).toBe('done')
-    expect(readFileSync(row.local_path!)).toEqual(normalized)
+    expect(readFileSync(row.local_path!)).toEqual(source)
+    expect(existsSync(checkpoint)).toBe(false)
     expect(fetchImpl).not.toHaveBeenCalled()
-  })
-
-  it('标准化期间取消：删除源文件断点和转码半成品，并清空数据库路径', async () => {
-    const taskId = createTask(db, input)
-    insertVideos(db, [item('CANCEL-NORMALIZE')], taskId, 'douyin')
-    const [v] = listVideos(db, taskId)
-    const source = Buffer.alloc(2048, 11)
-    source.write('ftypisom', 4)
-    let normalizationStarted!: () => void
-    const started = new Promise<void>(resolve => { normalizationStarted = resolve })
-    const normalizer = vi.fn(async ({ outputPath, signal }: { outputPath: string; signal?: AbortSignal }) => {
-      writeFileSync(outputPath, Buffer.alloc(1024, 12))
-      normalizationStarted()
-      await new Promise<void>(resolve => signal?.addEventListener('abort', () => resolve(), { once: true }))
-      return { status: 'aborted' as const, target: { width: 1920, height: 1080 } }
-    })
-    const dl = new Downloader(db, {
-      downloadDir: dir, downloadConcurrency: 1, addressTtlMin: 30,
-      normalizeVideo: true, keepOriginalVideo: false
-    }, (async () => new Response(source)) as typeof fetch, { validator: async () => true, normalizer })
-
-    dl.enqueue(v.id)
-    await started
-    dl.cancel([v.id])
-    await vi.waitFor(() => expect(dl.isIdle()).toBe(true))
-
-    const row = listVideos(db, taskId)[0]
-    expect(row.status).toBe('cancelled')
-    expect(row.local_path).toBeNull()
-    expect(row.original_path).toBeNull()
-    expect(readdirSync(dir)).toEqual([])
   })
 
   it('视频与封面下载成功：保存为完全相同的文件名主体', async () => {
@@ -312,8 +216,10 @@ describe('Downloader', () => {
     const taskId = createTask(db, input)
     insertVideos(db, [item('AW001', { coverUrl: 'https://img.test/c' })], taskId, 'douyin')
     const [v] = listVideos(db, taskId)
-    // 文件名主体现在只用标题（不再拼作者名和作品 ID），预占名跟着改；
-    // 本用例验的是「孤立封面占名 → 视频与新封面共用 _1 后缀」，该行为未变
+    // 文件名主体现在只用标题（不再拼作者名和作品 ID），预占名跟着改；
+
+    // 本用例验的是「孤立封面占名 → 视频与新封面共用 _1 后缀」，该行为未变
+
     writeFileSync(join(dir, '标题.webp'), 'old')
     const mp4 = Buffer.alloc(2048)
     mp4.writeUInt32BE(0x18, 0)
@@ -405,7 +311,9 @@ describe('Downloader', () => {
     dl.cancel([v.id])
     await new Promise(r => setTimeout(r, 50))
 
-    expect(listVideos(db, taskId)[0].status).toBe('cancelled')
+    const row = listVideos(db, taskId)[0]
+    expect(row.status).toBe('cancelled')
+    expect(row.local_path).toBeNull() // 已验证断点也一并清空，不留指向已删文件的路径
     expect(readdirSync(dir)).toHaveLength(0)
   })
 

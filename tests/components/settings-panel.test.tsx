@@ -20,8 +20,6 @@ const SETTING_LABELS: Record<keyof AppSettings, string> = {
   aiApiKey: 'API Key',
   aiModel: '模型',
   downloadConcurrency: '下载并发',
-  normalizeVideo: '统一输出分辨率（推荐）',
-  keepOriginalVideo: '保留原视频',
   scrollIntervalMs: '滚动间隔(ms)',
   scrollSpeed: '滚动速度',
   scrollPageWaitMs: '每页最大等待(秒)',
@@ -107,28 +105,23 @@ describe('SettingsPanel 分组与字段完整性', () => {
     })))
   })
 
-  it('标准化默认开启；保留原片可选，关闭标准化时自动关闭并禁用原片开关', async () => {
+  // 统一分辨率已从下载行为里撤出（改为「视频处理」页手动批处理），设置页不能再出现这两个开关，
+  // 否则员工勾了会以为下载会转码。这里同时钉住替代说明文字，免得只删开关不留线索。
+  it('「下载与去重」里不再有统一输出分辨率 / 保留原视频开关，并说明去视频处理页', async () => {
     installFakeApi()
     render(<SettingsPanel />)
+    const card = (await screen.findByRole('heading', { name: '下载与去重' })).parentElement!
 
-    const normalize = await screen.findByLabelText('统一输出分辨率（推荐）') as HTMLInputElement
-    const keepOriginal = screen.getByLabelText('保留原视频') as HTMLInputElement
-    expect(normalize).toBeChecked()
-    expect(keepOriginal).not.toBeChecked()
-    expect(keepOriginal).toBeEnabled()
-
-    fireEvent.click(keepOriginal)
-    expect(keepOriginal).toBeChecked()
-    fireEvent.click(normalize)
-    expect(normalize).not.toBeChecked()
-    expect(keepOriginal).not.toBeChecked()
-    expect(keepOriginal).toBeDisabled()
+    expect(screen.queryByLabelText('统一输出分辨率（推荐）')).toBeNull()
+    expect(screen.queryByLabelText('保留原视频')).toBeNull()
+    expect(card.textContent).toContain('视频处理')
+    expect(card.textContent).toContain('不再自动转码')
 
     fireEvent.click(screen.getByRole('button', { name: '保存设置' }))
-    await waitFor(() => expect(window.api.saveSettings).toHaveBeenCalledWith(expect.objectContaining({
-      normalizeVideo: false,
-      keepOriginalVideo: false
-    })))
+    await waitFor(() => expect(window.api.saveSettings).toHaveBeenCalled())
+    const saved = vi.mocked(window.api.saveSettings).mock.calls[0][0] as unknown as Record<string, unknown>
+    expect('normalizeVideo' in saved).toBe(false)
+    expect('keepOriginalVideo' in saved).toBe(false)
   })
 
   it('语音分析时长被清空或小于 10 秒时拒绝保存', async () => {

@@ -196,6 +196,28 @@ describe('FFmpeg 标准化编排', () => {
     expect(args.join(' ')).toContain('force_original_aspect_ratio=decrease')
   })
 
+  it('结果带源显示尺寸；onProbe 在探测完、开始转码前回调一次（视频处理页据此在转码中就能显示尺寸）', async () => {
+    const order: string[] = []
+    const onProbe = vi.fn(() => { order.push('probe') })
+    const deps = normalizerDeps({
+      probeMedia: vi.fn()
+        .mockResolvedValueOnce(media({ width: 720, height: 1280, rotation: 90 })) // 旋转后显示为 1280×720 横屏
+        .mockResolvedValueOnce(media()),
+      runFfmpeg: vi.fn(async () => { order.push('ffmpeg') })
+    })
+    const result = await normalizeVideo({ inputPath: 'rot.mp4', outputPath: 'out.mp4', onProbe }, deps)
+    expect(onProbe).toHaveBeenCalledWith({ source: { width: 1280, height: 720 }, target: { width: 1920, height: 1080 } })
+    expect(order).toEqual(['probe', 'ffmpeg'])
+    expect(result).toMatchObject({ status: 'normalized', source: { width: 1280, height: 720 }, target: { width: 1920, height: 1080 } })
+
+    const skipped = await normalizeVideo({ inputPath: 'ok.mp4', outputPath: 'out.mp4' }, normalizerDeps({ probeMedia: vi.fn().mockResolvedValue(media()) }))
+    expect(skipped).toMatchObject({ status: 'skipped', source: { width: 1920, height: 1080 } })
+
+    const noProbe = vi.fn()
+    await normalizeVideo({ inputPath: 'bad.mp4', outputPath: 'out.mp4', onProbe: noProbe }, normalizerDeps({ probeMedia: vi.fn().mockResolvedValue(null) }))
+    expect(noProbe).not.toHaveBeenCalled() // 探测失败没有尺寸可报
+  })
+
   it('无音轨输入正常标准化，输出也允许无音轨', async () => {
     const deps = normalizerDeps({
       probeMedia: vi.fn()

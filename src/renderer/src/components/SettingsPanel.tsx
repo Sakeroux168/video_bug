@@ -117,31 +117,9 @@ export default function SettingsPanel() {
               <input type="number" min={1} className={inputCls} value={s.addressTtlMin} onChange={e => set('addressTtlMin', Number(e.target.value))} />
             </label>
           </div>
-          <div className="mt-3 space-y-2 border-t border-slate-100 pt-3 text-xs text-slate-600">
-            <label className="flex items-center gap-2">
-              <input
-                type="checkbox"
-                checked={s.normalizeVideo}
-                onChange={e => setS(prev => prev ? {
-                  ...prev,
-                  normalizeVideo: e.target.checked,
-                  keepOriginalVideo: e.target.checked ? prev.keepOriginalVideo : false
-                } : prev)}
-              />
-              <span>统一输出分辨率（推荐）</span>
-            </label>
-            <p className="pl-5 leading-5 text-slate-400">横屏输出 1920×1080，竖屏输出 1080×1920；主体保持比例，不会被拉长或压扁。</p>
-            <label className={`flex items-center gap-2 ${s.normalizeVideo ? '' : 'text-slate-300'}`}>
-              <input
-                type="checkbox"
-                checked={s.keepOriginalVideo}
-                disabled={!s.normalizeVideo}
-                onChange={e => set('keepOriginalVideo', e.target.checked)}
-              />
-              <span>保留原视频</span>
-            </label>
-            <p className="pl-5 leading-5 text-slate-400">仅在发生转码时额外保留原片，会占用更多磁盘空间。</p>
-          </div>
+          <p className="mt-3 border-t border-slate-100 pt-3 text-xs leading-5 text-slate-400">
+            下载只保存平台给到的原视频，不再自动转码。需要统一成 1080p 的话，去左侧「视频处理」页选文件夹批量处理。
+          </p>
           <div className="mt-3 space-y-2 border-t border-slate-100 pt-3 text-xs text-slate-600">
             <p className="font-medium text-slate-700">下载后分文件夹整理</p>
             <p className="leading-5 text-slate-400">勾选的项会按「品类 / 作者 / 横竖屏 / 时长」的固定顺序建子文件夹；一项都不勾就直接放在下载目录里。</p>

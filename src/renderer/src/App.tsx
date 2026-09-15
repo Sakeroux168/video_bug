@@ -5,6 +5,7 @@ import FilterForm from './components/FilterForm'
 import TaskList from './components/TaskList'
 import AuthorCollection from './components/AuthorCollection'
 import FileManager from './components/FileManager'
+import VideoProcessPanel from './components/VideoProcessPanel'
 import BrowserPanel from './components/BrowserPanel'
 import SettingsPanel from './components/SettingsPanel'
 import HelpPanel from './components/HelpPanel'
@@ -17,6 +18,7 @@ const NAV: NavItem[] = [
   { key: 'tasks', label: '任务', icon: 'tasks' },
   { key: 'authors', label: '作者收藏', icon: 'authors' },
   { key: 'files', label: '文件管理', icon: 'files' },
+  { key: 'process', label: '视频处理', icon: 'film' },
   { key: 'browser', label: '内置浏览器', icon: 'browser' },
   { key: 'settings', label: '设置', icon: 'settings' },
   { key: 'help', label: '使用说明', icon: 'help' }
@@ -159,6 +161,8 @@ export default function App(): JSX.Element {
         {tab === 'overview' && <Overview onGoto={setTab} />}
         {tab === 'authors' && <AuthorCollection notify={notify} />}
         {tab === 'files' && <FileManager notify={notify} />}
+        {/* 处理状态住在主进程，切走再切回来只是重新拉一次快照，条件渲染即可 */}
+        {tab === 'process' && <VideoProcessPanel notify={notify} />}
         {tab === 'browser' && <BrowserPanel />}
         {tab === 'settings' && <SettingsPanel />}
         {tab === 'help' && <HelpPanel />}
