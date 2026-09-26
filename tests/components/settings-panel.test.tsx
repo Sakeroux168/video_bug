@@ -20,7 +20,7 @@ const SETTING_LABELS: Record<keyof AppSettings, string> = {
   aiApiKey: 'API Key',
   aiModel: '模型',
   downloadConcurrency: '下载并发',
-  normalizeVideo: '统一输出分辨率（推荐）',
+  normalizeVideo: '统一输出分辨率（会让下载明显变慢）',
   keepOriginalVideo: '保留原视频',
   scrollIntervalMs: '滚动间隔(ms)',
   scrollSpeed: '滚动速度',
@@ -30,7 +30,9 @@ const SETTING_LABELS: Record<keyof AppSettings, string> = {
   organizeDebounceMs: '自动归档延迟(秒)',
   asrMaxSec: '语音分析时长(秒)',
   stallThresholdSec: '停滞检测(秒)',
-  rescueCooldownSec: '重搜冷却(秒)'
+  rescueCooldownSec: '重搜冷却(秒)',
+  bridgeEnabled: '开本机接口，让发布助手能让本程序去抓某个作者的主页（只在这台电脑内部，不对外）',
+  bridgePort: '端口'
 }
 
 describe('SettingsPanel 消息的成功/失败配色', () => {
@@ -107,7 +109,7 @@ describe('SettingsPanel 分组与字段完整性', () => {
     installFakeApi()
     render(<SettingsPanel />)
 
-    const normalize = await screen.findByLabelText('统一输出分辨率（推荐）') as HTMLInputElement
+    const normalize = await screen.findByLabelText('统一输出分辨率（会让下载明显变慢）') as HTMLInputElement
     const keepOriginal = screen.getByLabelText('保留原视频') as HTMLInputElement
     expect(normalize).toBeChecked()
     expect(keepOriginal).not.toBeChecked()

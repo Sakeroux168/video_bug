@@ -36,6 +36,8 @@ function fullSettings(over: Partial<AppSettings> = {}): AppSettings {
     asrMaxSec: 120,
     stallThresholdSec: 10,
     rescueCooldownSec: 10,
+    bridgeEnabled: true,
+    bridgePort: 47321,
     ...over
   }
 }
@@ -48,7 +50,7 @@ describe('settings', () => {
     const s = getSettings()
     expect(s.downloadDir).toBe(join(mockPaths.downloads, '爬取视频'))
     expect(s.downloadConcurrency).toBe(3)
-    expect(s.normalizeVideo).toBe(true)
+    expect(s.normalizeVideo).toBe(false)   // R18：默认改成关（开着每条都 libx264 重编码，下载慢的根因）
     expect(s.keepOriginalVideo).toBe(false)
     expect(s.scrollSpeed).toBe('slow')
     expect(s.scrollPageWaitMs).toBe(8000)
@@ -68,7 +70,7 @@ describe('settings', () => {
     const s = getSettings()
     expect(s.downloadConcurrency).toBe(5)
     expect(s.allowDuplicateAuthor).toBe(true)
-    expect(s.normalizeVideo).toBe(true)
+    expect(s.normalizeVideo).toBe(false)   // R18：默认改成关（开着每条都 libx264 重编码，下载慢的根因）
     expect(s.keepOriginalVideo).toBe(false)
     expect(s.aiModel).toBe('gpt-4o-mini') // 未存字段回落到默认
     expect(s.downloadDir).toBe(join(mockPaths.downloads, '爬取视频'))

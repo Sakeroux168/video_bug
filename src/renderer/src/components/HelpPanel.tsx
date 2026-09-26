@@ -172,7 +172,21 @@ export default function HelpPanel(): React.ReactElement {
       </Card>
 
       <Card>
-        <SectionTitle index="7">免费版本与许可</SectionTitle>
+        <SectionTitle index="7">和百家号发布助手一起用</SectionTitle>
+        <div className="space-y-2 text-xs leading-5 text-slate-500">
+          <p>
+            本程序负责把作者的视频下下来，发布助手负责处理和发到百家号。发布助手在「设置 → 发布」里填本程序的下载目录后，
+            会自动把「品类\作者\」里新下的视频按作者名拉进各达人的暂存；作者文件夹名要和发布助手达人表里的达人名或站外昵称一样。
+          </p>
+          <p>
+            「设置 → 和百家号发布助手打通」里的本机接口开着时，发布助手（或它的助手）可以直接让本程序去抓某几个作者的主页。
+            <span className="font-medium text-slate-700">「统一输出分辨率」建议关掉</span>：每条视频都重新编码，下载会慢好几倍，发布助手处理时反正还会再编码。
+          </p>
+        </div>
+      </Card>
+
+      <Card>
+        <SectionTitle index="8">免费版本与许可</SectionTitle>
         <div className="space-y-2 text-xs leading-5 text-slate-500">
           <p>
             这是项目维护者提供的<span className="font-medium text-emerald-600">官方免费版本</span>。

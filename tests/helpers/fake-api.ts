@@ -74,7 +74,8 @@ function makeSettings(): AppSettings {
     normalizeVideo: true, keepOriginalVideo: false,
     scrollIntervalMs: 3000, scrollSpeed: 'medium', scrollPageWaitMs: 8000,
     addressTtlMin: 10, allowDuplicateAuthor: false, organizeDebounceMs: 5000, asrMaxSec: 90,
-    stallThresholdSec: 5, rescueCooldownSec: 10
+    stallThresholdSec: 5, rescueCooldownSec: 10,
+    bridgeEnabled: true, bridgePort: 47321
   }
 }
 

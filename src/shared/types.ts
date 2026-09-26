@@ -115,6 +115,9 @@ export interface AppSettings {
   stallThresholdSec: number
   /** R12：重搜冷却秒数（停滞自救两次重搜的最小间隔，默认 10；到底文案命中可忽略冷却立即重搜） */
   rescueCooldownSec: number
+  /** R18：本机 HTTP 口（给百家号发布助手等外部程序建抓取任务用）；只绑 127.0.0.1 */
+  bridgeEnabled: boolean
+  bridgePort: number
 }
 
 /** ASR 单个模型文件的状态（models.status() 的结果形状，跨进程用） */
