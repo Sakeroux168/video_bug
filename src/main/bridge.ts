@@ -34,7 +34,12 @@ export interface JobBody {
   platform?: unknown
   autoDownload?: unknown
   allowDuplicateAuthor?: unknown
+  /** YYYY-MM-DD；给了就按日期段抓（发布助手按「作品下载日期」续抓：上次的次日 → 今天） */
+  startDate?: unknown
+  endDate?: unknown
 }
+
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
 
 /** 把外部程序发来的 body 变成 CreateTaskInput；不合法返回 string 说明原因。 */
 export function jobFromBody(body: JobBody): CreateTaskInput | string {
@@ -47,6 +52,15 @@ export function jobFromBody(body: JobBody): CreateTaskInput | string {
   const n = body.targetCount === undefined ? 5 : Number(body.targetCount)
   if (!Number.isFinite(n) || n < 1 || n > 5000) return 'targetCount 要在 1~5000 之间'
   const filters: Filters = { timeRange: 'all', duration: 'all', targetCount: Math.floor(n) }
+  if (body.startDate !== undefined || body.endDate !== undefined) {
+    const s = typeof body.startDate === 'string' ? body.startDate : ''
+    const e = typeof body.endDate === 'string' ? body.endDate : new Date().toISOString().slice(0, 10)
+    if (!DATE_RE.test(s) || !DATE_RE.test(e)) return 'startDate / endDate 要写成 YYYY-MM-DD'
+    if (s > e) return 'startDate 不能晚于 endDate'
+    filters.timeRange = 'custom'
+    filters.startDate = s
+    filters.endDate = e
+  }
   const input: CreateTaskInput = {
     platform, type, query, filters,
     aiFilterEnabled: false, aiOrganizeEnabled: false,

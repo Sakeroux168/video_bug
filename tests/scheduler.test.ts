@@ -190,6 +190,60 @@ describe('Scheduler 异常兜底与串行（I3）', () => {
   }, 10000)
 })
 
+describe('R18 作者主页按日期段抓：翻过起点就算抓完', () => {
+  const authorInput: CreateTaskInput = {
+    ...input, type: 'author', query: 'https://www.douyin.com/user/SEC_R18',
+    filters: { timeRange: 'custom', startDate: '2024-03-10', endDate: '2024-03-20', duration: 'all', targetCount: 200 }
+  }
+  const authorUrl = 'https://www.douyin.com/aweme/v1/web/aweme/post/?device_platform=webapp'
+  function json(id: string, createTime: number): unknown {
+    return { aweme_list: [{ aweme_id: id, desc: '作品', create_time: createTime, author: { sec_uid: 'SEC_R18', nickname: '作者' },
+      video: { play_addr: { url_list: ['https://cdn.test/r18.mp4'] } }, statistics: { digg_count: 1 }, duration: 8000 }] }
+  }
+
+  it('一批全比 startDate 老 → pastRange、中断滚动、不入库；之后任务以 done 结束（不是 stalled/风控）', async () => {
+    const db = newDb()
+    const taskId = createTask(db, authorInput)
+    const dl = new FakeDownloader()
+    const browser = new FakeBrowser()
+    const { s } = setup(db, dl, browser)
+    browser.blockNextLoad()
+    const p = s.run(taskId)
+    await new Promise(r => setTimeout(r, 10))
+    // 日期段内的一条 → 正常入库
+    await s.handleRaw(douyinAdapter, authorUrl, json('7330000000000000101', Date.UTC(2024, 2, 15) / 1000))
+    expect(db.prepare('SELECT COUNT(*) c FROM videos WHERE task_id=?').get(taskId)).toEqual({ c: 1 })
+    expect((s as any).pastRange).toBe(false)
+    // 比起点老的一批 → 翻过日期段
+    const r = await s.handleRaw(douyinAdapter, authorUrl, json('7330000000000000102', Date.UTC(2024, 2, 1) / 1000))
+    expect(r).toEqual({ items: 1, kept: 0 })
+    expect((s as any).pastRange).toBe(true)
+    expect(browser.abortScroll).toHaveBeenCalled()
+    expect(db.prepare('SELECT COUNT(*) c FROM videos WHERE task_id=?').get(taskId)).toEqual({ c: 1 })
+    browser.releaseLoad()
+    await p
+    const row = db.prepare('SELECT status, error, fetched_count FROM tasks WHERE id=?').get(taskId) as { status: string; error: string | null; fetched_count: number }
+    expect(row.status).toBe('done')
+    expect(row.error).toBeNull()
+    expect(row.fetched_count).toBe(1)
+  }, 10000)
+
+  it('关键词任务不适用（搜索结果不按时间排）：老视频只是被过滤，不会置 pastRange', async () => {
+    const db = newDb()
+    const taskId = createTask(db, { ...input, filters: { timeRange: 'custom', startDate: '2024-03-10', endDate: '2024-03-20', duration: 'all', targetCount: 200 } })
+    const browser = new FakeBrowser()
+    const { s } = setup(db, new FakeDownloader(), browser)
+    browser.blockNextLoad()
+    const p = s.run(taskId)
+    await new Promise(r => setTimeout(r, 10))
+    await s.handleRaw(douyinAdapter, rawUrl, json('7330000000000000103', Date.UTC(2024, 2, 1) / 1000))
+    expect((s as any).pastRange).toBe(false)
+    browser.releaseLoad()
+    await s.pause()
+    await p
+  }, 10000)
+})
+
 describe('handleRaw 入库与作者（I4）+ pendingVideoIds 清理（I1）', () => {
   it('写入作者、入库视频、入队下载；下载完成从 pendingVideoIds 移除', async () => {
     const db = newDb()

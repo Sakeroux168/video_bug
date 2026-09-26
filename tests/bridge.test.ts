@@ -100,6 +100,25 @@ describe('bridge', () => {
     expect((await fetch(base + '/job/999')).status).toBe(404)
   })
 
+  it('POST /job 带 startDate/endDate → filters 变成 custom 日期段；格式不对 400', async () => {
+    const r = await post('/job', { query: AUTHOR_URL, startDate: '2026-09-10', endDate: '2026-09-27' })
+    expect(r.json.skipped).toBe(false)
+    const g = await (await fetch(`${base}/job/${r.json.id}`)).json()
+    const f = JSON.parse(g.task.filters)
+    expect(f.timeRange).toBe('custom')
+    expect(f.startDate).toBe('2026-09-10')
+    expect(f.endDate).toBe('2026-09-27')
+    expect((await post('/job', { query: AUTHOR_URL, allowDuplicateAuthor: true, startDate: '9.10' })).status).toBe(400)
+    expect((await post('/job', { query: AUTHOR_URL, allowDuplicateAuthor: true, startDate: '2026-09-28', endDate: '2026-09-27' })).status).toBe(400)
+    const only = jobFromBody({ query: 'u', startDate: '2026-09-10' })
+    if (typeof only !== 'string') {
+      expect(only.filters.timeRange).toBe('custom')
+      expect(only.filters.endDate).toBe(new Date().toISOString().slice(0, 10))
+    } else {
+      expect(only).toBe('')
+    }
+  })
+
   it('jobFromBody：默认 author/douyin/5 条/自动下载；关键词任务也能建', () => {
     const a = jobFromBody({ query: ' u ' })
     expect(typeof a).not.toBe('string')
