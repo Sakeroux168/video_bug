@@ -10,6 +10,20 @@ export function safeFilename(title: string, author: string, awemeId: string): st
   return trimmed || `${author}_${awemeId}`
 }
 
+/**
+ * R19：下到达人「暂存」的视频只用标题当文件名 —— 文件名就是发到百家号的标题，
+ * 以前的「标题_作者_id」会把「_作者」一起发出去。标题空的退回「作者_id」。
+ */
+export function titleOnlyFilename(title: string, author: string, awemeId: string): string {
+  const t = (title || '')
+    .replace(/[\\/:*?"<>|\r\n\t]/g, '_')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/[. ]+$/, '')
+  const base = t.length > 80 ? t.slice(0, 80).trim() : t
+  return base || safeFilename('', author, awemeId)
+}
+
 export function ensureUniqueName(dir: string, name: string): string {
   if (!existsSync(join(dir, name))) return name
   const dot = name.lastIndexOf('.')

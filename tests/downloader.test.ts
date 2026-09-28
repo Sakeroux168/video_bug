@@ -308,6 +308,32 @@ describe('Downloader', () => {
     expect(readFileSync(row.cover_path!)).toEqual(Buffer.from(cover))
   })
 
+  it('R19 任务带 outputDir：视频直接下到那个文件夹，文件名只用标题、不下封面，下载目录里什么都没有', async () => {
+    const target = join(dir, '达人', '暂存')            // 还不存在，下载器自己建
+    const other = join(dir, '下载目录')
+    const taskId = createTask(db, { ...input, outputDir: target })
+    insertVideos(db, [item('JOB1', { title: '他用手把湿土捏成仕女', coverUrl: 'https://img.test/c' }),
+      item('JOB2', { title: '', authorNickname: '奶龙' })], taskId, 'douyin')
+    const vids = listVideos(db, taskId)
+    const mp4 = Buffer.alloc(2048)
+    mp4.writeUInt32BE(0x18, 0)
+    mp4.write('ftypisom', 4)
+    const hits: string[] = []
+    const fetchImpl = (async (url: unknown) => {
+      hits.push(String(url))
+      return new Response(mp4, { status: 200, headers: { 'content-type': 'video/mp4' } })
+    }) as typeof fetch
+    const dl = new Downloader(db, { downloadDir: other, downloadConcurrency: 1, addressTtlMin: 30 }, fetchImpl, { validator: async () => true })
+    for (const v of vids) dl.enqueue(v.id)
+    await vi.waitFor(() => expect(listVideos(db, taskId).every(r => r.status === 'done')).toBe(true))
+    const rows = listVideos(db, taskId)
+    expect(dirname(rows[0].local_path!)).toBe(target)
+    expect(readdirSync(target).sort()).toEqual(['他用手把湿土捏成仕女.mp4', '奶龙_JOB2.mp4'])
+    expect(rows[0].cover_path).toBeNull()
+    expect(hits.some(u => u.includes('img.test'))).toBe(false)
+    expect(existsSync(other) ? readdirSync(other) : []).toEqual([])
+  })
+
   it('孤立旧封面占名时，视频与新封面共同使用 _1 后缀', async () => {
     const taskId = createTask(db, input)
     insertVideos(db, [item('AW001', { coverUrl: 'https://img.test/c' })], taskId, 'douyin')

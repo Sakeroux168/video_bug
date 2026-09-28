@@ -96,6 +96,7 @@ export function initDb(db: DatabaseSync): void {
   addColumnIfMissing(db, 'videos', 'source_url', 'TEXT')
   addColumnIfMissing(db, 'videos', 'original_path', 'TEXT')
   addColumnIfMissing(db, 'videos', 'normalization_error', 'TEXT')
+  addColumnIfMissing(db, 'tasks', 'output_dir', 'TEXT') // R19：任务自己的下载文件夹
 }
 
 /** 老库迁移：表缺列时补列（ALTER TABLE ADD COLUMN 不能带 NOT NULL 无默认值的约束，故用 DEFAULT） */
@@ -106,11 +107,11 @@ function addColumnIfMissing(db: DatabaseSync, table: string, column: string, ddl
 
 export function createTask(db: DatabaseSync, input: CreateTaskInput): number {
   const info = db.prepare(
-    `INSERT INTO tasks (platform, type, query, filters, target_count, auto_download, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO tasks (platform, type, query, filters, target_count, auto_download, created_at, output_dir)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
   ).run(input.platform, input.type, input.query,
     JSON.stringify({ ...input.filters, aiFilterEnabled: input.aiFilterEnabled, aiOrganizeEnabled: input.aiOrganizeEnabled }),
-    input.filters.targetCount, Number(input.autoDownload ?? true), new Date().toISOString())
+    input.filters.targetCount, Number(input.autoDownload ?? true), new Date().toISOString(), input.outputDir || null)
   return Number(info.lastInsertRowid)
 }
 

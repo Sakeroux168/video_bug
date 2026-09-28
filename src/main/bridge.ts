@@ -1,4 +1,5 @@
 import { createServer } from 'http'
+import { isAbsolute } from 'path'
 import type { IncomingMessage, Server, ServerResponse } from 'http'
 import type { DatabaseSync } from 'node:sqlite'
 import { globalStats, listTasks, taskStats } from './db'
@@ -10,9 +11,12 @@ import type { CreateTaskInput, Filters } from '../shared/types'
  * 只绑 127.0.0.1（不对外），不做鉴权——和发布助手自己的 agent 桥一个思路：同一台机器上的程序互相调。
  *
  *   GET  /status          → { ok, app, running, stats, tasks: 最近 50 个任务 }
- *   POST /job             → body { query, targetCount?, type?, platform?, autoDownload?, allowDuplicateAuthor? }
+ *   POST /job             → body { query, targetCount?, type?, platform?, autoDownload?, allowDuplicateAuthor?, startDate?, endDate?, outputDir? }
  *                            → { id, skipped, reason? }（和界面上建任务走同一条检查：归一化 + 作者去重）
  *   GET  /job/<id>        → { task, stats }
+ *
+ * R19：outputDir = 这个任务的视频直接下到哪（发布助手传达人的「暂存」）。这种视频文件名只用标题、不下封面、不整理。
+ *      /status 带 features: ['outputDir']，发布助手靠它认出新版。
  *
  * 默认端口 47321（settings.bridgePort），settings.bridgeEnabled=false 关掉。
  */
@@ -37,7 +41,11 @@ export interface JobBody {
   /** YYYY-MM-DD；给了就按日期段抓（发布助手按「作品下载日期」续抓：上次的次日 → 今天） */
   startDate?: unknown
   endDate?: unknown
+  /** R19：下到哪（绝对路径） */
+  outputDir?: unknown
 }
+
+export const BRIDGE_FEATURES = ['outputDir'] as const
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
 
@@ -67,6 +75,11 @@ export function jobFromBody(body: JobBody): CreateTaskInput | string {
     autoDownload: body.autoDownload === undefined ? true : Boolean(body.autoDownload)
   }
   if (body.allowDuplicateAuthor !== undefined) input.allowDuplicateAuthor = Boolean(body.allowDuplicateAuthor)
+  if (body.outputDir !== undefined && body.outputDir !== null && body.outputDir !== '') {
+    const dir = typeof body.outputDir === 'string' ? body.outputDir.trim() : ''
+    if (!dir || !isAbsolute(dir)) return 'outputDir 要写完整路径（比如 Z:\\AAA\\达人\\暂存）'
+    input.outputDir = dir
+  }
   return input
 }
 
@@ -97,7 +110,7 @@ export function handleRequest(deps: BridgeDeps, req: IncomingMessage, res: Serve
     try {
       if (req.method === 'GET' && path === '/status') {
         send(res, 200, {
-          ok: true, app: 'video-scraper', running: deps.isRunning(),
+          ok: true, app: 'video-scraper', running: deps.isRunning(), features: [...BRIDGE_FEATURES],
           stats: globalStats(deps.db), tasks: listTasks(deps.db).slice(0, 50)
         })
         return

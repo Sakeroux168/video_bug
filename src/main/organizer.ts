@@ -62,7 +62,14 @@ export class Organizer {
   }
 
   private needsOrganize(v: VideoRow): boolean {
+    if (this.inJobFolder(v)) return false          // R19：下到任务指定文件夹（达人暂存）的不整理
     return this.isFlat(v) || v.organize_retry === 1
+  }
+
+  private inJobFolder(v: VideoRow): boolean {
+    const t = this.deps.db.prepare('SELECT output_dir FROM tasks WHERE id = ?').get(v.task_id) as
+      { output_dir?: string | null } | undefined
+    return !!(t?.output_dir && String(t.output_dir).trim())
   }
 
   /** 下载完成事件调用：该作者存在 ≥1 条 done 且仍平铺在下载目录根的视频时才置 'pending'。

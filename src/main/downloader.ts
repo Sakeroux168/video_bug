@@ -8,7 +8,7 @@ import { findBin } from './ffbin'
 import type { AppSettings, VideoRow, VideoStatus } from '../shared/types'
 import { ERROR } from '../shared/types'
 import { classifyDownloadError, AddressPolicy } from './errors'
-import { safeFilename, ensureUniqueStem } from './filename'
+import { safeFilename, titleOnlyFilename, ensureUniqueStem } from './filename'
 import { downloadCover } from './cover'
 import { setVideoStatus } from './db'
 import { normalizeVideo } from './videoNormalizer'
@@ -202,12 +202,18 @@ export class Downloader {
     let sourceValidated = false
     let sourcePart: string | null = null
     // 当前下载固定一个目录，设置热更新只影响下一条，避免封面与视频分离或覆盖旧封面。
-    const downloadDir = this.settings.downloadDir
+    // R19：任务自己指定了下载文件夹（发布助手传的达人「暂存」）就下到那；临时文件也放那（跨盘 rename 会失败）
+    const jobDir = ((this.db.prepare('SELECT output_dir FROM tasks WHERE id = ?').get(row.task_id) as
+      { output_dir?: string | null } | undefined)?.output_dir || '').trim()
+    const downloadDir = jobDir || this.settings.downloadDir
     try {
       const author = row.author_id
         ? (this.db.prepare('SELECT nickname FROM authors WHERE id = ?').get(row.author_id) as { nickname: string } | undefined)
         : undefined
-      const name = safeFilename(row.title, author?.nickname ?? 'unknown', row.aweme_id)
+      if (jobDir) mkdirSync(jobDir, { recursive: true })
+      const name = jobDir
+        ? titleOnlyFilename(row.title, author?.nickname ?? 'unknown', row.aweme_id)
+        : safeFilename(row.title, author?.nickname ?? 'unknown', row.aweme_id)
       const stem = ensureUniqueStem(downloadDir, name, ['.mp4', '.original.mp4', '.jpg', '.jpeg', '.png', '.webp'])
       const target = join(downloadDir, `${stem}.mp4`)
       const originalPath = join(downloadDir, `${stem}.original.mp4`)
@@ -302,7 +308,8 @@ export class Downloader {
 
       const coverPart = join(downloadDir, `${stem}.cover.part`)
       cleanupPaths.push(coverPart)
-      const coverPath = row.cover_url
+      // R19：下到达人暂存的不要封面（暂存里只放视频）
+      const coverPath = row.cover_url && !jobDir
         ? await downloadCover({
             url: row.cover_url,
             dir: downloadDir,
@@ -313,7 +320,7 @@ export class Downloader {
           })
         : null
       if (coverPath) cleanupPaths.push(coverPath)
-      else if (row.cover_url) console.warn(`[downloader] 封面下载失败，视频继续完成: id=${id}`)
+      else if (row.cover_url && !jobDir) console.warn(`[downloader] 封面下载失败，视频继续完成: id=${id}`)
       if (aborter.signal.aborted) throw new Error('AbortError')
 
       let originalFinalPath: string | null = null

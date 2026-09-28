@@ -119,6 +119,27 @@ describe('bridge', () => {
     }
   })
 
+  it('R19 POST /job 带 outputDir → 任务记下下载文件夹；GET /job 和 /status 看得到', async () => {
+    const dir = process.platform === 'win32' ? 'Z:\\AAA\\自动发\\奶龙\\暂存' : '/tmp/奶龙/暂存'
+    const r = await post('/job', { query: AUTHOR_URL, targetCount: 3, outputDir: dir })
+    expect(r.status).toBe(200)
+    const g = await (await fetch(`${base}/job/${r.json.id}`)).json()
+    expect(g.task.output_dir).toBe(dir)
+    const s = await (await fetch(base + '/status')).json()
+    expect(s.features).toContain('outputDir')
+  })
+
+  it('R19 outputDir 不是完整路径 → 400;不给就用设置里的下载目录', async () => {
+    const r = await post('/job', { query: AUTHOR_URL, outputDir: '暂存' })
+    expect(r.status).toBe(400)
+    expect(r.json.error).toMatch(/outputDir/)
+    const ok = await post('/job', { query: AUTHOR_URL, allowDuplicateAuthor: true })
+    const g = await (await fetch(`${base}/job/${ok.json.id}`)).json()
+    expect(g.task.output_dir ?? null).toBeNull()
+    const i = jobFromBody({ query: AUTHOR_URL, outputDir: '' })
+    expect(typeof i === 'string' ? i : i.outputDir).toBeUndefined()
+  })
+
   it('jobFromBody：默认 author/douyin/5 条/自动下载；关键词任务也能建', () => {
     const a = jobFromBody({ query: ' u ' })
     expect(typeof a).not.toBe('string')
