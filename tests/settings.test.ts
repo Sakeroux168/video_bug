@@ -38,6 +38,8 @@ function fullSettings(over: Partial<AppSettings> = {}): AppSettings {
     organizeByAuthor: true,
     organizeByOrientation: false,
     organizeByDuration: true,
+    bridgeEnabled: true,
+    bridgePort: 47321,
     ...over
   }
 }

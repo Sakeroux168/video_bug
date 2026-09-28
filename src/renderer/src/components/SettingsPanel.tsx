@@ -151,6 +151,26 @@ export default function SettingsPanel() {
           </label>
         </Card>
 
+        <Card title="和百家号发布助手打通">
+          <div className="space-y-2 text-xs text-slate-500">
+            <label className="flex items-start gap-2 leading-5 text-slate-600">
+              <input className="mt-1" type="checkbox" checked={s.bridgeEnabled !== false} onChange={e => set('bridgeEnabled', e.target.checked)} />
+              开本机接口，让发布助手能让本程序去抓某个作者的主页（只在这台电脑内部，不对外）
+            </label>
+            <div className="flex flex-wrap items-center gap-2">
+              <label className="flex items-center gap-2">
+                端口
+                <input type="number" min={1024} max={65535} className={`${inputCls} w-28`} value={s.bridgePort ?? 47321}
+                  onChange={e => set('bridgePort', Number(e.target.value))} />
+              </label>
+              <span className="text-slate-400">发布助手 设置 → 发布 → 「爬取工具接口」要填一样的（默认 http://127.0.0.1:47321）；改了要重启本程序</span>
+            </div>
+            <p className="leading-5 text-slate-400">
+              发布助手会把它按作者名对上达人后，把下到「品类\作者\」里的视频自动拉进各达人的暂存。作者文件夹名要和发布助手达人表里的达人名或站外昵称一样。
+            </p>
+          </div>
+        </Card>
+
         <Card title="抓取参数">
           <div className="grid gap-3 text-xs text-slate-500 sm:grid-cols-2">
             <label className="flex flex-col gap-1">

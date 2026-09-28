@@ -14,6 +14,7 @@ import type { Organizer } from './organizer'
 import { status as modelsStatus, ensureModels } from './asr/models'
 import type { EnsureProgress } from './asr/models'
 import { resolveVideoSourceUrl } from './videoSource'
+import { createTaskChecked } from './taskCreate'
 
 export interface IpcDeps {
   db: DatabaseSync
@@ -47,46 +48,9 @@ export function registerIpc(deps: IpcDeps): void {
   ipcMain.on('api:ping', (e) => { e.returnValue = 'pong' })
   ipcMain.handle('platforms:list', () => listAdapters())
 
-  ipcMain.handle('task:create', (_e, rawInput: Parameters<typeof createTask>[1]) => {
-    let input = rawInput
-    // 接入中的平台（解析器还没按真机接口写）不能建任务。
-    // 它仍然注册在平台表里，是为了让内置浏览器能打开它去扫码登录、抓真实接口；
-    // 但放进建任务这一侧就成了「平台能选、任务跑不通」的半成品。
-    const platformAdapter = getAdapter(input.platform)
-    if (platformAdapter && !platformAdapter.taskReady) {
-      return { id: null, skipped: true, reason: `${platformAdapter.displayName}还在接入中，暂不支持建任务；可在「内置浏览器」页打开并登录` }
-    }
-    // P1.5：type=author 时先归一化 query（完整 URL / 裸 sec_uid 两种输入统一转成 sec_uid）——
-    // 修复 FilterForm 存完整 URL、scheduler 又套一层 buildAuthorUrl 拼出双重 URL 的静默卡死 bug；
-    // 顺带修复去重键分裂（FilterForm 存 URL、AuthorCollection 存 sec_uid，此前两个键互不相认）。
-    if (input.type === 'author') {
-      const adapter = getAdapter(input.platform)
-      const secUid = adapter?.parseAuthorInput(input.query) ?? null
-      if (secUid === null) {
-        // 文案跟随平台：选了快手却提示"未识别到抖音主页链接"会把人带沟里
-        const site = adapter?.displayName ?? input.platform
-        const reason = adapter?.isShortLink(input.query)
-          ? '暂不支持短链接，请粘贴完整主页链接' // 与批量导入同一句，别让同一件事有两种说法
-          : `未识别到${site}主页链接或作者 ID`
-        return { id: null, skipped: true, reason }
-      }
-      input = { ...input, query: secUid }
-    }
-    // 作者去重：仅当该作者的"主页爬取"任务已完成才跳过（作者在搜索里出现过不算爬过主页）。
-    // 允许重复：任务级 allowDuplicateAuthor 覆盖全局设置；未指定时回退到全局"允许重复爬取作者"。
-    // 比对时对已有 done 行的 query 也做一次归一化——库里可能有 P1.5 修复前存的完整 URL 历史行，
-    // 不归一会导致「URL 输入」和「sec_uid 输入」两种格式各自建一条去重记录，去重形同虚设。
-    if (input.type === 'author' && !(input.allowDuplicateAuthor ?? getSettings().allowDuplicateAuthor)) {
-      const adapter = getAdapter(input.platform)
-      const doneRows = db.prepare("SELECT query FROM tasks WHERE type='author' AND status='done'")
-        .all() as Array<{ query: string }>
-      const dup = doneRows.some(r => (adapter?.parseAuthorInput(r.query) ?? r.query) === input.query)
-      if (dup) return { id: null, skipped: true, reason: '该作者主页已爬取过，可在作者表格中直接管理' }
-    }
-    const id = createTask(db, input)
-    deps.enqueueTask(id)
-    return { id, skipped: false }
-  })
+  // 归一化 + 作者去重 + 入库 + 入队 都在 taskCreate.ts（R18 起和本机 HTTP 口 /job 共用一条路）
+  ipcMain.handle('task:create', (_e, rawInput: Parameters<typeof createTask>[1]) =>
+    createTaskChecked(db, rawInput, deps.enqueueTask))
 
   ipcMain.handle('task:list', () => listTasks(db))
   ipcMain.handle('task:video:list', (_e, taskId: number) => listVideos(db, taskId).map(video => ({

@@ -26,6 +26,8 @@ export interface CreateTaskInput {
   aiOrganizeEnabled: boolean
   autoDownload: boolean // 自动下载（false=手动模式，视频入 collected）
   allowDuplicateAuthor?: boolean // type=author 时覆盖全局设置：允许重复爬取已爬过主页的作者
+  /** R19：这个任务的视频下到哪（绝对路径）。发布助手用它把达人的视频直接下到达人自己的「暂存」；不给 = 设置里的下载目录 */
+  outputDir?: string
 }
 
 export interface TaskRow {
@@ -33,6 +35,8 @@ export interface TaskRow {
   filters: string; status: TaskStatus; target_count: number; fetched_count: number
   auto_download: number
   error: string | null; created_at: string; finished_at: string | null
+  /** R19：任务自己的下载文件夹（外部程序经本机接口指定）；空 = 用设置里的下载目录 */
+  output_dir?: string | null
   /** 仅 type='author' 时由 listTasks 关联带出；query 存的是 sec_uid，直接显示人认不出来 */
   author_nickname?: string | null
 }
@@ -154,6 +158,9 @@ export interface AppSettings {
   organizeByOrientation: boolean
   /** 归档层级：按一分钟内/一分钟外建目录 */
   organizeByDuration: boolean
+  /** R18：本机 HTTP 口（给百家号发布助手等外部程序建抓取任务用）；只绑 127.0.0.1 */
+  bridgeEnabled: boolean
+  bridgePort: number
 }
 
 /** ASR 单个模型文件的状态（models.status() 的结果形状，跨进程用） */

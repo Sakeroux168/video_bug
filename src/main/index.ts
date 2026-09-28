@@ -18,6 +18,8 @@ import { transcribeFor } from './asr/asr'
 import type { Transcript } from './asr/asr'
 import { status as asrStatus, pathFor } from './asr/models'
 import { findFfmpeg } from './asr/media'
+import { startBridge, DEFAULT_BRIDGE_PORT } from './bridge'
+import type { Server } from 'http'
 import type { VideoRow } from '../shared/types'
 
 let win: BrowserWindow | null = null
@@ -28,6 +30,7 @@ let scheduler: Scheduler | null = null
 let analyzer: Analyzer | null = null
 let organizer: Organizer | null = null
 let taskRunning = false
+let bridge: Server | null = null
 let browserShown = false
 let forceBrowserFull = false
 
@@ -245,6 +248,14 @@ app.whenReady().then(() => {
     setBrowserVisible
   })
 
+  // R18：本机 HTTP 口（127.0.0.1），百家号发布助手用它下「爬某作者主页 N 条」的任务；端口被占只打日志
+  if (settings.bridgeEnabled !== false) {
+    void startBridge({
+      db, enqueueTask, isRunning: () => Boolean(scheduler?.isRunning),
+      port: Number(settings.bridgePort) || DEFAULT_BRIDGE_PORT
+    }).then(r => { bridge = r?.server ?? null })
+  }
+
   // 内嵌浏览器默认加载抖音首页（此前只创建视图未加载，导致「内置浏览器」标签空白）。
   // 窗口不再预先 init：load 时按目标平台创建，分区/标题都跟着平台走。
   // 落地页失败不能变成未处理拒绝：Node 22 默认会因此终止进程，
@@ -315,6 +326,6 @@ ipcMain.on('platform:raw', async (_e, msg) => {
 ipcMain.handle('debug:rawLog', () => rawLog.slice(-60))
 
 // 退出前销毁浏览器子窗口：否则 close→hide 拦截让 quit 被 preventDefault 中止、window-all-closed 也因隐藏子窗口永不触发
-app.on('before-quit', () => browser?.dispose())
+app.on('before-quit', () => { browser?.dispose(); bridge?.close(); bridge = null })
 
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit() })

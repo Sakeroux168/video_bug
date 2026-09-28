@@ -32,7 +32,9 @@ const SETTING_LABELS: Record<keyof AppSettings, string> = {
   organizeByCategory: '按品类分文件夹',
   organizeByAuthor: '按作者分文件夹',
   organizeByOrientation: '按横屏/竖屏分文件夹',
-  organizeByDuration: '按时长分文件夹'
+  organizeByDuration: '按时长分文件夹',
+  bridgeEnabled: '开本机接口，让发布助手能让本程序去抓某个作者的主页（只在这台电脑内部，不对外）',
+  bridgePort: '端口'
 }
 
 describe('SettingsPanel 消息的成功/失败配色', () => {

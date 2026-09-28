@@ -88,6 +88,9 @@ export class Scheduler {
   private verifyFound: string | null = null
   /** R11-4：心跳 tick 计数（每 2 tick=2s 查一次验证码） */
   private verifyTick = 0
+  /** R18：作者主页按日期段（timeRange=custom）抓时，某一批接口数据**全部**比 startDate 老 → 主页已翻到日期段之前，
+   *  后面只会更老，直接算抓完（done），不再继续滚 / 不当风控暂停。关键词/话题搜索结果不按时间排，不适用。 */
+  private pastRange = false
   private aiEnabled = false
   private autoDownload = true
   private pendingVideoIds: number[] = []
@@ -171,6 +174,7 @@ export class Scheduler {
       this.verifyFound = null // R11-4：每次 run 重置验证码检测（resume 后重新检测）
       this.verifyTick = 0
       this.lastFetchedAt = Date.now() // T4/R11：X 秒无新视频计时的起点
+      this.pastRange = false // R18：每次 run 重置
       this.pendingVideoIds = []
       this.aiEnabled = !!(this.deps.analyzer) && !!this.filters.aiFilterEnabled
       this.autoDownload = !!task.auto_download
@@ -257,6 +261,7 @@ export class Scheduler {
           waited += step
           if (this.aborted) break
           if (this.verifyFound) { stopReason = 'verify'; break } // R11-4：心跳检测到验证码 → 暂停等人工验证
+          if (this.pastRange) { stopReason = 'reached'; break } // R18：已翻过日期段 → 抓完
           if (Date.now() - this.lastFetchedAt > stallSec * 1000) {
             if (this.fetched >= target) { stopReason = 'reached'; break }
             const action = await this.rescueStall(adapter, target, stallSec)
@@ -282,7 +287,7 @@ export class Scheduler {
         if (this.verifyFound) { stopReason = 'verify'; break } // R11-4：心跳检测到验证码 → 暂停等人工验证
         // R11-2：爬满即停——handleRaw 已通过 abortScroll 中断在途滚动，返回后立即收尾，
         // 不再经过收尾 sleep 白等一轮（此前整轮滚动+收尾 sleep 后才检查 reached，完成要拖 ~15-20s）
-        if (this.fetched >= target) { stopReason = 'reached'; break }
+        if (this.fetched >= target || this.pastRange) { stopReason = 'reached'; break }
         // R11-3：滚动返回后立即检查停滞——心跳已中断在途滚动（~0.5s），这里马上自救，不进整轮等待
         if (Date.now() - this.lastFetchedAt > stallSec * 1000) {
           const action = await this.rescueStall(adapter, target, stallSec)
@@ -306,7 +311,7 @@ export class Scheduler {
         const stalled = elapsed > stallSec * 1000
         log(`停滞检测（第${roundCount}轮）：${(elapsed / 1000).toFixed(1)} 秒无新视频（阈值 ${stallSec} 秒）→ ${stalled ? '已停滞' : '未停滞'}（空轮=${this.emptyRounds} 静默轮=${this.silentRounds}）`)
         if (this.verifyFound) { stopReason = 'verify'; break } // R11-4：心跳检测到验证码 → 暂停等人工验证
-        if (this.fetched >= target) { stopReason = 'reached'; break }
+        if (this.fetched >= target || this.pastRange) { stopReason = 'reached'; break }
         if (stalled) {
           const action = await this.rescueStall(adapter, target, stallSec)
           if (this.aborted) break
@@ -359,6 +364,7 @@ export class Scheduler {
       this.filters = null
       this.pendingVideoIds = []
       this.taskUrl = ''
+      this.pastRange = false
       // R11-3/4：清理心跳计时器与滚动/自救/验证码标志（任务结束/暂停后不再心跳）
       if (this.stallHeartbeat !== null) { clearInterval(this.stallHeartbeat); this.stallHeartbeat = null }
       this.scrolling = false
@@ -527,6 +533,16 @@ export class Scheduler {
     const filters = this.filters
     if (!filters) return null
     const items = adapter.parseApiJson(rawUrl, json)
+    // R18：作者主页是按时间倒序的——这一批全比日期段起点老，说明已经翻过日期段，后面只会更老 → 抓完
+    if (this.task?.type === 'author' && filters.timeRange === 'custom' && filters.startDate && items.length > 0) {
+      const startTs = new Date(filters.startDate + 'T00:00:00Z').getTime() / 1000
+      if (items.every(i => i.publishTime > 0 && i.publishTime < startTs)) {
+        if (!this.pastRange) this.deps.onFilterLog?.(`已翻到 ${filters.startDate} 之前的作品，日期段内的抓完了（共 ${this.fetched} 条）`)
+        this.pastRange = true
+        this.deps.browser.abortScroll?.()
+        return { items: items.length, kept: 0 }
+      }
+    }
     const kept = dedupeVideos(filterVideos(items, filters), this.seen)
     if (kept.length === 0) {
       this.emptyRounds++
