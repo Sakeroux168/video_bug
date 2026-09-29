@@ -35,5 +35,8 @@
 
 ## 工作区
 
-- Codex 当前工作区：`E:\项目文件\视频爬取\codex工作区\video_bug`（09-28 从 `origin/master` `05f509b` 全新克隆）。
-- 旧的 Claude 交接目录只作历史来源，不在其旧功能分支上继续开发。
+- 两个 Agent 在同一台电脑上，可以互相读对方的目录。
+- Codex 实现工作区：`E:\项目文件\视频爬取\codex工作区\video_bug`（09-28 从 `origin/master` `05f509b` 全新克隆）。总控只在这里读文件、跑测试，不改。
+- 总控（Claude）工作区：`E:\项目文件\视频爬取\claude工作区\video_bug`，由用户于 09-28 指定给总控用。总控记忆在这里维护并推送，Codex 可以直接来这里读。
+- `claude/fable-5-1-download-pipeline-filemanager` 旧分支（Draft PR #2）只作历史来源，不在其上继续开发。
+- 总控推送后 Codex 本地会落后，派活时要提醒 Codex 先 `git pull`。
