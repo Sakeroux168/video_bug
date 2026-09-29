@@ -8,6 +8,36 @@ import { buildInjectScript } from './injector'
 /** R11-4/5：验证码识别正则（导出供测试与页面脚本共用）——R11-5 扩展：机器人验证/完成拼图/点击完成/安全校验/verify/captcha
  *  （真机反馈「机器人验证」等抖音实际文案漏检，重搜烧掉 3 次机会） */
 export const VERIFY_TEXT_PATTERN = /验证码|滑动验证|安全验证|拖动滑块|请完成验证|机器人验证|完成拼图|点击完成|安全校验|verify|captcha/i
+export const LOGIN_TEXT_PATTERN = /登录即可查看\s*Ta\s*的笔记|登录后查看搜索结果|扫码登录|手机号登录|验证码登录|密码登录/i
+
+/** 未登录检测与验证码分开：只认各平台真机出现过的登录提示。 */
+export function buildLoginScript(platform: string): string {
+  const re = platform === 'xiaohongshu'
+    ? /登录即可查看\s*Ta\s*的笔记|登录后查看搜索结果|手机号登录/i
+    : platform === 'douyin'
+      ? /扫码登录|验证码登录|密码登录/i
+      : /$a/
+  return `(() => {
+    const re = ${re.toString()};
+    const inView = el => {
+      const r = el.getBoundingClientRect();
+      return r.width > 0 && r.height > 0 && r.bottom > 0 && r.top < window.innerHeight;
+    };
+    const body = document.body; if (!body) return null;
+    const skip = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT']);
+    const walker = document.createTreeWalker(body, NodeFilter.SHOW_TEXT, {
+      acceptNode: node => {
+        const el = node.parentElement;
+        return el && !skip.has(el.tagName) && inView(el) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+      }
+    });
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      const t = (node.textContent || '').trim();
+      if (t && re.test(t)) return t.slice(0, 40);
+    }
+    return null;
+  })()`
+}
 
 /** R11-4/5：验证码检测脚本——结构检测（可见的 captcha/verify/modal-mask/dialog 类名弹窗）+ 全 DOM 文字匹配。
  *  结构命中（文案未匹配）也返回「验证弹窗（结构命中）」——漏检比误报严重，宁可多暂停一次让用户确认。
@@ -15,6 +45,9 @@ export const VERIFY_TEXT_PATTERN = /验证码|滑动验证|安全验证|拖动�
 export function buildVerifyScript(re: RegExp = VERIFY_TEXT_PATTERN): string {
   return `(() => {
     const re = ${re.toString()};
+    const loginRe = ${LOGIN_TEXT_PATTERN.toString()};
+    // 登录弹窗里的「验证码登录」等选项含「验证码」三字，先剔除登录文案再判验证码
+    const stripLogin = t => t.replace(new RegExp(loginRe.source, 'gi'), '');
     // 可见 + 视口内：宽高 > 0（排除 display:none/visibility:hidden）且与视口相交
     const inView = el => {
       const r = el.getBoundingClientRect();
@@ -26,7 +59,8 @@ export function buildVerifyScript(re: RegExp = VERIFY_TEXT_PATTERN): string {
       for (const el of document.querySelectorAll(sel)) {
         if (!inView(el)) continue;
         const t = (el.textContent || '').trim();
-        if (t && re.test(t)) return t.slice(0, 30);
+        if (t && re.test(stripLogin(t))) return t.slice(0, 30);
+        if (t && loginRe.test(t)) continue;
         return '验证弹窗（结构命中）';
       }
     } catch (e) {}
@@ -42,7 +76,7 @@ export function buildVerifyScript(re: RegExp = VERIFY_TEXT_PATTERN): string {
     });
     for (let node = walker.nextNode(); node; node = walker.nextNode()) {
       const t = (node.textContent || '').trim();
-      if (t && re.test(t)) return t.slice(0, 30);
+      if (t && re.test(stripLogin(t))) return t.slice(0, 30);
     }
     return null;
   })()`
@@ -211,9 +245,14 @@ export class VideoBrowser {
       // 「打开快手窗口」三次全抛异常，都是它。
       const nav = err as { code?: string | number; errno?: number } | null
       if (nav?.code === 'ERR_ABORTED' || nav?.errno === -3 || nav?.code === -3) return
-      // 小红书页面会持续挂资源，让 loadURL 到 30 秒仍不结束；列表卡片或注水结果已经
-      // 出现时页面可继续使用。只给该平台放行，保持抖音/快手原来的超时语义。
-      if (nav?.code === 'OP_TIMEOUT' && adapter.name === 'xiaohongshu' && await this.hasUsableXiaohongshuPage()) return
+      // 小红书页面会持续挂资源，让 loadURL 到 30 秒仍不结束。先停止尾部资源，再给 Vue
+      // 一小段收尾时间：真机上详情注水会在 stop 后才落进 noteDetailMap。只给该平台
+      // 放行，保持抖音/快手原来的超时语义。
+      if (nav?.code === 'OP_TIMEOUT' && adapter.name === 'xiaohongshu') {
+        this.win.webContents.stop()
+        await new Promise(resolve => setTimeout(resolve, 500))
+        if (await this.hasUsableXiaohongshuPage()) return
+      }
       throw err
     }
   }
@@ -223,8 +262,10 @@ export class VideoBrowser {
     try {
       return Boolean(await this.win.webContents.executeJavaScript(`(() => {
         if (document.querySelector('[data-note-id]')) return true;
+        const unref = value => value && typeof value === 'object' && (value.__v_isRef || '_value' in value || 'value' in value)
+          ? (value._value ?? value.value ?? value._rawValue) : value;
         const s = window.__INITIAL_STATE__ || {};
-        const detailMap = s.note && s.note.noteDetailMap;
+        const detailMap = unref(s.note && s.note.noteDetailMap);
         if (detailMap && Object.keys(detailMap).length > 0) return true;
         const search = s.search || {};
         if (Array.isArray(search.feeds) && search.feeds.length > 0) return true;
@@ -443,6 +484,15 @@ export class VideoBrowser {
     if (!this.win) return null
     try {
       const r = await this.win.webContents.executeJavaScript(buildVerifyScript())
+      return typeof r === 'string' && r.length > 0 ? r : null
+    } catch { return null }
+  }
+
+  /** 未登录提示独立识别，避免把登录弹窗当成验证码。 */
+  async findLoginIndicator(): Promise<string | null> {
+    if (!this.win || !this.current) return null
+    try {
+      const r = await this.win.webContents.executeJavaScript(buildLoginScript(this.current.name))
       return typeof r === 'string' && r.length > 0 ? r : null
     } catch { return null }
   }

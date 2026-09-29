@@ -29,7 +29,8 @@ function setup(target = 2, autoDownload = true, detailTimeoutMs = 50) {
   const events: unknown[] = []
   const browser = { load: vi.fn(async () => {}), scrollToBottom: vi.fn(async () => {}),
     abortScroll: vi.fn(), stopLoading: vi.fn(), findBottomText: vi.fn(async (): Promise<string | null> => null),
-    findVerifyIndicator: vi.fn(async (): Promise<string | null> => null) }
+    findVerifyIndicator: vi.fn(async (): Promise<string | null> => null),
+    findLoginIndicator: vi.fn(async (): Promise<string | null> => null) }
   const downloader = { onEvent: vi.fn(), enqueue: vi.fn() }
   const s = new Scheduler({ db, browser: browser as unknown as VideoBrowser,
     downloader: downloader as unknown as Downloader, analyzer: null,
@@ -162,6 +163,17 @@ describe('小红书搜索 → 详情 → 保存', () => {
     expect(t.state()).toMatchObject({ status: 'paused', error: 'stalled_verify' })
     expect(t.browser.load).toHaveBeenCalledTimes(2)
     expect(t.rows()).toEqual([])
+    t.db.close()
+  })
+
+  it('未登录提示独立暂停并提示先登录小红书，不误报验证码', async () => {
+    const t = setup(1, true, 30000)
+    t.browser.findLoginIndicator.mockResolvedValue('登录后查看搜索结果')
+    const run = t.s.run(t.id); await vi.advanceTimersByTimeAsync(2100); await run
+    expect(t.state()).toMatchObject({ status: 'paused', error: 'login_required' })
+    expect(t.events).toContainEqual({ type: 'task:paused', taskId: t.id, reason: 'login_required' })
+    expect(t.events).toContainEqual({ type: 'task:notice', text: '请先在内置浏览器登录 小红书' })
+    expect(t.events).not.toContainEqual(expect.objectContaining({ reason: 'stalled_verify' }))
     t.db.close()
   })
 

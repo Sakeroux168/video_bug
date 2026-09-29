@@ -383,17 +383,22 @@ export function parseXiaohongshuNoteDetail(json: unknown): VideoItem | null {
 export function buildXiaohongshuDetailDomScript(noteId: string): string {
   return `(() => {
     const expected = ${JSON.stringify(noteId)};
+    const unref = value => value && typeof value === 'object' && (value.__v_isRef || '_value' in value || 'value' in value)
+      ? (value._value ?? value.value ?? value._rawValue) : value;
     const store = window.__INITIAL_STATE__ && window.__INITIAL_STATE__.note;
-    if (!store || String(store.currentNoteId || '') !== expected) return null;
-    const note = store.noteDetailMap && store.noteDetailMap[expected] && store.noteDetailMap[expected].note;
-    if (!note || String(note.noteId || '') !== expected) return null;
+    if (!store || String(unref(store.currentNoteId) || '') !== expected) return null;
+    const detailMap = unref(store.noteDetailMap);
+    const entry = detailMap && unref(detailMap[expected]);
+    const note = entry && unref(entry.note);
+    if (!note || String(unref(note.noteId) || '') !== expected) return null;
     const user = note.user || {};
-    return { data: { items: [{ id: expected, note_card: {
+    const result = { data: { items: [{ id: expected, note_card: {
       noteId: note.noteId, type: note.type, title: note.title, desc: note.desc, time: note.time,
       user: { userId: user.userId, nickname: user.nickname, nickName: user.nickName },
       interactInfo: note.interactInfo, imageList: note.imageList,
       video: note.video
     } }] } };
+    return JSON.parse(JSON.stringify(result));
   })()`
 }
 

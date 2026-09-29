@@ -342,15 +342,22 @@ describe('parseXiaohongshuNoteDetail 组装完整条目', () => {
     }
     const dom = new JSDOM('', { url: 'https://www.xiaohongshu.com/explore/STATE1', runScripts: 'outside-only' })
     ;(dom.window as unknown as { __INITIAL_STATE__: unknown }).__INITIAL_STATE__ = {
-      note: { currentNoteId: 'STATE1', noteDetailMap: { STATE1: { note }, OTHER: { note: { ...note, noteId: 'OTHER' } } } }
+      note: {
+        currentNoteId: { __v_isRef: true, _value: 'STATE1', _rawValue: 'STATE1', value: 'STATE1' },
+        noteDetailMap: { STATE1: { note }, OTHER: { note: { ...note, noteId: 'OTHER' } } }
+      }
     }
     const raw = dom.window.eval(xiaohongshuAdapter.buildDetailDomScript!('STATE1'))
     expect(JSON.stringify(raw)).not.toContain('PRIVATE_TOKEN')
+    expect(structuredClone(raw)).toEqual(raw)
     expect(parseXiaohongshuNoteDetail(raw)).toMatchObject({
       awemeId: 'STATE1', title: '页面详情', authorSecUid: 'USER_STATE', authorNickname: '页面作者',
       playUrl: 'https://cdn.test/state.mp4', coverUrl: 'https://img.test/cover.jpg', durationSec: 18,
       publishTime: 1780000000, likes: 12000, comments: 35
     })
+    ;((dom.window as unknown as { __INITIAL_STATE__: { note: { currentNoteId: unknown } } }).__INITIAL_STATE__.note.currentNoteId) = 'STATE1'
+    expect(parseXiaohongshuNoteDetail(dom.window.eval(xiaohongshuAdapter.buildDetailDomScript!('STATE1'))))
+      .toMatchObject({ awemeId: 'STATE1' })
     expect(dom.window.eval(xiaohongshuAdapter.buildDetailDomScript!('OTHER'))).toBeNull()
   })
 

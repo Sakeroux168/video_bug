@@ -92,6 +92,8 @@ export class Scheduler {
   private rescuing = false
   /** R11-4：心跳检测到的验证码文案（null=未检测到）；主循环检查点据此 break 走 stalled_verify 暂停 */
   private verifyFound: string | null = null
+  /** 未登录文案（与验证码分开，避免错误提示用户去过验证）。 */
+  private loginFound: string | null = null
   /** R11-4：心跳 tick 计数（每 2 tick=2s 查一次验证码） */
   private verifyTick = 0
   /** R18：作者主页按日期段（timeRange=custom）抓时，某一批接口数据**全部**比 startDate 老 → 主页已翻到日期段之前，
@@ -190,6 +192,7 @@ export class Scheduler {
       this.reSearchCount = 0 // R11：每次 run 重置重搜计数（恢复任务后可重新自救）
       this.lastRescueAt = 0 // R12：每次 run 重置重搜冷却（恢复任务后可立即自救）
       this.verifyFound = null // R11-4：每次 run 重置验证码检测（resume 后重新检测）
+      this.loginFound = null
       this.verifyTick = 0
       this.lastFetchedAt = Date.now() // T4/R11：X 秒无新视频计时的起点
       this.pastRange = false // R18：每次 run 重置
@@ -232,7 +235,7 @@ export class Scheduler {
       const speedDefault = { slow: 8000, medium: 5000, fast: 3000 }[p.scrollSpeed] ?? 8000
       this.scrollWaitMs = p.scrollPageWaitMs > 0 ? p.scrollPageWaitMs : speedDefault
       this.scrollIntervalMs = p.scrollIntervalMs
-      let stopReason: 'reached' | 'stalled' | 'verify' | null = null
+      let stopReason: 'reached' | 'stalled' | 'verify' | 'login' | null = null
       if (adapter.parseListStubs) {
         stopReason = await this.runListDetails(adapter, target)
       } else {
@@ -257,11 +260,10 @@ export class Scheduler {
         this.stallHeartbeat = setInterval(() => {
           if (this.aborted) return
           this.verifyTick++
-          if (this.verifyTick % 2 === 0 && !this.verifyFound) {
-            void this.deps.browser.findVerifyIndicator().then(m => {
-              if (m && !this.aborted) {
-                this.verifyFound = m
-                if (this.scrolling) this.deps.browser.abortScroll?.() // 让滚动返回，主循环尽快 break
+          if (this.verifyTick % 2 === 0 && !this.verifyFound && !this.loginFound) {
+            void this.detectPageBlock().then(block => {
+              if (block && !this.aborted && this.scrolling) {
+                this.deps.browser.abortScroll?.() // 让滚动返回，主循环尽快 break
               }
             }).catch(() => {})
           }
@@ -283,6 +285,7 @@ export class Scheduler {
             await this.sleep(step)
             waited += step
             if (this.aborted) break
+            if (this.loginFound) { stopReason = 'login'; break }
             if (this.verifyFound) { stopReason = 'verify'; break } // R11-4：心跳检测到验证码 → 暂停等人工验证
             if (this.pastRange) { stopReason = 'reached'; break } // R18：已翻过日期段 → 抓完
             if (Date.now() - this.lastFetchedAt > stallSec * 1000) {
@@ -290,6 +293,7 @@ export class Scheduler {
               const action = await this.rescueStall(adapter, target, stallSec)
               if (this.aborted) break
               if (action === 'paused') { stopReason = 'stalled'; break }
+              if (action === 'login') { stopReason = 'login'; break }
               if (action === 'verify') { stopReason = 'verify'; break } // R11-5：验证码命中 → 暂停等人工验证
               if (action === 'continue') waited = 0 // 重搜成功后重新起算等待，继续爬（skip=冷却中，继续当前等待）
             }
@@ -307,6 +311,7 @@ export class Scheduler {
           // 暂停即时：pause 可能落在 scrollToBottom 内（abortWait 为 null，收尾 sleep 无人唤醒）——
           // 滚动被 abortScroll 中断返回后立即检查 aborted，跳过收尾 sleep 直接进 finally（~1 秒内进暂停态）
           if (this.aborted) break
+          if (this.loginFound) { stopReason = 'login'; break }
           if (this.verifyFound) { stopReason = 'verify'; break } // R11-4：心跳检测到验证码 → 暂停等人工验证
           // R11-2：爬满即停——handleRaw 已通过 abortScroll 中断在途滚动，返回后立即收尾，
           // 不再经过收尾 sleep 白等一轮（此前整轮滚动+收尾 sleep 后才检查 reached，完成要拖 ~15-20s）
@@ -316,6 +321,7 @@ export class Scheduler {
             const action = await this.rescueStall(adapter, target, stallSec)
             if (this.aborted) break
             if (action === 'paused') { stopReason = 'stalled'; break }
+            if (action === 'login') { stopReason = 'login'; break }
             if (action === 'verify') { stopReason = 'verify'; break } // R11-5：验证码命中 → 暂停等人工验证
             if (action === 'continue') continue // 重搜成功：重新进入等待阶段（不再跑 settle/轮末检查）
           }
@@ -333,12 +339,14 @@ export class Scheduler {
           const elapsed = Date.now() - this.lastFetchedAt
           const stalled = elapsed > stallSec * 1000
           log(`停滞检测（第${roundCount}轮）：${(elapsed / 1000).toFixed(1)} 秒无新视频（阈值 ${stallSec} 秒）→ ${stalled ? '已停滞' : '未停滞'}（空轮=${this.emptyRounds} 静默轮=${this.silentRounds}）`)
+          if (this.loginFound) { stopReason = 'login'; break }
           if (this.verifyFound) { stopReason = 'verify'; break } // R11-4：心跳检测到验证码 → 暂停等人工验证
           if (this.fetched >= target || this.pastRange) { stopReason = 'reached'; break }
           if (stalled) {
             const action = await this.rescueStall(adapter, target, stallSec)
             if (this.aborted) break
             if (action === 'paused') { stopReason = 'stalled'; break }
+            if (action === 'login') { stopReason = 'login'; break }
             if (action === 'verify') { stopReason = 'verify'; break } // R11-5：验证码命中 → 暂停等人工验证
             if (action === 'continue') continue
           }
@@ -350,6 +358,10 @@ export class Scheduler {
       if (this.aborted) {
         db.prepare("UPDATE tasks SET status='paused' WHERE id=?").run(taskId)
         this.deps.emit({ type: 'task:paused', taskId, reason: '用户暂停或风控' })
+      } else if (stopReason === 'login') {
+        db.prepare("UPDATE tasks SET status='paused', error='login_required' WHERE id=?").run(taskId)
+        this.deps.emit({ type: 'task:paused', taskId, reason: 'login_required' })
+        this.deps.emit({ type: 'task:notice', text: `请先在内置浏览器登录 ${adapter.displayName}` })
       } else if (stopReason === 'verify') {
         // R11-4：心跳检测到验证码 → 自动暂停（error=stalled_verify；index.ts push 会强制显示抖音窗口 +
         // toast「任务可能触发验证…」，用户完成验证后点「继续」恢复——resume 重置计数重新 run）
@@ -422,13 +434,14 @@ export class Scheduler {
   }
 
   /** 列表只暂存卡片；达到候选数量或列表结束后，在同一浏览器串行打开详情。 */
-  private async runListDetails(adapter: PlatformAdapter, target: number): Promise<'reached' | 'stalled' | 'verify'> {
+  private async runListDetails(adapter: PlatformAdapter, target: number): Promise<'reached' | 'stalled' | 'verify' | 'login'> {
     const candidateTarget = this.listCandidateTarget(target)
     const enough = (): boolean => this.fetched + this.listStubs.size >= candidateTarget
     const stallMs = Math.max(this.deps.getStallThresholdSec() * 1000,
       this.scrollIntervalMs + this.scrollWaitMs + 12000)
     while (!this.aborted && !enough() && !this.listEnded) {
-      if (await this.deps.browser.findVerifyIndicator()) return 'verify'
+      const block = await this.detectPageBlock()
+      if (block) return block
       if (this.aborted) break
       if (await this.deps.browser.findBottomText()) { this.listEnded = true; break }
       if (this.aborted) break
@@ -447,10 +460,12 @@ export class Scheduler {
     this.deps.onFilterLog?.(`搜索阶段结束：收集 ${this.listStubs.size} 条视频候选，开始逐条获取详情`)
     for (const stub of this.listStubs.values()) {
       if (this.aborted || this.fetched >= target) break
-      if (await this.deps.browser.findVerifyIndicator()) return 'verify'
+      const block = await this.detectPageBlock()
+      if (block) return block
       if (this.aborted) break
       const item = await this.resolveDetail(adapter, stub)
       if (this.aborted) break
+      if (this.loginFound) return 'login'
       if (this.verifyFound) return 'verify'
       if (item) await this.saveItems(adapter, [item])
       if (!this.aborted && this.fetched < target) await this.sleep(this.scrollIntervalMs)
@@ -522,12 +537,14 @@ export class Scheduler {
     return new Promise(resolve => {
       let settled = false
       let detailTimer: ReturnType<typeof setInterval> | null = null
+      let xhsResourceTimer: ReturnType<typeof setTimeout> | null = null
       const finish = (item: VideoItem | null): void => {
         if (settled) return
         settled = true
         clearTimeout(timer)
         clearInterval(verifyTimer)
         if (detailTimer) clearInterval(detailTimer)
+        if (xhsResourceTimer) clearTimeout(xhsResourceTimer)
         this.pendingDetail = null
         this.abortDetail = null
         resolve(item)
@@ -538,18 +555,28 @@ export class Scheduler {
         finish(null)
         this.deps.browser.stopLoading?.()
       }
-      const timer = setTimeout(() => skip('详情超时，跳过'), this.deps.detailTimeoutMs ?? 30000)
+      // 小红书 loadURL 可能一直等尾部资源，到 30s 强制 stop 后 Vue 才完成详情注水；
+      // 默认多留 5s 给 DOM 提取器，避免页面刚变可读就被同一时刻的详情定时器跳过。
+      const defaultDetailTimeoutMs = adapter.name === 'xiaohongshu' ? 35000 : 30000
+      const timer = setTimeout(() => skip('详情超时，跳过'), this.deps.detailTimeoutMs ?? defaultDetailTimeoutMs)
       let checking = false
       const verifyTimer = setInterval(() => {
         if (checking || settled) return
         checking = true
-        void this.deps.browser.findVerifyIndicator().then(found => {
-          if (found && !settled) { this.verifyFound = found; skip('需要人工验证，暂停') }
+        void this.detectPageBlock().then(block => {
+          if (block === 'login' && !settled) skip('需要登录，暂停')
+          else if (block === 'verify' && !settled) skip('需要人工验证，暂停')
         }).catch(() => { /* 页面导航中暂时无法检查，下一次再查 */ }).finally(() => { checking = false })
       }, 1000)
       this.pendingDetail = { noteId: stub.noteId, finish }
       this.abortDetail = () => { finish(null); this.deps.browser.stopLoading?.() }
       if (adapter.buildDetailDomScript && this.deps.browser.extractCurrentDetail) {
+        // 小红书详情页常驻的尾部资源会让 Electron 的 executeJavaScript 一直等到 loadURL
+        // 结束；真机上注水早已到齐，却要等 30s 总超时才被 stop。15s 后只停止继续加载
+        // 资源，不结束详情等待，让已经排队的 DOM 提取立即执行。
+        if (adapter.name === 'xiaohongshu') {
+          xhsResourceTimer = setTimeout(() => this.deps.browser.stopLoading?.(), 15000)
+        }
         let extracting = false
         const extract = (): void => {
           if (extracting || settled) return
@@ -619,17 +646,30 @@ export class Scheduler {
     this.deps.onFilterLog?.(`作者校验通过：「${author.nickname}」`)
     return false
   }
-  private async rescueStall(adapter: PlatformAdapter, target: number, stallSec: number): Promise<'continue' | 'paused' | 'skip' | 'verify'> {
+  private async detectPageBlock(): Promise<'verify' | 'login' | null> {
+    if (this.verifyFound) return 'verify'
+    this.verifyFound = await this.deps.browser.findVerifyIndicator().catch(() => null)
+    if (this.verifyFound) return 'verify'
+    if (this.loginFound) return 'login'
+    const findLogin = this.deps.browser.findLoginIndicator
+    if (!findLogin) return null
+    this.loginFound = await findLogin.call(this.deps.browser).catch(() => null)
+    return this.loginFound ? 'login' : null
+  }
+
+  private async rescueStall(adapter: PlatformAdapter, target: number, stallSec: number): Promise<'continue' | 'paused' | 'skip' | 'verify' | 'login'> {
     if (this.rescuing || this.aborted) return 'continue'
     this.rescuing = true
     const log = (msg: string): void => { this.deps.onFilterLog?.(msg) }
     try {
       // R11-5：自救前先查验证码（verifyFound 已由心跳置位则直接用）——验证弹窗挂着时绝不再重搜/查到底
       //（重搜会烧掉 3 次机会；真机反馈「机器人验证」弹窗时 5 秒停滞直接重搜）
-      if (!this.verifyFound) {
-        this.verifyFound = await this.deps.browser.findVerifyIndicator().catch(() => null)
+      const block = await this.detectPageBlock()
+      if (block === 'login') {
+        log(`未登录检测命中：「${this.loginFound}」→ 暂停等登录（不再重搜）`)
+        return 'login'
       }
-      if (this.verifyFound) {
+      if (block === 'verify') {
         log(`验证码检测命中：「${this.verifyFound}」→ 暂停等人工验证（不再重搜）`)
         return 'verify'
       }
@@ -648,10 +688,12 @@ export class Scheduler {
       }
 
       // R11-5 双保险：重搜分支前再查一次验证码（找到底/冷却判定期间可能新弹验证弹窗）
-      if (!this.verifyFound) {
-        this.verifyFound = await this.deps.browser.findVerifyIndicator().catch(() => null)
+      const blockBeforeSearch = await this.detectPageBlock()
+      if (blockBeforeSearch === 'login') {
+        log(`未登录检测命中：「${this.loginFound}」→ 暂停等登录（不重搜）`)
+        return 'login'
       }
-      if (this.verifyFound) {
+      if (blockBeforeSearch === 'verify') {
         log(`验证码检测命中：「${this.verifyFound}」→ 暂停等人工验证（不重搜）`)
         return 'verify'
       }

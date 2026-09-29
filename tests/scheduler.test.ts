@@ -70,6 +70,8 @@ class FakeBrowser {
   /** R11-4：模拟验证码文案（findVerifyIndicator 命中）；null=未弹验证码 */
   verifyText: string | null = null
   async findVerifyIndicator(): Promise<string | null> { return this.verifyText }
+  loginText: string | null = null
+  async findLoginIndicator(): Promise<string | null> { return this.loginText }
   setVisible(_v: boolean): void {}
   dispose(): void {}
 }
@@ -1060,6 +1062,32 @@ describe('停滞检测秒级心跳（R11-3）', () => {
 })
 
 describe('验证码识别与长操作兜底（R11-4）', () => {
+  it('未登录独立暂停为 login_required，并提示先登录当前平台', async () => {
+    const db = newDb()
+    const taskId = createTask(db, input)
+    const browser = new FakeBrowser()
+    browser.loginText = '扫码登录'
+    const events: unknown[] = []
+    const s = new Scheduler({
+      db, browser, analyzer: null, downloader: new FakeDownloader(),
+      emit: e => events.push(e),
+      getScrollParams: () => ({ scrollSpeed: 'slow' as const, scrollPageWaitMs: 8000, scrollIntervalMs: 1 }),
+      getStallThresholdSec: () => 60
+    })
+    const p = s.run(taskId)
+    for (let i = 0; i < 400; i++) {
+      const row = db.prepare('SELECT status FROM tasks WHERE id=?').get(taskId) as { status: string }
+      if (row.status === 'paused') break
+      await new Promise(r => setTimeout(r, 20))
+    }
+    expect(db.prepare('SELECT status, error FROM tasks WHERE id=?').get(taskId))
+      .toEqual({ status: 'paused', error: 'login_required' })
+    expect(events).toContainEqual({ type: 'task:paused', taskId, reason: 'login_required' })
+    expect(events).toContainEqual({ type: 'task:notice', text: '请先在内置浏览器登录 抖音' })
+    expect(events).not.toContainEqual(expect.objectContaining({ reason: 'stalled_verify' }))
+    await p
+  }, 10000)
+
   it('心跳检测到验证码（任意时刻）→ 自动暂停 stalled_verify（error=stalled_verify + task:paused reason=stalled_verify）', async () => {
     const db = newDb()
     const taskId = createTask(db, input)

@@ -43,6 +43,23 @@ describe('buildUserAgent', () => {
 })
 
 describe('Downloader', () => {
+  it('小红书 http 视频 CDN 地址可下载，并携带适配器 Referer', async () => {
+    const taskId = createTask(db, { ...input, platform: 'xiaohongshu' })
+    insertVideos(db, [item('XHS-HTTP', { playUrl: 'http://sns-video-zl.xhscdn.com/video.mp4' })], taskId, 'xiaohongshu')
+    const [v] = listVideos(db, taskId)
+    const mp4 = Buffer.alloc(2048); mp4.writeUInt32BE(0x18, 0); mp4.write('ftypisom', 4)
+    const fetchImpl = vi.fn(async (url: unknown, init?: RequestInit) => {
+      expect(String(url)).toBe('http://sns-video-zl.xhscdn.com/video.mp4')
+      expect(init?.headers).toMatchObject({ referer: 'https://www.xiaohongshu.com/' })
+      return new Response(mp4, { status: 200 })
+    }) as unknown as typeof fetch
+    const dl = new Downloader(db, { downloadDir: dir, downloadConcurrency: 1, scrollIntervalMs: 2000, addressTtlMin: 30 }, fetchImpl, { validator: async () => true })
+    dl.enqueue(v.id)
+    await vi.waitFor(() => expect(dl.isIdle()).toBe(true))
+    expect(listVideos(db, taskId)[0]).toMatchObject({ status: 'done' })
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+  })
+
   it('下载成功：写文件、更新状态 done', async () => {
     const taskId = createTask(db, input)
     insertVideos(db, [item()], taskId, 'douyin')

@@ -125,13 +125,14 @@ describe('页面加载：ERR_ABORTED 不是失败', () => {
     vi.useFakeTimers()
     try {
       const b = browserWith(() => new Promise<void>(() => {}))
-      const wc = { executeJavaScript: vi.fn(async () => true) }
+      const wc = { executeJavaScript: vi.fn(async () => true), stop: vi.fn() }
       ;(b as unknown as { win: unknown }).win = { loadURL: () => new Promise<void>(() => {}), isDestroyed: () => false, webContents: wc }
       const xhs = { name: 'xiaohongshu', sessionPartition: 'persist:douyin', rawUrlHints: ['/api/sns/web/'] } as never
       const pending = b.load(xhs, 'https://www.xiaohongshu.com/user/profile/U1')
       await vi.advanceTimersByTimeAsync(31000)
       await expect(pending).resolves.toBeUndefined()
       expect(wc.executeJavaScript).toHaveBeenCalled()
+      expect(wc.stop).toHaveBeenCalledTimes(1)
     } finally {
       vi.useRealTimers()
     }
