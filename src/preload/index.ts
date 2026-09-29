@@ -3,7 +3,7 @@ import type { CreateTaskInput, AppSettings, TaskRow, VideoRow, AuthorRow, TaskSt
 
 const api = {
   ping: () => ipcRenderer.sendSync('api:ping') as string,
-  listPlatforms: (): Promise<Array<{ name: string; displayName: string; authorInputPlaceholder: string; taskReady: boolean }>> => ipcRenderer.invoke('platforms:list'),
+  listPlatforms: (): Promise<Array<{ name: string; displayName: string; authorInputPlaceholder: string; taskReady: boolean; supportedTaskTypes?: readonly ('keyword' | 'author' | 'hashtag')[] }>> => ipcRenderer.invoke('platforms:list'),
   createTask: (input: CreateTaskInput): Promise<{ id: number | null; skipped: boolean; reason?: string }> => ipcRenderer.invoke('task:create', input),
   listTasks: (): Promise<TaskRow[]> => ipcRenderer.invoke('task:list'),
   listTaskVideos: (taskId: number): Promise<VideoRow[]> => ipcRenderer.invoke('task:video:list', taskId),

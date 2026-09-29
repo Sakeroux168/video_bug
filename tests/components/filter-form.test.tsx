@@ -138,3 +138,22 @@ describe('建任务下拉框只列已就绪平台', () => {
     expect(screen.queryByRole('option', { name: '小红书' })).toBeNull()
   })
 })
+
+it('小红书允许关键词和作者任务，并说明网页筛选与详情精确筛选', async () => {
+  installFakeApi()
+  vi.mocked(window.api.listPlatforms).mockResolvedValue([
+    { name: 'douyin', displayName: '抖音', authorInputPlaceholder: 'x', taskReady: true },
+    { name: 'xiaohongshu', displayName: '小红书', authorInputPlaceholder: 'y', taskReady: true,
+      supportedTaskTypes: ['keyword', 'author', 'hashtag'] }
+  ] as never)
+  const onSubmit = vi.fn(async () => ({ id: 1, skipped: false }))
+  render(<FilterForm onSubmit={onSubmit} />)
+  await screen.findByRole('option', { name: '小红书' })
+  fireEvent.click(screen.getByLabelText('作者'))
+  fireEvent.change(screen.getByLabelText('平台'), { target: { value: 'xiaohongshu' } })
+  expect(screen.getByLabelText('作者')).toBeChecked()
+  expect(screen.getByText(/网页筛选/)).toBeInTheDocument()
+  fireEvent.change(screen.getByLabelText('作者主页链接或 ID', { selector: 'input[type="text"], input:not([type])' }), { target: { value: 'U1' } })
+  fireEvent.click(screen.getByText('开始抓取'))
+  await waitFor(() => expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ platform: 'xiaohongshu', type: 'author' })))
+})

@@ -1,5 +1,5 @@
-import type { PlatformAdapter, VideoItem } from './types'
-import type { TaskType } from '../../shared/types'
+import type { PlatformAdapter, VideoItem, ListStub, ListStubResult } from './types'
+import type { Filters, TaskType } from '../../shared/types'
 
 /**
  * 小红书适配器。
@@ -12,8 +12,8 @@ import type { TaskType } from '../../shared/types'
  * 而详情要 xsec_token + Cookie 签名，我们不生成也不代发，只能导航到笔记页让页面
  * 自己请求。所以列表阶段只产出「笔记存根」，由调度器逐条导航取详情后再入库。
  *
- * taskReady 在详情阶段接通前保持 false：平台能在内置浏览器里打开（登录、抓包），
- * 但不进建任务下拉框，避免「能选却跑不通」的半成品。
+ * 关键词、话题与作者任务都走两段式。作者主页的 user_posted 接口不含详情令牌，
+ * 令牌实际位于渲染后的作品卡片链接里，因此作者列表从 DOM 卡片收集视频候选。
  */
 
 type Obj = Record<string, unknown>
@@ -47,7 +47,7 @@ export function parseXiaohongshuCount(value: unknown): number | null {
 // 页面地址（浏览器地址栏里那种）。搜索页实测：
 //   https://www.xiaohongshu.com/search_result_ai?keyword=%25E7%25BE%258E%25E9%25A3%259F&source=unknown
 // 路径是 search_result_ai；keyword 是二次编码（%25E7 解一次才是 %E7）。照实测形态拼。
-// 作者主页与笔记页的地址形态尚未取证，接作者任务/详情阶段时要核对。
+// 笔记页于 2026-09-28 按用户提供的搜索笔记链接核对；作者卡片链接同日真机核对。
 // ---------------------------------------------------------------------------
 function buildSearchPage(query: string): string {
   return `https://www.xiaohongshu.com/search_result_ai?keyword=${encodeURIComponent(encodeURIComponent(query))}&source=unknown`
@@ -96,8 +96,12 @@ function isSearchResponse(url: string, json: unknown): boolean {
 }
 
 /** 详情响应判定：调度器在详情阶段用它认出"这是我刚导航过去那条笔记的详情"。 */
-export function isXiaohongshuDetailResponse(url: string, json: unknown): boolean {
-  return DETAIL_API_RE.test(url) && itemsOf(json) !== null
+export function isXiaohongshuDetailResponse(url: string, json: unknown, noteId?: string): boolean {
+  const items = itemsOf(json)
+  return DETAIL_API_RE.test(url) && items !== null && (noteId === undefined || items.some(raw => {
+    const item = asObj(raw)
+    return (text(asObj(item.note_card).note_id) || text(item.id)) === noteId
+  }))
 }
 
 // ---------------------------------------------------------------------------
@@ -106,24 +110,11 @@ export function isXiaohongshuDetailResponse(url: string, json: unknown): boolean
 
 /**
  * 笔记存根：列表阶段能拿到的全部信息。播放地址、时长、精确发布时间在详情里。
- * xsecToken 是一次性短期令牌，只在同一次任务的内存里用掉，不落库。
+ * detailToken 是短期令牌，只在同一次任务的内存里用掉，不落库。
  */
-export interface NoteStub {
-  noteId: string
-  xsecToken: string
-  title: string
-  authorId: string
-  authorNickname: string
-  coverUrl: string
-  likes: number | null
-  comments: number | null
-}
+export type NoteStub = ListStub
 
-export interface NoteStubResult {
-  stubs: NoteStub[]
-  /** 跳过计数，供拦截日志诊断：image = 图文笔记，other = 推荐词等非笔记条目 */
-  skipped: { image: number; other: number }
-}
+export type NoteStubResult = ListStubResult
 
 /** 列表卡片与详情的封面都藏在同一种结构里：先 url_default / url_pre，再 image_list[0].info_list[0].url */
 function coverOf(card: Obj): string {
@@ -140,7 +131,7 @@ function coverOf(card: Obj): string {
 /**
  * 从搜索响应里取出视频笔记存根。
  * 只收 note_card.type === 'video'：实测不加筛选时 20 条里只有 1 条是视频，
- * 图文必须在这里丢掉并计数，「只看视频」筛选写不进网址、页面重开就丢。
+ * 图文仍必须在这里做最终兜底丢弃；网页原生“视频”筛选只用于减少无效候选。
  */
 export function parseXiaohongshuNoteStubs(json: unknown): NoteStubResult {
   const result: NoteStubResult = { stubs: [], skipped: { image: 0, other: 0 } }
@@ -159,7 +150,7 @@ export function parseXiaohongshuNoteStubs(json: unknown): NoteStubResult {
     const interact = asObj(card.interact_info)
     result.stubs.push({
       noteId,
-      xsecToken,
+      detailToken: xsecToken,
       title: text(card.display_title),
       authorId: text(user.user_id),
       authorNickname: text(user.nickname) || text(user.nick_name),
@@ -169,6 +160,89 @@ export function parseXiaohongshuNoteStubs(json: unknown): NoteStubResult {
     })
   }
   return result
+}
+
+/**
+ * 作者主页的 /user_posted 响应不带详情 xsec_token；页面把令牌放在每张卡片的 href。
+ * 只认带 data-note-id、play-icon 和 pc_user 详情链接的卡片，避免把图文笔记送进详情阶段。
+ */
+export function buildXiaohongshuAuthorListDomScript(): string {
+  return `(() => {
+    const out = [];
+    for (const card of document.querySelectorAll('.note-item[data-note-id]')) {
+      const noteId = (card.getAttribute('data-note-id') || '').trim();
+      if (!noteId || !card.querySelector('.play-icon')) continue;
+      const links = [...card.querySelectorAll('a[href*="xsec_token="]')];
+      const link = links.find(a => {
+        try {
+          const u = new URL(a.getAttribute('href') || '', location.href);
+          return u.hostname === 'www.xiaohongshu.com'
+            && u.pathname.includes('/user/profile/')
+            && u.pathname.endsWith('/' + noteId)
+            && u.searchParams.get('xsec_token');
+        } catch (e) { return false; }
+      });
+      if (!link) continue;
+      const u = new URL(link.getAttribute('href') || '', location.href);
+      const title = card.querySelector('.title span, .title')?.textContent || '';
+      const cover = card.querySelector('a.cover img');
+      const count = card.querySelector('.count')?.textContent || '';
+      out.push({
+        noteId,
+        detailToken: u.searchParams.get('xsec_token') || '',
+        detailSource: u.searchParams.get('xsec_source') || 'pc_user',
+        detailUrl: u.href,
+        authorId: (u.pathname.match(/\\/user\\/profile\\/([^/]+)\\//) || [])[1] || '',
+        title: title.trim(),
+        coverUrl: cover ? (cover.getAttribute('src') || '') : '',
+        likesText: count.trim()
+      });
+    }
+    return out;
+  })()`
+}
+
+export function parseXiaohongshuAuthorDomResult(value: unknown): ListStubResult {
+  const result: ListStubResult = { stubs: [], skipped: { image: 0, other: 0 } }
+  if (!Array.isArray(value)) return result
+  for (const raw of value) {
+    const item = asObj(raw)
+    const noteId = text(item.noteId)
+    const token = text(item.detailToken)
+    const source = text(item.detailSource) || 'pc_user'
+    const authorId = text(item.authorId)
+    let detailUrl = ''
+    try {
+      const u = new URL(text(item.detailUrl))
+      const expectedPath = `/user/profile/${authorId}/${noteId}`
+      if (u.protocol === 'https:' && u.hostname === 'www.xiaohongshu.com'
+        && u.pathname === expectedPath && u.searchParams.get('xsec_token') === token) {
+        detailUrl = u.href
+      }
+    } catch { /* malformed DOM value */ }
+    if (!noteId || !token || !authorId || !detailUrl) { result.skipped.other++; continue }
+    result.stubs.push({
+      noteId,
+      detailToken: token,
+      detailSource: source,
+      detailUrl,
+      title: text(item.title),
+      authorId,
+      authorNickname: '',
+      coverUrl: text(item.coverUrl),
+      likes: parseXiaohongshuCount(item.likesText),
+      comments: null
+    })
+  }
+  return result
+}
+
+export function xiaohongshuNativeSearchFilters(type: TaskType, filters: Filters) {
+  if (type === 'author') return []
+  const out = [{ group: '笔记类型', option: '视频' }]
+  // 站点没有“近30天”或自定义日期；这些情况只在详情阶段按时间戳精确过滤。
+  if (filters.timeRange === '7d') out.push({ group: '发布时间', option: '一周内' })
+  return out
 }
 
 // ---------------------------------------------------------------------------
@@ -300,8 +374,8 @@ export function parseXiaohongshuNoteDetail(json: unknown): VideoItem | null {
 export const xiaohongshuAdapter: PlatformAdapter = {
   name: 'xiaohongshu',
   displayName: '小红书',
-  // 详情阶段接通前不能进建任务下拉框
-  taskReady: false,
+  taskReady: true,
+  supportedTaskTypes: ['keyword', 'author', 'hashtag'],
   sourceHosts: ['www.xiaohongshu.com'],
   sessionPartition: 'persist:xiaohongshu',
   homeUrl: 'https://www.xiaohongshu.com/',
@@ -328,8 +402,22 @@ export const xiaohongshuAdapter: PlatformAdapter = {
   },
 
   // 列表没有播放地址，不能伪造成可下载的 VideoItem。
-  // 完整条目由调度器在详情阶段用 parseXiaohongshuNoteDetail 组装（任务 3）。
+  // 完整条目由调度器在详情阶段用 parseXiaohongshuNoteDetail 组装。
   parseApiJson: (_url: string, _json: unknown): VideoItem[] => [],
+
+  parseListStubs: (_url, json) => ({
+    ...parseXiaohongshuNoteStubs(json),
+    hasMore: typeof asObj(asObj(json).data).has_more === 'boolean'
+      ? asObj(asObj(json).data).has_more as boolean : undefined
+  }),
+  nativeSearchFilters: xiaohongshuNativeSearchFilters,
+  buildListDomScript: type => type === 'author' ? buildXiaohongshuAuthorListDomScript() : null,
+  parseListDomResult: parseXiaohongshuAuthorDomResult,
+  // 2026-09-28 搜索详情与作者卡片地址均已核对；实际令牌仅在任务内存里使用。
+  buildDetailUrl: stub => stub.detailUrl
+    || `${buildNotePage(stub.noteId)}?xsec_token=${encodeURIComponent(stub.detailToken)}&xsec_source=${encodeURIComponent(stub.detailSource || 'pc_search')}`,
+  isDetailResponse: isXiaohongshuDetailResponse,
+  parseDetail: parseXiaohongshuNoteDetail,
 
   normalizePlayUrl: (rawUrl: string) => rawUrl
 }

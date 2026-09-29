@@ -28,6 +28,9 @@ export function createTaskChecked(db: DatabaseSync, rawInput: CreateTaskInput, e
   if (platformAdapter && !platformAdapter.taskReady) {
     return { id: null, skipped: true, reason: `${platformAdapter.displayName}还在接入中，暂不支持建任务；可在「内置浏览器」页打开并登录` }
   }
+  if (platformAdapter?.supportedTaskTypes && !platformAdapter.supportedTaskTypes.includes(input.type)) {
+    return { id: null, skipped: true, reason: `${platformAdapter.displayName}暂不支持此任务类型，请使用关键词或话题抓取` }
+  }
   if (input.type === 'author') {
     const adapter = getAdapter(input.platform)
     const secUid = adapter?.parseAuthorInput(input.query) ?? null

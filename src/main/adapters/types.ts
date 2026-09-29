@@ -19,12 +19,39 @@ export interface VideoItem {
 }
 
 /** 平台适配器契约：核心模块只认这个接口，平台差异全部封在里面 */
+export interface ListStub {
+  noteId: string
+  detailToken: string
+  /** 详情入口的实际来源。搜索通常是 pc_search，作者主页是 pc_user。 */
+  detailSource?: string
+  /** 作者主页卡片会给出带临时令牌的完整详情地址；仅在本次任务内存中使用。 */
+  detailUrl?: string
+  title: string
+  authorId: string
+  authorNickname: string
+  coverUrl: string
+  likes: number | null
+  comments: number | null
+}
+
+export interface ListStubResult {
+  stubs: ListStub[]
+  skipped: { image: number; other: number }
+  hasMore?: boolean
+}
+
+export interface NativeSearchFilter {
+  group: string
+  option: string
+}
+
 export interface PlatformAdapter {
   name: string
   displayName: string
   /** 解析器是否已按真机接口实现。false 表示只能在内置浏览器里打开（扫码登录、抓包），
    *  不能建任务——避免「平台出现在下拉框里、选了却跑不通」的半成品状态。 */
   taskReady: boolean
+  supportedTaskTypes?: readonly TaskType[]
   /** 可由主进程打开的作品页精确主机白名单 */
   sourceHosts: readonly string[]
   /** 登录态分区，如 'persist:douyin' */
@@ -57,5 +84,15 @@ export interface PlatformAdapter {
    *  必须拒绝推荐流、详情等无关响应——用户在浏览器里手点一条视频不能污染正在跑的任务。 */
   matchesTaskResponse(type: TaskType, url: string, json: unknown): boolean
   parseApiJson(url: string, json: unknown): VideoItem[]
+  /** 两段式平台必须同时实现这四个方法。令牌仅在当前任务内存中保存。 */
+  parseListStubs?(url: string, json: unknown): ListStubResult
+  /** 页面原生筛选。它只用于减少无效候选，最终仍由详情字段做精确过滤。 */
+  nativeSearchFilters?(type: TaskType, filters: Filters): NativeSearchFilter[]
+  /** 某些列表（小红书作者主页）把详情令牌只放在卡片链接里，需要从当前 DOM 收集。 */
+  buildListDomScript?(type: TaskType): string | null
+  parseListDomResult?(value: unknown): ListStubResult
+  buildDetailUrl?(stub: ListStub): string
+  isDetailResponse?(url: string, json: unknown, noteId?: string): boolean
+  parseDetail?(json: unknown): VideoItem | null
   normalizePlayUrl(rawUrl: string): string
 }

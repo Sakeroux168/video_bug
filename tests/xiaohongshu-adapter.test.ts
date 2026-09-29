@@ -2,24 +2,19 @@ import { describe, expect, it } from 'vitest'
 import { getAdapter, listAdapters } from '../src/main/adapters'
 import { douyinAdapter } from '../src/main/adapters/douyin'
 import { kuaishouAdapter } from '../src/main/adapters/kuaishou'
-import { xiaohongshuAdapter, parseXiaohongshuNoteStubs, parseXiaohongshuNoteDetail, isXiaohongshuDetailResponse } from '../src/main/adapters/xiaohongshu'
+import { JSDOM } from 'jsdom'
+import { xiaohongshuAdapter, parseXiaohongshuNoteStubs, parseXiaohongshuNoteDetail, isXiaohongshuDetailResponse, buildXiaohongshuAuthorListDomScript, parseXiaohongshuAuthorDomResult, xiaohongshuNativeSearchFilters } from '../src/main/adapters/xiaohongshu'
 
-// 小红书接入第 1 步：只建骨架，不写解析器。
-//
-// 快手那一轮的教训：照公开资料把整个解析器写完，真机一跑发现平台早从 GraphQL
-// 换成了 REST，白写。所以这次倒过来——先让浏览器能打开小红书、能登录、能把流量
-// 记进拦截日志，拿到真实接口和响应结构之后再写解析。
-//
-// 骨架阶段最要防的是「半成品暴露」：平台出现在建任务下拉框里，用户选了却跑不通。
-// 因此适配器带 taskReady 标记，建任务一侧明确拒绝并说明原因。
+// 平台登记、任务能力以及来自真机响应的列表/详情解析。
 
 describe('xiaohongshuAdapter 骨架', () => {
   it('已注册，能被平台注册表取到', () => {
     expect(getAdapter('xiaohongshu')).toBe(xiaohongshuAdapter)
   })
 
-  it('taskReady 为 false —— 解析器还没写，不能让它出现在建任务下拉框里', () => {
-    expect(xiaohongshuAdapter.taskReady).toBe(false)
+  it('两段式流程就绪，关键词、作者与话题任务均开放', () => {
+    expect(xiaohongshuAdapter.taskReady).toBe(true)
+    expect(xiaohongshuAdapter.supportedTaskTypes).toEqual(['keyword', 'author', 'hashtag'])
     expect(douyinAdapter.taskReady).toBe(true)
     expect(kuaishouAdapter.taskReady).toBe(true)
   })
@@ -67,7 +62,7 @@ describe('平台注册表暴露 taskReady', () => {
   it('listAdapters 带出 taskReady，渲染层据此决定哪些平台能建任务', () => {
     const list = listAdapters()
     const xhs = list.find(p => p.name === 'xiaohongshu')
-    expect(xhs).toMatchObject({ displayName: '小红书', taskReady: false })
+    expect(xhs).toMatchObject({ displayName: '小红书', taskReady: true, supportedTaskTypes: ['keyword', 'author', 'hashtag'] })
     expect(list.find(p => p.name === 'douyin')).toMatchObject({ taskReady: true })
   })
 
@@ -115,6 +110,16 @@ const SEARCH_RESPONSE = {
 }
 
 describe('xiaohongshuAdapter 搜索页地址', () => {
+  it('详情地址符合用户提供的 pc_search 形态且正确编码令牌，永久作品链接不带令牌', () => {
+    const stub = parseXiaohongshuNoteStubs({ data: { items: [videoNote('N1')] } }).stubs[0]
+    stub.detailToken = 'FAKE+/=&'
+    const url = new URL(xiaohongshuAdapter.buildDetailUrl!(stub))
+    expect(url.origin + url.pathname).toBe('https://www.xiaohongshu.com/explore/N1')
+    expect(url.searchParams.get('xsec_token')).toBe('FAKE+/=&')
+    expect(url.searchParams.get('xsec_source')).toBe('pc_search')
+    expect(xiaohongshuAdapter.buildVideoUrl('N1')).not.toContain('?')
+  })
+
   it('地址与实测一致：search_result_ai，keyword 二次编码', () => {
     // 实测地址：https://www.xiaohongshu.com/search_result_ai?keyword=%25E7%25BE%258E%25E9%25A3%259F&source=unknown
     expect(xiaohongshuAdapter.buildSearchUrl('美食', { timeRange: 'all', duration: 'all', targetCount: 10 }))
@@ -123,6 +128,37 @@ describe('xiaohongshuAdapter 搜索页地址', () => {
 
   it('话题走同一个搜索页', () => {
     expect(xiaohongshuAdapter.buildHashtagUrl('美食')).toMatch(/^https:\/\/www\.xiaohongshu\.com\/search_result_ai\?keyword=/)
+  })
+})
+
+describe('小红书网页原生筛选与作者卡片', () => {
+  it('关键词/话题固定筛视频；近7天映射一周内，近30天不错误收窄成一周', () => {
+    const base = { duration: 'all', targetCount: 10 } as const
+    expect(xiaohongshuNativeSearchFilters('keyword', { ...base, timeRange: 'all' }))
+      .toEqual([{ group: '笔记类型', option: '视频' }])
+    expect(xiaohongshuNativeSearchFilters('hashtag', { ...base, timeRange: '7d' }))
+      .toEqual([{ group: '笔记类型', option: '视频' }, { group: '发布时间', option: '一周内' }])
+    expect(xiaohongshuNativeSearchFilters('keyword', { ...base, timeRange: '30d' }))
+      .toEqual([{ group: '笔记类型', option: '视频' }])
+    expect(xiaohongshuNativeSearchFilters('author', { ...base, timeRange: '7d' })).toEqual([])
+  })
+
+  it('作者 DOM 只收带 play-icon 的卡片，并保留 pc_user 详情入口', () => {
+    const html = `<section class="note-item" data-note-id="V1"><a class="cover" href="/user/profile/U1/V1?xsec_token=T%2B1%3D&xsec_source=pc_user"><img src="https://img.test/v.webp"><span class="play-icon"></span></a><div class="title"><span>视频一</span></div><span class="count">1.2万</span></section>
+      <section class="note-item" data-note-id="I1"><a class="cover" href="/user/profile/U1/I1?xsec_token=IMG&xsec_source=pc_user"><img src="https://img.test/i.webp"></a></section>`
+    const dom = new JSDOM(html, { url: 'https://www.xiaohongshu.com/user/profile/U1', runScripts: 'outside-only' })
+    const raw = dom.window.eval(buildXiaohongshuAuthorListDomScript()) as unknown
+    const result = parseXiaohongshuAuthorDomResult(raw)
+    expect(result.stubs).toHaveLength(1)
+    expect(result.stubs[0]).toMatchObject({ noteId: 'V1', detailToken: 'T+1=', detailSource: 'pc_user', authorId: 'U1', title: '视频一', likes: 12000 })
+    expect(result.stubs[0].detailUrl).toContain('/user/profile/U1/V1?')
+    expect(xiaohongshuAdapter.buildDetailUrl!(result.stubs[0])).toBe(result.stubs[0].detailUrl)
+  })
+
+  it('作者 DOM 结果拒绝跨站或路径与 noteId 不一致的详情地址', () => {
+    const result = parseXiaohongshuAuthorDomResult([{ noteId: 'N1', detailToken: 'T', detailSource: 'pc_user', authorId: 'U1', detailUrl: 'https://evil.test/user/profile/U1/N1?xsec_token=T' }])
+    expect(result.stubs).toEqual([])
+    expect(result.skipped.other).toBe(1)
   })
 })
 
@@ -166,7 +202,7 @@ describe('parseXiaohongshuNoteStubs 只收视频笔记', () => {
     const [s] = parseXiaohongshuNoteStubs({ data: { items: [videoNote('N1')] } }).stubs
     expect(s).toEqual({
       noteId: 'N1',
-      xsecToken: 'TOKEN_N1',
+      detailToken: 'TOKEN_N1',
       title: '视频标题N1',
       authorId: 'USER_N1',
       authorNickname: '作者N1',

@@ -5,7 +5,7 @@ import { btnPrimary, inputCls, Card } from './ui'
 
 export default function FilterForm({ onSubmit }: { onSubmit: (t: CreateTaskInput) => Promise<{ id: number | null; skipped: boolean; reason?: string }> }) {
   // 只列已就绪的平台：接入中的平台解析器还没写，选了也跑不通
-  const [platforms, setPlatforms] = useState<Array<{ name: string; displayName: string; authorInputPlaceholder: string }>>([])
+  const [platforms, setPlatforms] = useState<Array<{ name: string; displayName: string; authorInputPlaceholder: string; supportedTaskTypes?: readonly TaskType[] }>>([])
   const [platform, setPlatform] = useState('douyin')
   const [type, setType] = useState<TaskType>('keyword')
   const [query, setQuery] = useState('')
@@ -30,6 +30,10 @@ export default function FilterForm({ onSubmit }: { onSubmit: (t: CreateTaskInput
   // 作者输入提示跟随所选平台：选了快手还提示 douyin.com 的话，用户照着填必然失败。
   // 平台列表未到达时留空，不写死任何一个平台的 URL。
   const authorPlaceholder = platforms.find(p => p.name === platform)?.authorInputPlaceholder ?? ''
+  const supportedTypes = platforms.find(p => p.name === platform)?.supportedTaskTypes ?? ['keyword', 'author', 'hashtag']
+  useEffect(() => {
+    if (!supportedTypes.includes(type)) setType('keyword')
+  }, [platform, platforms, type])
 
   // 目标数量自由设置 1-1000（默认 200）
   const targetValid = target >= 1 && target <= 1000
@@ -72,7 +76,7 @@ export default function FilterForm({ onSubmit }: { onSubmit: (t: CreateTaskInput
           </select>
         </label>
         <div className="flex items-center gap-2 text-sm">
-          {(['keyword', 'author', 'hashtag'] as const).map(t => (
+          {(['keyword', 'author', 'hashtag'] as const).filter(t => supportedTypes.includes(t)).map(t => (
             <label key={t} className="flex items-center gap-1">
               <input type="radio" name="type" checked={type === t} onChange={() => setType(t)} />
               {t === 'keyword' ? '关键词' : t === 'author' ? '作者' : '话题'}
@@ -117,6 +121,9 @@ export default function FilterForm({ onSubmit }: { onSubmit: (t: CreateTaskInput
         </label>
         <button className={btnPrimary} onClick={submit} disabled={!targetValid || !customDurationValid}>开始抓取</button>
       </div>
+      {platform === 'xiaohongshu' && (
+        <p className="mt-2 text-xs text-slate-500">小红书会先应用“视频”网页筛选，再逐条打开笔记获取下载地址；作者主页按卡片播放标识只收视频。近30天、自定义日期和时长会在详情阶段精确筛选，建议先试抓 3 条。</p>
+      )}
       {duration === 'custom' && !customDurationValid && (
         <p className="mt-2 text-xs text-red-500">自定义时长需为正整数，且最长秒数不能小于最短秒数</p>
       )}

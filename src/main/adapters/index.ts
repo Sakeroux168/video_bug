@@ -6,7 +6,7 @@ import { xiaohongshuAdapter } from './xiaohongshu'
 const registry: Record<string, PlatformAdapter> = {
   douyin: douyinAdapter,
   kuaishou: kuaishouAdapter,
-  // 骨架阶段：只为内置浏览器登录与抓包而注册，taskReady=false 挡住建任务
+  // 小红书关键词/话题走搜索响应，作者主页从带播放标识的 DOM 卡片收集详情入口。
   xiaohongshu: xiaohongshuAdapter
 }
 
@@ -21,6 +21,7 @@ export interface PlatformInfo {
   authorInputPlaceholder: string
   /** false 的平台只在「内置浏览器」页出现（登录/抓包用），不进建任务与导入作者的下拉框 */
   taskReady: boolean
+  supportedTaskTypes?: PlatformAdapter['supportedTaskTypes']
 }
 
 export function listAdapters(): PlatformInfo[] {
@@ -28,6 +29,7 @@ export function listAdapters(): PlatformInfo[] {
     name: a.name,
     displayName: a.displayName,
     authorInputPlaceholder: a.authorInputPlaceholder,
-    taskReady: a.taskReady
+    taskReady: a.taskReady,
+    supportedTaskTypes: a.supportedTaskTypes
   }))
 }

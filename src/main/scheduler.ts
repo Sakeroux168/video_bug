@@ -1,5 +1,5 @@
 import type { DatabaseSync } from 'node:sqlite'
-import type { PlatformAdapter } from './adapters/types'
+import type { PlatformAdapter, ListStub, VideoItem } from './adapters/types'
 import type { AppSettings, TaskRow, TaskStatus, Filters } from '../shared/types'
 import { ERROR } from '../shared/types'
 import { filterVideos, dedupeVideos, extractCategory } from './extractor'
@@ -51,9 +51,15 @@ interface SchedulerDeps {
   organizeDebounceMs?: number
   /** R12：停滞自救全链路日志回调（停滞检测/到底命中/重搜冷却/重搜计数），主进程汇入界面「查看拦截日志」面板 */
   onFilterLog?: (msg: string) => void
+  detailTimeoutMs?: number
 }
 
 export class Scheduler {
+  private listStubs = new Map<string, ListStub>()
+  private listEnded = false
+  private phase: 'list' | 'detail' | null = null
+  private pendingDetail: { noteId: string; finish: (item: VideoItem | null) => void } | null = null
+  private abortDetail: (() => void) | null = null
   private aborted = false
   private taskId = 0
   private adapter: PlatformAdapter | null = null
@@ -129,6 +135,7 @@ export class Scheduler {
 
   stop(): void {
     this.aborted = true
+    this.abortDetail?.()
     this.abortWait?.() // 即时唤醒当前 sleep，不等它自然结束
     this.clearOrganizeTimer()
   }
@@ -136,6 +143,7 @@ export class Scheduler {
    *  + 等 run() 完全退出后才返回（跑完收尾，避免状态/上下文竞态） */
   async pause(): Promise<void> {
     this.aborted = true
+    this.abortDetail?.()
     this.abortWait?.()
     this.deps.browser.abortScroll?.() // 页面级中止信号：滚动脚本下个检查点即退出，1 秒内停止滚动
     const exit = this.runExit
@@ -155,6 +163,11 @@ export class Scheduler {
     if (!task) return
     const adapter = getAdapter(task.platform)
     if (!adapter) { this.fail(taskId, ERROR.PARSE_ERROR); return }
+    if (adapter.supportedTaskTypes && !adapter.supportedTaskTypes.includes(task.type)) {
+      this.fail(taskId, 'unsupported_task_type')
+      this.deps.emit({ type: 'task:paused', taskId, reason: 'unsupported_task_type' })
+      return
+    }
 
     this.running = true
     // A1：登记 run 退出信号（在首个 await 前同步建立），pause() 通过它等 run 完全退出
@@ -164,6 +177,11 @@ export class Scheduler {
       this.task = task
       this.adapter = adapter
       this.filters = JSON.parse(task.filters) as Filters
+      const detailMethods = [adapter.parseListStubs, adapter.buildDetailUrl, adapter.isDetailResponse, adapter.parseDetail]
+      if (detailMethods.some(Boolean) && !detailMethods.every(Boolean)) throw new Error('不完整的详情适配器')
+      this.phase = adapter.parseListStubs ? 'list' : null
+      this.listStubs.clear()
+      this.listEnded = false
       this.seen = new Set<string>((db.prepare('SELECT aweme_id FROM videos WHERE platform=?').all(task.platform) as Array<{ aweme_id: string }>).map(r => r.aweme_id))
       this.fetched = task.fetched_count
       this.emptyRounds = 0
@@ -203,6 +221,8 @@ export class Scheduler {
         if (stop) return
       }
 
+      if (adapter.parseListStubs) await this.prepareTwoStageList(adapter, task.type)
+
       // 首轮不计静默，避免加载后立即以 0 抓取误停
       this.rawSinceLastRound = true
 
@@ -213,113 +233,118 @@ export class Scheduler {
       this.scrollWaitMs = p.scrollPageWaitMs > 0 ? p.scrollPageWaitMs : speedDefault
       this.scrollIntervalMs = p.scrollIntervalMs
       let stopReason: 'reached' | 'stalled' | 'verify' | null = null
-      // R11：停滞阈值秒数每次 run 现读（设置保存即生效，不构造时缓存）
-      const userStallSec = this.deps.getStallThresholdSec() ?? 5
-      // Task4：动态下限——一个正常周期至少需要「等待阶段（滚动间隔+抖动）+ 首轮滚动到首批数据回来」，
-      // 阈值低于该周期会绞杀正常滚动（滚动刚起步就被心跳判停滞、abortScroll 掐断，抖音因未滚到底不触发懒加载，
-      // 无新数据→重搜重载回顶部→死循环，真机验收实测复现）。不允许静默覆盖用户配置，抬高时必须打日志。
-      const minStallSec = (this.scrollIntervalMs + SCROLL_WAIT_JITTER_MS) / 1000
-        + (SCROLL_FIRST_ROUND_STEPS * SCROLL_STEP_MS) / 1000
-        + STALL_MIN_BUFFER_SEC
-      const stallSec = Math.max(userStallSec, minStallSec)
-      this.stallSec = stallSec
-      if (stallSec > userStallSec) {
-        this.deps.onFilterLog?.(
-          `停滞阈值：用户设 ${userStallSec} 秒 < 滚动周期需要 ${minStallSec.toFixed(1)} 秒 → 实际按 ${minStallSec.toFixed(1)} 秒执行`
-        )
-      }
-      // R11-3/4：秒级心跳——①验证码识别每 2s 查一次（验证码随时可能弹，不只在停滞时；executeJavaScript
-      // 开销可接受）；②停滞检测粒度从"一轮(~15-20s)"降到 1s：滚动中 → 中断在途滚动（~0.5s 返回）让主循环
-      // 滚动返回后立即自救；等待中 → 心跳直接触发自救（与主循环同逻辑，rescuing 防重入、与主循环互斥）。
-      this.stallHeartbeat = setInterval(() => {
-        if (this.aborted) return
-        this.verifyTick++
-        if (this.verifyTick % 2 === 0 && !this.verifyFound) {
-          void this.deps.browser.findVerifyIndicator().then(m => {
-            if (m && !this.aborted) {
-              this.verifyFound = m
-              if (this.scrolling) this.deps.browser.abortScroll?.() // 让滚动返回，主循环尽快 break
+      if (adapter.parseListStubs) {
+        stopReason = await this.runListDetails(adapter, target)
+      } else {
+        // R11：停滞阈值秒数每次 run 现读（设置保存即生效，不构造时缓存）
+        const userStallSec = this.deps.getStallThresholdSec() ?? 5
+        // Task4：动态下限——一个正常周期至少需要「等待阶段（滚动间隔+抖动）+ 首轮滚动到首批数据回来」，
+        // 阈值低于该周期会绞杀正常滚动（滚动刚起步就被心跳判停滞、abortScroll 掐断，抖音因未滚到底不触发懒加载，
+        // 无新数据→重搜重载回顶部→死循环，真机验收实测复现）。不允许静默覆盖用户配置，抬高时必须打日志。
+        const minStallSec = (this.scrollIntervalMs + SCROLL_WAIT_JITTER_MS) / 1000
+          + (SCROLL_FIRST_ROUND_STEPS * SCROLL_STEP_MS) / 1000
+          + STALL_MIN_BUFFER_SEC
+        const stallSec = Math.max(userStallSec, minStallSec)
+        this.stallSec = stallSec
+        if (stallSec > userStallSec) {
+          this.deps.onFilterLog?.(
+            `停滞阈值：用户设 ${userStallSec} 秒 < 滚动周期需要 ${minStallSec.toFixed(1)} 秒 → 实际按 ${minStallSec.toFixed(1)} 秒执行`
+          )
+        }
+        // R11-3/4：秒级心跳——①验证码识别每 2s 查一次（验证码随时可能弹，不只在停滞时；executeJavaScript
+        // 开销可接受）；②停滞检测粒度从"一轮(~15-20s)"降到 1s：滚动中 → 中断在途滚动（~0.5s 返回）让主循环
+        // 滚动返回后立即自救；等待中 → 心跳直接触发自救（与主循环同逻辑，rescuing 防重入、与主循环互斥）。
+        this.stallHeartbeat = setInterval(() => {
+          if (this.aborted) return
+          this.verifyTick++
+          if (this.verifyTick % 2 === 0 && !this.verifyFound) {
+            void this.deps.browser.findVerifyIndicator().then(m => {
+              if (m && !this.aborted) {
+                this.verifyFound = m
+                if (this.scrolling) this.deps.browser.abortScroll?.() // 让滚动返回，主循环尽快 break
+              }
+            }).catch(() => {})
+          }
+          if (this.rescuing) return
+          if (Date.now() - this.lastFetchedAt > stallSec * 1000) {
+            if (this.scrolling) this.deps.browser.abortScroll?.()
+            else if (this.adapter) void this.rescueStall(this.adapter, target, stallSec)
+          }
+        }, 1000)
+        // T3/T4：轮次计数器（触发检查点日志标注第几轮用）
+        let roundCount = 0
+        while (!this.aborted) {
+          // R11-3：心跳式等待——sleep 拆成 1s 小步（累计到滚动间隔才触发滚动，滚动频率不变）；
+          // 每步检查停滞：命中即走自救（不等整轮结束）
+          const waitTotal = this.scrollIntervalMs + Math.random() * SCROLL_WAIT_JITTER_MS
+          let waited = 0
+          while (!this.aborted && waited < waitTotal) {
+            const step = Math.min(1000, waitTotal - waited)
+            await this.sleep(step)
+            waited += step
+            if (this.aborted) break
+            if (this.verifyFound) { stopReason = 'verify'; break } // R11-4：心跳检测到验证码 → 暂停等人工验证
+            if (this.pastRange) { stopReason = 'reached'; break } // R18：已翻过日期段 → 抓完
+            if (Date.now() - this.lastFetchedAt > stallSec * 1000) {
+              if (this.fetched >= target) { stopReason = 'reached'; break }
+              const action = await this.rescueStall(adapter, target, stallSec)
+              if (this.aborted) break
+              if (action === 'paused') { stopReason = 'stalled'; break }
+              if (action === 'verify') { stopReason = 'verify'; break } // R11-5：验证码命中 → 暂停等人工验证
+              if (action === 'continue') waited = 0 // 重搜成功后重新起算等待，继续爬（skip=冷却中，继续当前等待）
             }
-          }).catch(() => {})
-        }
-        if (this.rescuing) return
-        if (Date.now() - this.lastFetchedAt > stallSec * 1000) {
-          if (this.scrolling) this.deps.browser.abortScroll?.()
-          else if (this.adapter) void this.rescueStall(this.adapter, target, stallSec)
-        }
-      }, 1000)
-      // T3/T4：轮次计数器（触发检查点日志标注第几轮用）
-      let roundCount = 0
-      while (!this.aborted) {
-        // R11-3：心跳式等待——sleep 拆成 1s 小步（累计到滚动间隔才触发滚动，滚动频率不变）；
-        // 每步检查停滞：命中即走自救（不等整轮结束）
-        const waitTotal = this.scrollIntervalMs + Math.random() * SCROLL_WAIT_JITTER_MS
-        let waited = 0
-        while (!this.aborted && waited < waitTotal) {
-          const step = Math.min(1000, waitTotal - waited)
-          await this.sleep(step)
-          waited += step
+          }
+          // A1：暂停时不跑滚动（滚动是长任务且不可中断，提前检查避免多滚一轮）
+          if (this.aborted) break
+          if (stopReason) break
+          // R11-3：滚动标志置位——心跳据此在停滞时中断在途滚动（~0.5s 返回）
+          this.scrolling = true
+          try {
+            await this.deps.browser.scrollToBottom({ waitMs: this.scrollWaitMs })
+          } finally {
+            this.scrolling = false
+          }
+          // 暂停即时：pause 可能落在 scrollToBottom 内（abortWait 为 null，收尾 sleep 无人唤醒）——
+          // 滚动被 abortScroll 中断返回后立即检查 aborted，跳过收尾 sleep 直接进 finally（~1 秒内进暂停态）
           if (this.aborted) break
           if (this.verifyFound) { stopReason = 'verify'; break } // R11-4：心跳检测到验证码 → 暂停等人工验证
-          if (this.pastRange) { stopReason = 'reached'; break } // R18：已翻过日期段 → 抓完
+          // R11-2：爬满即停——handleRaw 已通过 abortScroll 中断在途滚动，返回后立即收尾，
+          // 不再经过收尾 sleep 白等一轮（此前整轮滚动+收尾 sleep 后才检查 reached，完成要拖 ~15-20s）
+          if (this.fetched >= target || this.pastRange) { stopReason = 'reached'; break }
+          // R11-3：滚动返回后立即检查停滞——心跳已中断在途滚动（~0.5s），这里马上自救，不进整轮等待
           if (Date.now() - this.lastFetchedAt > stallSec * 1000) {
-            if (this.fetched >= target) { stopReason = 'reached'; break }
             const action = await this.rescueStall(adapter, target, stallSec)
             if (this.aborted) break
             if (action === 'paused') { stopReason = 'stalled'; break }
             if (action === 'verify') { stopReason = 'verify'; break } // R11-5：验证码命中 → 暂停等人工验证
-            if (action === 'continue') waited = 0 // 重搜成功后重新起算等待，继续爬（skip=冷却中，继续当前等待）
+            if (action === 'continue') continue // 重搜成功：重新进入等待阶段（不再跑 settle/轮末检查）
           }
-        }
-        // A1：暂停时不跑滚动（滚动是长任务且不可中断，提前检查避免多滚一轮）
-        if (this.aborted) break
-        if (stopReason) break
-        // R11-3：滚动标志置位——心跳据此在停滞时中断在途滚动（~0.5s 返回）
-        this.scrolling = true
-        try {
-          await this.deps.browser.scrollToBottom({ waitMs: this.scrollWaitMs })
-        } finally {
-          this.scrolling = false
-        }
-        // 暂停即时：pause 可能落在 scrollToBottom 内（abortWait 为 null，收尾 sleep 无人唤醒）——
-        // 滚动被 abortScroll 中断返回后立即检查 aborted，跳过收尾 sleep 直接进 finally（~1 秒内进暂停态）
-        if (this.aborted) break
-        if (this.verifyFound) { stopReason = 'verify'; break } // R11-4：心跳检测到验证码 → 暂停等人工验证
-        // R11-2：爬满即停——handleRaw 已通过 abortScroll 中断在途滚动，返回后立即收尾，
-        // 不再经过收尾 sleep 白等一轮（此前整轮滚动+收尾 sleep 后才检查 reached，完成要拖 ~15-20s）
-        if (this.fetched >= target || this.pastRange) { stopReason = 'reached'; break }
-        // R11-3：滚动返回后立即检查停滞——心跳已中断在途滚动（~0.5s），这里马上自救，不进整轮等待
-        if (Date.now() - this.lastFetchedAt > stallSec * 1000) {
-          const action = await this.rescueStall(adapter, target, stallSec)
-          if (this.aborted) break
-          if (action === 'paused') { stopReason = 'stalled'; break }
-          if (action === 'verify') { stopReason = 'verify'; break } // R11-5：验证码命中 → 暂停等人工验证
-          if (action === 'continue') continue // 重搜成功：重新进入等待阶段（不再跑 settle/轮末检查）
-        }
-        // 放慢节奏：滚动后多等一拍让当页结果加载完再进下一轮（默认约1.5s，随每页等待时长缩放；测试环境按间隔缩放保持快速）
-        await this.sleep(Math.min(1500, this.scrollWaitMs / 4, this.scrollIntervalMs * 2))
-        // 按轮次计静默：本轮收到 raw 则重置，否则累加；与空解析轮合并判断停止
-        if (this.rawSinceLastRound) this.silentRounds = 0
-        else this.silentRounds++
-        this.rawSinceLastRound = false
+          // 放慢节奏：滚动后多等一拍让当页结果加载完再进下一轮（默认约1.5s，随每页等待时长缩放；测试环境按间隔缩放保持快速）
+          await this.sleep(Math.min(1500, this.scrollWaitMs / 4, this.scrollIntervalMs * 2))
+          // 按轮次计静默：本轮收到 raw 则重置，否则累加；与空解析轮合并判断停止
+          if (this.rawSinceLastRound) this.silentRounds = 0
+          else this.silentRounds++
+          this.rawSinceLastRound = false
 
-        // R11-2/3：轮末停滞检查点（兜底——等待阶段/滚动返回后均未命中时才到这里；正常轮记录日志）。
-        // 停滞判定秒数制，不再依赖空轮数（emptyRounds/silentRounds 仅作日志）。
-        roundCount++
-        const log = (msg: string): void => { this.deps.onFilterLog?.(msg) }
-        const elapsed = Date.now() - this.lastFetchedAt
-        const stalled = elapsed > stallSec * 1000
-        log(`停滞检测（第${roundCount}轮）：${(elapsed / 1000).toFixed(1)} 秒无新视频（阈值 ${stallSec} 秒）→ ${stalled ? '已停滞' : '未停滞'}（空轮=${this.emptyRounds} 静默轮=${this.silentRounds}）`)
-        if (this.verifyFound) { stopReason = 'verify'; break } // R11-4：心跳检测到验证码 → 暂停等人工验证
-        if (this.fetched >= target || this.pastRange) { stopReason = 'reached'; break }
-        if (stalled) {
-          const action = await this.rescueStall(adapter, target, stallSec)
-          if (this.aborted) break
-          if (action === 'paused') { stopReason = 'stalled'; break }
-          if (action === 'verify') { stopReason = 'verify'; break } // R11-5：验证码命中 → 暂停等人工验证
-          if (action === 'continue') continue
+          // R11-2/3：轮末停滞检查点（兜底——等待阶段/滚动返回后均未命中时才到这里；正常轮记录日志）。
+          // 停滞判定秒数制，不再依赖空轮数（emptyRounds/silentRounds 仅作日志）。
+          roundCount++
+          const log = (msg: string): void => { this.deps.onFilterLog?.(msg) }
+          const elapsed = Date.now() - this.lastFetchedAt
+          const stalled = elapsed > stallSec * 1000
+          log(`停滞检测（第${roundCount}轮）：${(elapsed / 1000).toFixed(1)} 秒无新视频（阈值 ${stallSec} 秒）→ ${stalled ? '已停滞' : '未停滞'}（空轮=${this.emptyRounds} 静默轮=${this.silentRounds}）`)
+          if (this.verifyFound) { stopReason = 'verify'; break } // R11-4：心跳检测到验证码 → 暂停等人工验证
+          if (this.fetched >= target || this.pastRange) { stopReason = 'reached'; break }
+          if (stalled) {
+            const action = await this.rescueStall(adapter, target, stallSec)
+            if (this.aborted) break
+            if (action === 'paused') { stopReason = 'stalled'; break }
+            if (action === 'verify') { stopReason = 'verify'; break } // R11-5：验证码命中 → 暂停等人工验证
+            if (action === 'continue') continue
+          }
+          if (this.pendingVideoIds.length > 30) { /* 下载堆积，放慢抓取 */ await this.sleep(2000) }
         }
-        if (this.pendingVideoIds.length > 30) { /* 下载堆积，放慢抓取 */ await this.sleep(2000) }
+
       }
 
       if (this.aborted) {
@@ -354,6 +379,11 @@ export class Scheduler {
       this.deps.emit({ type: 'task:paused', taskId, reason: 'scheduler_error' })
     } finally {
       this.running = false
+      this.abortDetail?.()
+      this.pendingDetail = null
+      this.phase = null
+      this.listStubs.clear()
+      this.listEnded = false
       // 清理去抖计时器：任务结束/暂停后不再延迟触发归档，避免任务切换后误归档
       this.clearOrganizeTimer()
       // I5 清理残留任务上下文：handleRaw 的 taskId===0 守卫会拒绝任务结束后的任何流量，
@@ -388,6 +418,139 @@ export class Scheduler {
         this.abortWait = null
         resolve()
       }
+    })
+  }
+
+  /** 列表只暂存卡片；达到候选数量或列表结束后，在同一浏览器串行打开详情。 */
+  private async runListDetails(adapter: PlatformAdapter, target: number): Promise<'reached' | 'stalled' | 'verify'> {
+    const candidateTarget = this.listCandidateTarget(target)
+    const enough = (): boolean => this.fetched + this.listStubs.size >= candidateTarget
+    const stallMs = Math.max(this.deps.getStallThresholdSec() * 1000,
+      this.scrollIntervalMs + this.scrollWaitMs + 12000)
+    while (!this.aborted && !enough() && !this.listEnded) {
+      if (await this.deps.browser.findVerifyIndicator()) return 'verify'
+      if (this.aborted) break
+      if (await this.deps.browser.findBottomText()) { this.listEnded = true; break }
+      if (this.aborted) break
+      if (Date.now() - this.lastFetchedAt > stallMs) {
+        // 已收集的候选仍要解析；无候选时暂停，不能把无响应误报完成。
+        if (this.listStubs.size === 0) return 'stalled'
+        break
+      }
+      await this.sleep(this.scrollIntervalMs + Math.random() * SCROLL_WAIT_JITTER_MS)
+      if (this.aborted || enough() || this.listEnded) break
+      await this.deps.browser.scrollToBottom({ waitMs: this.scrollWaitMs })
+      await this.collectDomListStubs(adapter)
+    }
+    if (this.aborted) return 'reached'
+    this.phase = 'detail'
+    this.deps.onFilterLog?.(`搜索阶段结束：收集 ${this.listStubs.size} 条视频候选，开始逐条获取详情`)
+    for (const stub of this.listStubs.values()) {
+      if (this.aborted || this.fetched >= target) break
+      if (await this.deps.browser.findVerifyIndicator()) return 'verify'
+      if (this.aborted) break
+      const item = await this.resolveDetail(adapter, stub)
+      if (this.aborted) break
+      if (this.verifyFound) return 'verify'
+      if (item) await this.saveItems(adapter, [item])
+      if (!this.aborted && this.fetched < target) await this.sleep(this.scrollIntervalMs)
+    }
+    if (!this.aborted && this.fetched < target) {
+      this.deps.emit({ type: 'task:notice', text: `本批视频候选处理完毕，实际收集 ${this.fetched}/${target} 条；部分候选可能不符合筛选条件或详情不可用` })
+    }
+    return 'reached'
+  }
+
+  /** 页面原生筛选只减少无效候选；详情阶段仍会按真实时间戳与时长做最终精确过滤。 */
+  private async prepareTwoStageList(adapter: PlatformAdapter, type: TaskRow['type']): Promise<void> {
+    const filters = this.filters
+    if (!filters) return
+    const native = adapter.nativeSearchFilters?.(type, filters) ?? []
+    if (native.length > 0 && this.deps.browser.applyNativeSearchFilters) {
+      const before = new Map(this.listStubs)
+      this.listStubs.clear()
+      const result = await this.deps.browser.applyNativeSearchFilters(native)
+      if (!result.applied) {
+        this.listStubs.clear()
+        for (const [id, stub] of before) this.listStubs.set(id, stub)
+        this.deps.onFilterLog?.('网页原生筛选未展开或未找到选项，回退为详情阶段精确筛选')
+      } else {
+        if (result.noteIds.length > 0) {
+          const current = new Set(result.noteIds)
+          for (const id of [...this.listStubs.keys()]) if (!current.has(id)) this.listStubs.delete(id)
+        }
+        this.deps.onFilterLog?.(`已应用网页原生筛选：${native.map(x => `${x.group}=${x.option}`).join('、')}`)
+      }
+    }
+    await this.collectDomListStubs(adapter)
+  }
+
+  private listCandidateTarget(target: number): number {
+    const filters = this.filters
+    if (!filters || (filters.timeRange === 'all' && filters.duration === 'all')) return target
+    return Math.min(1000, Math.max(target * 3, target + 20))
+  }
+
+  private mergeListStubs(result: { stubs: ListStub[]; skipped: { image: number; other: number }; hasMore?: boolean }, responseIsProgress = false): number {
+    const limit = this.listCandidateTarget(this.filters?.targetCount ?? 200)
+    let added = 0
+    for (const stub of result.stubs) {
+      if (this.fetched + this.listStubs.size >= limit) break
+      if (!this.seen.has(stub.noteId) && !this.listStubs.has(stub.noteId)) {
+        this.listStubs.set(stub.noteId, stub)
+        added++
+      }
+    }
+    if (result.hasMore === false) this.listEnded = true
+    // 搜索接口的新响应即使全是图文，也说明页面仍在正常翻页；DOM 扫描每轮都会重复看到
+    // 已渲染卡片，只有真的新增候选才能刷新停滞计时，否则作者作品不足目标时会永远滚动。
+    if (added > 0 || responseIsProgress) this.lastFetchedAt = Date.now()
+    return added
+  }
+
+  private async collectDomListStubs(adapter: PlatformAdapter): Promise<void> {
+    if (!this.task || !this.deps.browser.collectListStubs) return
+    const result = await this.deps.browser.collectListStubs(adapter, this.task.type)
+    if (!result) return
+    const added = this.mergeListStubs(result)
+    if (added > 0) {
+      this.deps.onFilterLog?.(`作者主页新增 ${added} 条视频候选，累计 ${this.listStubs.size} 条`)
+    }
+  }
+
+  private resolveDetail(adapter: PlatformAdapter, stub: ListStub): Promise<VideoItem | null> {
+    return new Promise(resolve => {
+      let settled = false
+      const finish = (item: VideoItem | null): void => {
+        if (settled) return
+        settled = true
+        clearTimeout(timer)
+        clearInterval(verifyTimer)
+        this.pendingDetail = null
+        this.abortDetail = null
+        resolve(item)
+      }
+      const skip = (reason: string): void => {
+        if (settled) return
+        this.deps.onFilterLog?.(`笔记 ${stub.noteId}：${reason}`)
+        finish(null)
+        this.deps.browser.stopLoading?.()
+      }
+      const timer = setTimeout(() => skip('详情超时，跳过'), this.deps.detailTimeoutMs ?? 30000)
+      let checking = false
+      const verifyTimer = setInterval(() => {
+        if (checking || settled) return
+        checking = true
+        void this.deps.browser.findVerifyIndicator().then(found => {
+          if (found && !settled) { this.verifyFound = found; skip('需要人工验证，暂停') }
+        }).catch(() => { /* 页面导航中暂时无法检查，下一次再查 */ }).finally(() => { checking = false })
+      }, 1000)
+      this.pendingDetail = { noteId: stub.noteId, finish }
+      this.abortDetail = () => { finish(null); this.deps.browser.stopLoading?.() }
+      // 先安装接收器再导航：响应可以早于 load 完成。异常文字可能含令牌，不能原样写日志。
+      void Promise.resolve().then(() => {
+        if (!settled && !this.aborted) return this.deps.browser.load(adapter, adapter.buildDetailUrl!(stub))
+      }).catch(() => skip('详情加载失败，跳过'))
     })
   }
 
@@ -523,16 +686,38 @@ export class Scheduler {
 
   /** 主进程从 ipcMain 'platform:raw' 调用来处理一个原始 JSON（任务期间持续被调用）。适配器由当前活动浏览器窗口给出，不由 URL 反推。 */
   async handleRaw(adapter: PlatformAdapter, rawUrl: string, json: unknown): Promise<{ items: number; kept: number } | null> {
-    if (this.taskId === 0 || this.adapter !== adapter) return null
+    if (this.aborted || this.taskId === 0 || this.adapter !== adapter) return null
     if (!adapter.apiUrlPatterns.some(r => r.test(rawUrl))) return null
+    if (this.phase === 'detail') {
+      const pending = this.pendingDetail
+      if (!pending || !adapter.isDetailResponse!(rawUrl, json, pending.noteId)) return null
+      let item: VideoItem | null = null
+      try { item = adapter.parseDetail!(json) } catch { /* 解析异常按单条失败处理，禁止打印响应 */ }
+      if (item && item.awemeId !== pending.noteId) return null
+      if (!item) this.deps.onFilterLog?.(`笔记 ${pending.noteId}：详情解析失败或无视频地址，跳过`)
+      pending.finish(item)
+      return { items: item ? 1 : 0, kept: 0 }
+    }
     // 任务接口匹配由适配器决定：抖音看接口路径，快手关键词/作者/详情共用同一个
     // /graphql，URL 完全相同，只能看响应里的 operation 根字段。
     if (!this.task || !adapter.matchesTaskResponse(this.task.type, rawUrl, json)) return null
     this.rawSinceLastRound = true
+    if (this.phase === 'list') {
+      const result = adapter.parseListStubs!(rawUrl, json)
+      const target = this.listCandidateTarget(this.filters?.targetCount ?? 200)
+      this.mergeListStubs(result, true)
+      // 图文也是有效搜索进展，不能因图文占多数误判风控。
+      this.deps.onFilterLog?.(`搜索视频候选 ${this.listStubs.size} 条；跳过图文 ${result.skipped.image} 条、其他 ${result.skipped.other} 条`)
+      if (this.listEnded || this.fetched + this.listStubs.size >= target) this.deps.browser.abortScroll?.()
+      return { items: result.stubs.length, kept: 0 }
+    }
+    return this.saveItems(adapter, adapter.parseApiJson(rawUrl, json))
+  }
+
+  private async saveItems(adapter: PlatformAdapter, items: VideoItem[]): Promise<{ items: number; kept: number } | null> {
     const db = this.deps.db
     const filters = this.filters
     if (!filters) return null
-    const items = adapter.parseApiJson(rawUrl, json)
     // R18：作者主页是按时间倒序的——这一批全比日期段起点老，说明已经翻过日期段，后面只会更老 → 抓完
     if (this.task?.type === 'author' && filters.timeRange === 'custom' && filters.startDate && items.length > 0) {
       const startTs = new Date(filters.startDate + 'T00:00:00Z').getTime() / 1000
@@ -546,7 +731,7 @@ export class Scheduler {
     const kept = dedupeVideos(filterVideos(items, filters), this.seen)
     if (kept.length === 0) {
       this.emptyRounds++
-      if (isRiskSignal(this.emptyRounds) && filters.timeRange !== 'all') {
+      if (this.phase !== 'detail' && isRiskSignal(this.emptyRounds) && filters.timeRange !== 'all') {
         // 保守起见：连续空数据→风控，暂停任务（真实风控判定以"连续N轮无有效数据"为信号，不额外发探针请求）
         this.aborted = true
       }

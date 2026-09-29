@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { api } from '../api'
-import type { AuthorRow } from '../../../shared/types'
+import type { AuthorRow, TaskType } from '../../../shared/types'
 import { Card, btnPrimary, btn } from './ui'
 import { useMarqueeSelect } from './useMarqueeSelect'
 import { useTableSelection } from './useTableSelection'
@@ -33,7 +33,7 @@ export default function AuthorCollection({ notify }: { notify: (text: string) =>
   const [crawlTarget, setCrawlTarget] = useState<AuthorRow | null>(null)
   const [crawlCount, setCrawlCount] = useState('200')
   const [crawlAuto, setCrawlAuto] = useState(true)
-  const [platforms, setPlatforms] = useState<Array<{ name: string; displayName: string; authorInputPlaceholder: string }>>([])
+  const [platforms, setPlatforms] = useState<Array<{ name: string; displayName: string; authorInputPlaceholder: string; supportedTaskTypes?: readonly TaskType[] }>>([])
   const [importText, setImportText] = useState('')
   const [importResult, setImportResult] = useState<ImportResult | null>(null)
   const [importing, setImporting] = useState(false)
@@ -351,7 +351,7 @@ export default function AuthorCollection({ notify }: { notify: (text: string) =>
               value={importPlatform}
               onChange={e => setImportPlatform(e.target.value)}
             >
-              {platforms.map(p => <option key={p.name} value={p.name}>{p.displayName}</option>)}
+              {platforms.filter(p => !p.supportedTaskTypes || p.supportedTaskTypes.includes('author')).map(p => <option key={p.name} value={p.name}>{p.displayName}</option>)}
             </select>
           </label>
           <textarea
@@ -476,7 +476,10 @@ export default function AuthorCollection({ notify }: { notify: (text: string) =>
                   <td className="py-2 pr-2 tabular-nums text-slate-500">{a.video_count}</td>
                   <td className="py-2">
                     <div className="flex items-center gap-1">
-                      <button className={btn('primary', 'sm')} onClick={() => openCrawlPanel(a)}>爬主页</button>
+                      <button className={btn('primary', 'sm')}
+                        disabled={platforms.find(p => p.name === a.platform)?.supportedTaskTypes?.includes('author') === false}
+                        title={platforms.find(p => p.name === a.platform)?.supportedTaskTypes?.includes('author') === false ? '此平台暂未支持作者主页抓取' : undefined}
+                        onClick={() => openCrawlPanel(a)}>爬主页</button>
                       <button className="rounded px-2 py-1 text-xs text-emerald-600 hover:bg-emerald-50" onClick={() => void organizeOne(a)}>整理</button>
                       <button className="rounded px-2 py-1 text-xs text-red-400 hover:bg-red-50" onClick={() => void deleteOne(a.id)}>删除</button>
                     </div>

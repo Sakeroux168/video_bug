@@ -1,7 +1,8 @@
 import { BrowserWindow, screen } from 'electron'
 import type { Rectangle } from 'electron'
 import { join } from 'path'
-import type { PlatformAdapter } from './adapters/types'
+import type { ListStubResult, NativeSearchFilter, PlatformAdapter } from './adapters/types'
+import type { TaskType } from '../shared/types'
 import { buildInjectScript } from './injector'
 
 /** R11-4/5：验证码识别正则（导出供测试与页面脚本共用）——R11-5 扩展：机器人验证/完成拼图/点击完成/安全校验/verify/captcha
@@ -209,6 +210,105 @@ export class VideoBrowser {
       // 当成失败会把任务白白判死——真机上抖音连着三次记成 network 失败、
       // 「打开快手窗口」三次全抛异常，都是它。
       if ((err as { code?: string } | null)?.code !== 'ERR_ABORTED') throw err
+    }
+  }
+
+  /** 详情等待超时或任务暂停时终止在途页面加载。 */
+  stopLoading(): void {
+    if (this.win && !this.win.isDestroyed()) this.win.webContents.stop()
+  }
+
+  /** 从当前页面 DOM 收集列表存根。小红书作者页的详情令牌只存在卡片链接里。 */
+  async collectListStubs(adapter: PlatformAdapter, type: TaskType): Promise<ListStubResult | null> {
+    if (!this.win || !adapter.buildListDomScript || !adapter.parseListDomResult) return null
+    const script = adapter.buildListDomScript(type)
+    if (!script) return null
+    try {
+      const raw = await this.win.webContents.executeJavaScript(script)
+      return adapter.parseListDomResult(raw)
+    } catch { return null }
+  }
+
+  /**
+   * 按“组标题 + 选项文字”应用网页原生筛选。小红书筛选面板靠真实 hover 展开，
+   * 所以用 Chromium DevTools Protocol 派发鼠标事件；不依赖易变的 Vue data-v 哈希或固定下标。
+   */
+  async applyNativeSearchFilters(filters: NativeSearchFilter[]): Promise<{ applied: boolean; noteIds: string[] }> {
+    if (!this.win || filters.length === 0) return { applied: true, noteIds: [] }
+    const wc = this.win.webContents
+    const readNoteIds = async (): Promise<string[]> => {
+      try {
+        const value = await wc.executeJavaScript(`(() => [...document.querySelectorAll('[data-note-id]')]
+          .map(el => (el.getAttribute('data-note-id') || '').trim()).filter(Boolean))()`)
+        return Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : []
+      } catch { return [] }
+    }
+    const visibleRect = async (kind: 'button' | 'panel' | 'option', filter?: NativeSearchFilter): Promise<{ x: number; y: number } | null> => {
+      const script = kind === 'button'
+        ? `(() => {
+            const visible = el => { const r=el.getBoundingClientRect(); const s=getComputedStyle(el); return r.width>0&&r.height>0&&s.display!=='none'&&s.visibility!=='hidden'; };
+            const el=[...document.querySelectorAll('div.filter')].find(x => visible(x) && (x.textContent||'').trim().includes('筛选'));
+            if(!el) return null; el.scrollIntoView({block:'center',inline:'center'}); const r=el.getBoundingClientRect();
+            return {x:r.left+r.width/2,y:r.top+r.height/2};
+          })()`
+        : kind === 'panel'
+          ? `(() => {
+              const visible = el => { const r=el.getBoundingClientRect(); const s=getComputedStyle(el); return r.width>0&&r.height>0&&s.display!=='none'&&s.visibility!=='hidden'; };
+              const el=[...document.querySelectorAll('div.filter-panel')].find(visible); if(!el) return null;
+              const r=el.getBoundingClientRect(); return {x:r.left+r.width/2,y:r.top+Math.min(20,r.height/2)};
+            })()`
+          : `(() => {
+              const GROUP=${JSON.stringify(filter?.group || '')}, OPTION=${JSON.stringify(filter?.option || '')};
+              const visible = el => { const r=el.getBoundingClientRect(); const s=getComputedStyle(el); return r.width>0&&r.height>0&&s.display!=='none'&&s.visibility!=='hidden'; };
+              const panel=[...document.querySelectorAll('div.filter-panel')].find(visible); if(!panel) return null;
+              const group=[...panel.querySelectorAll('div.filters')].find(g => {
+                const label=[...g.children].find(x => x.tagName==='SPAN'); return label && (label.textContent||'').trim()===GROUP;
+              });
+              if(!group) return null;
+              const el=[...group.querySelectorAll('div.tags')].find(x => visible(x) && (x.textContent||'').trim()===OPTION);
+              if(!el) return null; const r=el.getBoundingClientRect(); return {x:r.left+r.width/2,y:r.top+r.height/2};
+            })()`
+      try {
+        const value = await wc.executeJavaScript(script) as { x?: unknown; y?: unknown } | null
+        return value && Number.isFinite(Number(value.x)) && Number.isFinite(Number(value.y))
+          ? { x: Number(value.x), y: Number(value.y) } : null
+      } catch { return null }
+    }
+    const before = (await readNoteIds()).join(',')
+    let attachedHere = false
+    try {
+      if (!wc.debugger.isAttached()) { wc.debugger.attach('1.3'); attachedHere = true }
+      const button = await visibleRect('button')
+      if (!button) return { applied: false, noteIds: await readNoteIds() }
+      await wc.debugger.sendCommand('Input.dispatchMouseEvent', { type: 'mouseMoved', ...button })
+      let panel: { x: number; y: number } | null = null
+      for (let i = 0; i < 30 && !panel; i++) {
+        await new Promise(resolve => setTimeout(resolve, 100))
+        panel = await visibleRect('panel')
+      }
+      if (!panel) return { applied: false, noteIds: await readNoteIds() }
+      await wc.debugger.sendCommand('Input.dispatchMouseEvent', { type: 'mouseMoved', ...panel })
+      for (const filter of filters) {
+        const option = await visibleRect('option', filter)
+        if (!option) return { applied: false, noteIds: await readNoteIds() }
+        await wc.debugger.sendCommand('Input.dispatchMouseEvent', { type: 'mouseMoved', ...option })
+        await wc.debugger.sendCommand('Input.dispatchMouseEvent', { type: 'mousePressed', button: 'left', clickCount: 1, ...option })
+        await wc.debugger.sendCommand('Input.dispatchMouseEvent', { type: 'mouseReleased', button: 'left', clickCount: 1, ...option })
+        await new Promise(resolve => setTimeout(resolve, 250))
+      }
+      // 等结果卡片切换；同一关键词偶尔首批 ID 恰好不变，5 秒后仍按已点击成功返回。
+      for (let i = 0; i < 20; i++) {
+        const ids = await readNoteIds()
+        if (ids.length > 0 && ids.join(',') !== before) return { applied: true, noteIds: ids }
+        await new Promise(resolve => setTimeout(resolve, 250))
+      }
+      return { applied: true, noteIds: await readNoteIds() }
+    } catch {
+      return { applied: false, noteIds: await readNoteIds() }
+    } finally {
+      if (attachedHere && wc.debugger.isAttached()) {
+        try { wc.debugger.detach() } catch { /* window may have navigated */ }
+      }
     }
   }
 
