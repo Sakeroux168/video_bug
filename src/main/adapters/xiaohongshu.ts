@@ -119,12 +119,14 @@ export type NoteStubResult = ListStubResult
 /** 列表卡片与详情的封面都藏在同一种结构里：先 url_default / url_pre，再 image_list[0].info_list[0].url */
 function coverOf(card: Obj): string {
   const cover = asObj(card.cover)
-  const direct = text(cover.url_default) || text(cover.url_pre)
+  const direct = text(cover.url_default) || text(cover.urlDefault) || text(cover.url_pre) || text(cover.urlPre)
   if (direct) return direct
-  const first = asObj((card.image_list as unknown[] | undefined)?.[0])
-  const fromFirst = text(first.url_default) || text(first.url_pre)
+  const images = (card.image_list ?? card.imageList) as unknown[] | undefined
+  const first = asObj(images?.[0])
+  const fromFirst = text(first.url_default) || text(first.urlDefault) || text(first.url_pre) || text(first.urlPre)
   if (fromFirst) return fromFirst
-  const info = asObj((first.info_list as unknown[] | undefined)?.[0])
+  const infos = (first.info_list ?? first.infoList) as unknown[] | undefined
+  const info = asObj(infos?.[0])
   return text(info.url)
 }
 
@@ -263,7 +265,7 @@ interface StreamCandidate {
 function mediaOf(video: Obj): Obj {
   const media = asObj(video.media)
   if (Object.keys(media).length > 0) return media
-  const raw = video.media_v2
+  const raw = video.media_v2 ?? video.mediaV2
   if (typeof raw !== 'string') return {}
   try { return asObj(JSON.parse(raw)) } catch { return {} }
 }
@@ -276,16 +278,18 @@ function collectStreams(media: Obj): StreamCandidate[] {
     for (const raw of list) {
       const s = asObj(raw)
       // master_url 带签名与时效；backup_urls 无签名，作回退
-      const backups = Array.isArray(s.backup_urls) ? s.backup_urls.map(text).filter(Boolean) : []
-      const url = text(s.master_url) || backups[0] || ''
+      const backupValue = s.backup_urls ?? s.backupUrls
+      const backups = Array.isArray(backupValue) ? backupValue.map(text).filter(Boolean) : []
+      const url = text(s.master_url) || text(s.masterUrl) || backups[0] || ''
       if (!url) continue
       out.push({
         url,
         width: positiveNumber(s.width),
         height: positiveNumber(s.height),
-        bitrate: positiveNumber(s.avg_bitrate) || positiveNumber(s.video_bitrate),
+        bitrate: positiveNumber(s.avg_bitrate) || positiveNumber(s.avgBitrate)
+          || positiveNumber(s.video_bitrate) || positiveNumber(s.videoBitrate),
         durationMs: positiveNumber(s.duration),
-        codec: text(s.video_codec) || group
+        codec: text(s.video_codec) || text(s.videoCodec) || group
       })
     }
   }
@@ -338,15 +342,15 @@ export function parseXiaohongshuNoteDetail(json: unknown): VideoItem | null {
   const card = asObj(item.note_card)
   if (text(card.type) !== 'video') return null
 
-  const noteId = text(card.note_id) || text(item.id)
+  const noteId = text(card.note_id) || text(card.noteId) || text(item.id)
   const video = asObj(card.video)
   const media = mediaOf(video)
   const selected = pickStream(collectStreams(media))
   if (!noteId || !selected) return null
 
   const user = asObj(card.user)
-  const interact = asObj(card.interact_info)
-  const authorId = text(user.user_id)
+  const interact = asObj(card.interact_info ?? card.interactInfo)
+  const authorId = text(user.user_id) || text(user.userId)
 
   // 时长：capa.duration（秒）→ media.video.duration（秒）→ 所选档位的毫秒时长
   const durationSec = positiveNumber(asObj(video.capa).duration)
@@ -357,7 +361,7 @@ export function parseXiaohongshuNoteDetail(json: unknown): VideoItem | null {
     awemeId: noteId,
     title: text(card.title) || titleFromDesc(text(card.desc)),
     authorSecUid: authorId,
-    authorNickname: text(user.nickname) || text(user.nick_name),
+    authorNickname: text(user.nickname) || text(user.nick_name) || text(user.nickName),
     authorHomeUrl: authorId ? buildAuthorPage(authorId) : '',
     playUrl: selected.url,
     coverUrl: coverOf(card),
@@ -365,10 +369,32 @@ export function parseXiaohongshuNoteDetail(json: unknown): VideoItem | null {
     height: selected.height,
     durationSec,
     publishTime: unixSeconds(card.time),
-    likes: parseXiaohongshuCount(interact.liked_count) ?? 0,
-    comments: parseXiaohongshuCount(interact.comment_count),
+    likes: parseXiaohongshuCount(interact.liked_count ?? interact.likedCount) ?? 0,
+    comments: parseXiaohongshuCount(interact.comment_count ?? interact.commentCount),
     sourceUrl: buildNotePage(noteId)
   }
+}
+
+/**
+ * 2026-09-28 真机确认：直接打开详情页不会请求 /feed，页面把详情注水到
+ * __INITIAL_STATE__.note.noteDetailMap[noteId].note。只返回解析所需字段，主动排除
+ * 笔记与作者对象里的 xsecToken；currentNoteId 与 note.noteId 必须同时匹配。
+ */
+export function buildXiaohongshuDetailDomScript(noteId: string): string {
+  return `(() => {
+    const expected = ${JSON.stringify(noteId)};
+    const store = window.__INITIAL_STATE__ && window.__INITIAL_STATE__.note;
+    if (!store || String(store.currentNoteId || '') !== expected) return null;
+    const note = store.noteDetailMap && store.noteDetailMap[expected] && store.noteDetailMap[expected].note;
+    if (!note || String(note.noteId || '') !== expected) return null;
+    const user = note.user || {};
+    return { data: { items: [{ id: expected, note_card: {
+      noteId: note.noteId, type: note.type, title: note.title, desc: note.desc, time: note.time,
+      user: { userId: user.userId, nickname: user.nickname, nickName: user.nickName },
+      interactInfo: note.interactInfo, imageList: note.imageList,
+      video: note.video
+    } }] } };
+  })()`
 }
 
 export const xiaohongshuAdapter: PlatformAdapter = {
@@ -416,6 +442,7 @@ export const xiaohongshuAdapter: PlatformAdapter = {
   // 2026-09-28 搜索详情与作者卡片地址均已核对；实际令牌仅在任务内存里使用。
   buildDetailUrl: stub => stub.detailUrl
     || `${buildNotePage(stub.noteId)}?xsec_token=${encodeURIComponent(stub.detailToken)}&xsec_source=${encodeURIComponent(stub.detailSource || 'pc_search')}`,
+  buildDetailDomScript: buildXiaohongshuDetailDomScript,
   isDetailResponse: isXiaohongshuDetailResponse,
   parseDetail: parseXiaohongshuNoteDetail,
 

@@ -45,6 +45,21 @@ beforeEach(() => { vi.useFakeTimers(); vi.spyOn(Math, 'random').mockReturnValue(
 afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks() })
 
 describe('小红书搜索 → 详情 → 保存', () => {
+  it('详情接口不触发时从当前页面 INITIAL_STATE 取得详情并保存', async () => {
+    const t = setup(1)
+    const pageItem = adapter.parseDetail!(detail('PAGE'))!
+    Object.assign(t.browser, { extractCurrentDetail: vi.fn(async (_a: unknown, noteId: string) => noteId === 'PAGE' ? pageItem : null) })
+    t.browser.load.mockImplementation(async (_a?: unknown, url?: string) => {
+      if (url?.includes('search_result')) await t.s.handleRaw(adapter, searchUrl, list(['PAGE']))
+      else await new Promise<void>(() => {})
+    })
+    const run = t.s.run(t.id); await vi.advanceTimersByTimeAsync(500); await run
+    expect(t.rows().map(r => r.aweme_id)).toEqual(['PAGE'])
+    expect(t.browser.stopLoading).toHaveBeenCalled()
+    expect(JSON.stringify(t.rows()) + t.logs.join('')).not.toContain('PRIVATE_TOKEN')
+    t.db.close()
+  })
+
   it('网页筛选前的首屏候选会清空，只处理筛选刷新后的结果', async () => {
     const t = setup(1)
     Object.assign(t.browser, { applyNativeSearchFilters: vi.fn(async (filters: unknown) => {

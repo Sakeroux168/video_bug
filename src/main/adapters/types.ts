@@ -92,6 +92,8 @@ export interface PlatformAdapter {
   buildListDomScript?(type: TaskType): string | null
   parseListDomResult?(value: unknown): ListStubResult
   buildDetailUrl?(stub: ListStub): string
+  /** 详情接口不触发时，从页面已注水状态读取当前笔记；脚本必须核对 noteId，且不得返回令牌。 */
+  buildDetailDomScript?(noteId: string): string | null
   isDetailResponse?(url: string, json: unknown, noteId?: string): boolean
   parseDetail?(json: unknown): VideoItem | null
   normalizePlayUrl(rawUrl: string): string

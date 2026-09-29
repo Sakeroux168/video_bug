@@ -331,6 +331,29 @@ describe('xiaohongshuAdapter 详情接口匹配', () => {
 })
 
 describe('parseXiaohongshuNoteDetail 组装完整条目', () => {
+  it('读取真机 INITIAL_STATE 的驼峰详情结构，且脚本只返回当前笔记', () => {
+    const note = {
+      noteId: 'STATE1', xsecToken: 'NOTE_PRIVATE_TOKEN', type: 'video', title: '页面详情', desc: '', time: 1780000000000,
+      user: { userId: 'USER_STATE', nickname: '页面作者', xsecToken: 'USER_PRIVATE_TOKEN' },
+      interactInfo: { likedCount: '1.2万', commentCount: '35' },
+      imageList: [{ urlDefault: 'https://img.test/cover.jpg' }],
+      video: { capa: { duration: 18 }, media: { stream: { h264: [{ width: 720, height: 1280,
+        masterUrl: 'https://cdn.test/state.mp4', avgBitrate: 1234, duration: 18000, videoCodec: 'h264' }] } } }
+    }
+    const dom = new JSDOM('', { url: 'https://www.xiaohongshu.com/explore/STATE1', runScripts: 'outside-only' })
+    ;(dom.window as unknown as { __INITIAL_STATE__: unknown }).__INITIAL_STATE__ = {
+      note: { currentNoteId: 'STATE1', noteDetailMap: { STATE1: { note }, OTHER: { note: { ...note, noteId: 'OTHER' } } } }
+    }
+    const raw = dom.window.eval(xiaohongshuAdapter.buildDetailDomScript!('STATE1'))
+    expect(JSON.stringify(raw)).not.toContain('PRIVATE_TOKEN')
+    expect(parseXiaohongshuNoteDetail(raw)).toMatchObject({
+      awemeId: 'STATE1', title: '页面详情', authorSecUid: 'USER_STATE', authorNickname: '页面作者',
+      playUrl: 'https://cdn.test/state.mp4', coverUrl: 'https://img.test/cover.jpg', durationSec: 18,
+      publishTime: 1780000000, likes: 12000, comments: 35
+    })
+    expect(dom.window.eval(xiaohongshuAdapter.buildDetailDomScript!('OTHER'))).toBeNull()
+  })
+
   it('取标题、作者、时长、发布时间、点赞、评论、封面、作品链接、播放地址与宽高', () => {
     const item = parseXiaohongshuNoteDetail(detailResponse())
     expect(item).toEqual({

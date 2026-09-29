@@ -521,11 +521,13 @@ export class Scheduler {
   private resolveDetail(adapter: PlatformAdapter, stub: ListStub): Promise<VideoItem | null> {
     return new Promise(resolve => {
       let settled = false
+      let detailTimer: ReturnType<typeof setInterval> | null = null
       const finish = (item: VideoItem | null): void => {
         if (settled) return
         settled = true
         clearTimeout(timer)
         clearInterval(verifyTimer)
+        if (detailTimer) clearInterval(detailTimer)
         this.pendingDetail = null
         this.abortDetail = null
         resolve(item)
@@ -547,6 +549,21 @@ export class Scheduler {
       }, 1000)
       this.pendingDetail = { noteId: stub.noteId, finish }
       this.abortDetail = () => { finish(null); this.deps.browser.stopLoading?.() }
+      if (adapter.buildDetailDomScript && this.deps.browser.extractCurrentDetail) {
+        let extracting = false
+        const extract = (): void => {
+          if (extracting || settled) return
+          extracting = true
+          void this.deps.browser.extractCurrentDetail(adapter, stub.noteId).then(item => {
+            if (item && item.awemeId === stub.noteId && !settled) {
+              finish(item)
+              this.deps.browser.stopLoading?.()
+            }
+          }).catch(() => { /* 页面导航中暂时不可读，下一轮继续 */ }).finally(() => { extracting = false })
+        }
+        detailTimer = setInterval(extract, 200)
+        extract()
+      }
       // 先安装接收器再导航：响应可以早于 load 完成。异常文字可能含令牌，不能原样写日志。
       void Promise.resolve().then(() => {
         if (!settled && !this.aborted) return this.deps.browser.load(adapter, adapter.buildDetailUrl!(stub))

@@ -1,7 +1,7 @@
 import { BrowserWindow, screen } from 'electron'
 import type { Rectangle } from 'electron'
 import { join } from 'path'
-import type { ListStubResult, NativeSearchFilter, PlatformAdapter } from './adapters/types'
+import type { ListStubResult, NativeSearchFilter, PlatformAdapter, VideoItem } from './adapters/types'
 import type { TaskType } from '../shared/types'
 import { buildInjectScript } from './injector'
 
@@ -209,8 +209,41 @@ export class VideoBrowser {
       // 会中止原始导航并让 loadURL 以 -3 拒绝，而页面通常已经正常打开。
       // 当成失败会把任务白白判死——真机上抖音连着三次记成 network 失败、
       // 「打开快手窗口」三次全抛异常，都是它。
-      if ((err as { code?: string } | null)?.code !== 'ERR_ABORTED') throw err
+      const nav = err as { code?: string | number; errno?: number } | null
+      if (nav?.code === 'ERR_ABORTED' || nav?.errno === -3 || nav?.code === -3) return
+      // 小红书页面会持续挂资源，让 loadURL 到 30 秒仍不结束；列表卡片或注水结果已经
+      // 出现时页面可继续使用。只给该平台放行，保持抖音/快手原来的超时语义。
+      if (nav?.code === 'OP_TIMEOUT' && adapter.name === 'xiaohongshu' && await this.hasUsableXiaohongshuPage()) return
+      throw err
     }
+  }
+
+  private async hasUsableXiaohongshuPage(): Promise<boolean> {
+    if (!this.win || this.win.isDestroyed()) return false
+    try {
+      return Boolean(await this.win.webContents.executeJavaScript(`(() => {
+        if (document.querySelector('[data-note-id]')) return true;
+        const s = window.__INITIAL_STATE__ || {};
+        const detailMap = s.note && s.note.noteDetailMap;
+        if (detailMap && Object.keys(detailMap).length > 0) return true;
+        const search = s.search || {};
+        if (Array.isArray(search.feeds) && search.feeds.length > 0) return true;
+        const user = s.user || {};
+        return Array.isArray(user.notes) && user.notes.length > 0;
+      })()`))
+    } catch { return false }
+  }
+
+  /** 从当前详情页注水状态读取完整条目；适配器脚本负责只接受当前等待的 noteId。 */
+  async extractCurrentDetail(adapter: PlatformAdapter, noteId: string): Promise<VideoItem | null> {
+    if (!this.win || this.win.isDestroyed() || !adapter.buildDetailDomScript || !adapter.parseDetail) return null
+    const script = adapter.buildDetailDomScript(noteId)
+    if (!script) return null
+    try {
+      const raw = await this.win.webContents.executeJavaScript(script)
+      const item = adapter.parseDetail(raw)
+      return item?.awemeId === noteId ? item : null
+    } catch { return null }
   }
 
   /** 详情等待超时或任务暂停时终止在途页面加载。 */
