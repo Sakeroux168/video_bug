@@ -36,4 +36,12 @@ Runtime components
    - License declared by the npm packages: Apache License 2.0
    - The Windows package includes ONNX Runtime and native libraries; their notices and upstream source remain governed by their respective terms.
 
+5. bilix Range segmentation design (adapted source logic, no runtime dependency)
+   - Project: https://github.com/HFrost0/bilix
+   - Source file: bilix/download/base_downloader_part.py
+   - Upstream revision reviewed: bb5b234cdfe3fafc4db9d992b91091f2edf791e5
+   - License: Apache License 2.0
+   - Adapted concepts: split a known byte length into bounded HTTP Range parts, download parts concurrently, then merge them in byte order. This project adds strict 206/Content-Range/length validation, per-part retries, cancellation, and same-session pause checkpoints.
+   - License copy: resources/licenses/Apache-2.0.txt
+
 License copies are collected under resources/licenses/ in the portable build. Third-party names and marks belong to their respective owners. No endorsement is implied.

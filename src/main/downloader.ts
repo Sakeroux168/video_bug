@@ -1,12 +1,12 @@
 import type { DatabaseSync } from 'node:sqlite'
-import { createWriteStream, existsSync, mkdirSync, renameSync, rmSync, statSync } from 'fs'
+import { createReadStream, createWriteStream, existsSync, mkdirSync, renameSync, rmSync, statSync } from 'fs'
 import { pipeline } from 'stream/promises'
 import { Readable, Transform } from 'stream'
 import { join } from 'path'
 import { execFile } from 'child_process'
 import { findBin } from './ffbin'
 import type { AppSettings, VideoRow, VideoStatus } from '../shared/types'
-import { ERROR } from '../shared/types'
+import { clampDownloadSegments, ERROR } from '../shared/types'
 import { classifyDownloadError, AddressPolicy } from './errors'
 import { safeFilename, ensureUniqueStem } from './filename'
 import { downloadCover } from './cover'
@@ -26,9 +26,10 @@ export function buildRequestHeaders(platform: string): Record<string, string> {
     : { 'user-agent': buildUserAgent(platform) }
 }
 
-/** 下载链只认这三项。历史 settings.json 里残留的 normalizeVideo/keepOriginalVideo 即使随整份设置传进来也不会被读取——
+/** 下载链只认这四项。历史 settings.json 里残留的 normalizeVideo/keepOriginalVideo 即使随整份设置传进来也不会被读取——
  *  下载任务保存平台解析到的原视频，统一分辨率是「视频处理」页的手动批处理，不再是下载的必经步骤。 */
 type DlSettings = Pick<AppSettings, 'downloadDir' | 'downloadConcurrency' | 'addressTtlMin'>
+  & Partial<Pick<AppSettings, 'downloadSegments'>>
 
 /** R20：下载「多久没收到一个字节」就判断卡住（掐断后走原有的网络错误自动重试） */
 export const DOWNLOAD_IDLE_TIMEOUT_MS = 60000
@@ -36,6 +37,55 @@ export const DOWNLOAD_IDLE_TIMEOUT_MS = 60000
 export const FFPROBE_TIMEOUT_MS = 30000
 /** R20：封面整体最多下多久（封面是附属品，超时就不要封面，视频照常完成） */
 const COVER_TIMEOUT_MS = 60000
+/** 每段最多尝试 3 次（首次 + 2 次重试）；不做无限重试。 */
+export const SEGMENT_MAX_ATTEMPTS = 3
+
+interface ByteRange {
+  start: number
+  end: number
+  path: string
+}
+
+interface SegmentSession {
+  url: string
+  sourcePart: string
+  total: number
+  configuredSegments: number
+  ranges: ByteRange[]
+}
+
+function blockedMediaType(response: Response): boolean {
+  const type = (response.headers.get('content-type') || '').toLowerCase()
+  return type.includes('text/html') || type.includes('application/json')
+}
+
+function contentLength(response: Response): number | null {
+  const raw = response.headers.get('content-length')
+  if (!raw) return null
+  const parsed = Number(raw)
+  return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : null
+}
+
+function parseContentRange(value: string | null): { start: number; end: number; total: number } | null {
+  const match = /^bytes\s+(\d+)-(\d+)\/(\d+)$/i.exec(value?.trim() ?? '')
+  if (!match) return null
+  const [, start, end, total] = match.map(Number)
+  if (![start, end, total].every(Number.isSafeInteger) || start < 0 || end < start || total <= end) return null
+  return { start, end, total }
+}
+
+function splitRanges(total: number, count: number, sourcePart: string): ByteRange[] {
+  const actual = Math.max(1, Math.min(count, total))
+  const base = Math.floor(total / actual)
+  const extra = total % actual
+  let start = 0
+  return Array.from({ length: actual }, (_, index) => {
+    const length = base + (index < extra ? 1 : 0)
+    const range = { start, end: start + length - 1, path: `${sourcePart}.segment-${index}.part` }
+    start += length
+    return range
+  })
+}
 type DlEvent =
   | { type: 'video:status'; id: number; status: string; error?: string; localPath?: string }
 
@@ -55,6 +105,8 @@ export class Downloader {
   private validator: ((file: string) => Promise<boolean>) | null
   /** R20：无数据超时毫秒（测试可调小） */
   private idleTimeoutMs: number
+  /** 会话级分段断点；只承诺同一次程序运行内暂停后继续，不跨重启。 */
+  private segmentSessions = new Map<number, SegmentSession>()
 
   constructor(
     private db: DatabaseSync,
@@ -151,13 +203,14 @@ export class Downloader {
     for (const id of ids) {
       const row = this.db.prepare('SELECT status FROM videos WHERE id = ?').get(id) as { status: VideoStatus } | undefined
       if (!row) continue
-      // 只对"可取消"态生效：pending(排队/等待/重试回退)/downloading(在途)/collected(手动模式未下载)
-      if (row.status !== 'pending' && row.status !== 'downloading' && row.status !== 'collected') continue
+      // 只对"可取消"态生效：paused 也允许取消，以便清掉会话级分段断点。
+      if (row.status !== 'pending' && row.status !== 'downloading' && row.status !== 'collected' && row.status !== 'paused') continue
       // 5s 网络重试回退窗口内取消：清定时器，防止 5s 后被重新入队下载
       const timer = this.retryTimers.get(id)
       if (timer) { clearTimeout(timer); this.retryTimers.delete(id) }
       const aborter = this.aborters.get(id)
       if (aborter) { this.abortReasons.set(id, 'cancelled'); aborter.abort() } // 在途：先快照原因再掐断 fetch/写盘
+      else this.clearSegmentSession(id) // 已暂停且 runOne 已收尾：此时直接清理保留的完成段
       const qi = this.queue.indexOf(id)
       if (qi !== -1) {
         this.queue.splice(qi, 1) // 排队中：移出队列
@@ -181,10 +234,253 @@ export class Downloader {
 
   private emit(e: DlEvent): void { for (const l of this.listeners) l(e) }
 
+  /** 老测试/旧调用没有这个新键时维持原单连接；真实 settings.json 会由 settings.ts 补默认 3。 */
+  private segmentCount(): number {
+    return this.settings.downloadSegments === undefined ? 1 : clampDownloadSegments(this.settings.downloadSegments)
+  }
+
+  private clearSegmentSession(id: number, removeFiles = true): void {
+    const session = this.segmentSessions.get(id)
+    if (!session) return
+    if (removeFiles) {
+      for (const range of session.ranges) {
+        try { rmSync(range.path, { force: true }) } catch { /* ignore */ }
+      }
+      try { rmSync(session.sourcePart, { force: true }) } catch { /* ignore */ }
+    }
+    this.segmentSessions.delete(id)
+  }
+
+  /** 只把长度完全吻合的段当作断点；中断到一半的段会被清掉，继续时重下该段。 */
+  private completedSegmentPaths(id: number): string[] {
+    const session = this.segmentSessions.get(id)
+    if (!session) return []
+    const completed: string[] = []
+    for (const range of session.ranges) {
+      const expected = range.end - range.start + 1
+      try {
+        if (statSync(range.path).size === expected) completed.push(range.path)
+        else rmSync(range.path, { force: true })
+      } catch { /* missing/incomplete */ }
+    }
+    return completed
+  }
+
+  private async probeRange(url: string, headers: Record<string, string>, aborter: AbortController): Promise<number | null> {
+    const idle = new AbortController()
+    const signal = AbortSignal.any([aborter.signal, idle.signal])
+    let idleTimer: ReturnType<typeof setTimeout> | null = null
+    const armIdle = (): void => {
+      if (idleTimer !== null) clearTimeout(idleTimer)
+      idleTimer = setTimeout(() => idle.abort(), this.idleTimeoutMs)
+    }
+    armIdle()
+    try {
+      const response = await this.fetchImpl(url, { signal, headers: { ...headers, Range: 'bytes=0-0' } })
+      if (blockedMediaType(response)) {
+        await response.body?.cancel().catch(() => {})
+        throw new Error('bad_mp4')
+      }
+      const parsed = parseContentRange(response.headers.get('content-range'))
+      const declaredLength = contentLength(response)
+      if (response.status !== 206 || !response.body || !parsed
+        || parsed.start !== 0 || parsed.end !== 0 || parsed.total < 1
+        || (declaredLength !== null && declaredLength !== 1)) {
+        await response.body?.cancel().catch(() => {})
+        return null
+      }
+      const reader = response.body.getReader()
+      let bytes = 0
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        armIdle()
+        bytes += value.byteLength
+        if (bytes > 1) {
+          await reader.cancel().catch(() => {})
+          return null
+        }
+      }
+      return bytes === 1 ? parsed.total : null
+    } catch (err) {
+      if (idle.signal.aborted && !aborter.signal.aborted) {
+        throw new Error(`download_idle_timeout：${Math.round(this.idleTimeoutMs / 1000)} 秒没收到数据`)
+      }
+      throw err
+    } finally {
+      if (idleTimer !== null) clearTimeout(idleTimer)
+    }
+  }
+
+  private async downloadSingle(
+    url: string,
+    target: string,
+    headers: Record<string, string>,
+    aborter: AbortController
+  ): Promise<void> {
+    const idle = new AbortController()
+    const signal = AbortSignal.any([aborter.signal, idle.signal])
+    let idleTimer: ReturnType<typeof setTimeout> | null = null
+    const armIdle = (): void => {
+      if (idleTimer !== null) clearTimeout(idleTimer)
+      idleTimer = setTimeout(() => idle.abort(), this.idleTimeoutMs)
+    }
+    armIdle()
+    try {
+      const response = await this.fetchImpl(url, { signal, headers })
+      if (!response.ok || !response.body) throw new Error(`http_${response.status}`)
+      if (blockedMediaType(response)) {
+        await response.body.cancel().catch(() => {})
+        throw new Error('bad_mp4')
+      }
+      const expected = contentLength(response)
+      armIdle()
+      const watchdog = new Transform({
+        transform(chunk, _enc, cb) { armIdle(); cb(null, chunk) }
+      })
+      await pipeline(
+        Readable.fromWeb(response.body as import('stream/web').ReadableStream, { signal }),
+        watchdog,
+        createWriteStream(target)
+      )
+      if (expected !== null && statSync(target).size !== expected) throw new Error('download_length_mismatch')
+    } catch (err) {
+      if (idle.signal.aborted && !aborter.signal.aborted) {
+        throw new Error(`download_idle_timeout：${Math.round(this.idleTimeoutMs / 1000)} 秒没收到数据`)
+      }
+      throw err
+    } finally {
+      if (idleTimer !== null) clearTimeout(idleTimer)
+    }
+  }
+
+  private async downloadSegment(
+    url: string,
+    range: ByteRange,
+    total: number,
+    headers: Record<string, string>,
+    aborter: AbortController,
+    group: AbortController
+  ): Promise<void> {
+    const expected = range.end - range.start + 1
+    const requestRange = `bytes=${range.start}-${range.end}`
+    for (let attempt = 1; attempt <= SEGMENT_MAX_ATTEMPTS; attempt++) {
+      if (aborter.signal.aborted || group.signal.aborted) throw new Error('AbortError')
+      rmSync(range.path, { force: true })
+      const idle = new AbortController()
+      const signal = AbortSignal.any([aborter.signal, group.signal, idle.signal])
+      let idleTimer: ReturnType<typeof setTimeout> | null = null
+      const armIdle = (): void => {
+        if (idleTimer !== null) clearTimeout(idleTimer)
+        idleTimer = setTimeout(() => idle.abort(), this.idleTimeoutMs)
+      }
+      armIdle()
+      try {
+        const response = await this.fetchImpl(url, { signal, headers: { ...headers, Range: requestRange } })
+        if (blockedMediaType(response)) {
+          await response.body?.cancel().catch(() => {})
+          throw new Error('bad_mp4')
+        }
+        const parsed = parseContentRange(response.headers.get('content-range'))
+        const declaredLength = contentLength(response)
+        if (response.status !== 206 || !response.body || !parsed
+          || parsed.start !== range.start || parsed.end !== range.end || parsed.total !== total
+          || (declaredLength !== null && declaredLength !== expected)) {
+          await response.body?.cancel().catch(() => {})
+          throw new Error(`segment_range_mismatch:${requestRange}`)
+        }
+        armIdle()
+        const watchdog = new Transform({
+          transform(chunk, _enc, cb) { armIdle(); cb(null, chunk) }
+        })
+        await pipeline(
+          Readable.fromWeb(response.body as import('stream/web').ReadableStream, { signal }),
+          watchdog,
+          createWriteStream(range.path)
+        )
+        if (statSync(range.path).size !== expected) throw new Error(`segment_length_mismatch:${requestRange}`)
+        return
+      } catch (err) {
+        rmSync(range.path, { force: true })
+        if (aborter.signal.aborted || group.signal.aborted) throw err
+        const failure = idle.signal.aborted
+          ? new Error(`download_idle_timeout：${Math.round(this.idleTimeoutMs / 1000)} 秒没收到数据`)
+          : err
+        if (attempt === SEGMENT_MAX_ATTEMPTS) throw failure
+      } finally {
+        if (idleTimer !== null) clearTimeout(idleTimer)
+      }
+    }
+  }
+
+  /** 返回 false 表示服务器不支持严格 Range，调用方应降级单连接。 */
+  private async downloadSegmented(
+    id: number,
+    url: string,
+    sourcePart: string,
+    headers: Record<string, string>,
+    aborter: AbortController,
+    cleanupPaths: string[]
+  ): Promise<boolean> {
+    const configuredSegments = this.segmentCount()
+    let session = this.segmentSessions.get(id)
+    if (session && (session.url !== url || session.sourcePart !== sourcePart
+      || session.configuredSegments !== configuredSegments)) {
+      this.clearSegmentSession(id)
+      session = undefined
+    }
+    if (!session) {
+      const total = await this.probeRange(url, headers, aborter)
+      if (total === null) return false
+      session = {
+        url, sourcePart, total, configuredSegments,
+        ranges: splitRanges(total, configuredSegments, sourcePart)
+      }
+      this.segmentSessions.set(id, session)
+    }
+    for (const range of session.ranges) if (!cleanupPaths.includes(range.path)) cleanupPaths.push(range.path)
+
+    const completed = new Set(this.completedSegmentPaths(id))
+    const missing = session.ranges.filter(range => !completed.has(range.path))
+    const group = new AbortController()
+    const tasks = missing.map(range => this.downloadSegment(url, range, session!.total, headers, aborter, group))
+    try {
+      await Promise.all(tasks)
+    } catch (err) {
+      group.abort()
+      await Promise.allSettled(tasks)
+      if (!aborter.signal.aborted) this.clearSegmentSession(id)
+      throw err
+    }
+    if (aborter.signal.aborted) throw new Error('AbortError')
+
+    try {
+      const parts = session.ranges.map(range => range.path)
+      const chunks = async function* (): AsyncGenerator<Buffer> {
+        for (const path of parts) {
+          for await (const chunk of createReadStream(path)) {
+            if (aborter.signal.aborted) throw new Error('AbortError')
+            yield Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk)
+          }
+        }
+      }
+      await pipeline(Readable.from(chunks()), createWriteStream(sourcePart), { signal: aborter.signal })
+      if (statSync(sourcePart).size !== session.total) throw new Error('download_length_mismatch')
+      this.clearSegmentSession(id, false)
+      for (const range of session.ranges) rmSync(range.path, { force: true })
+      return true
+    } catch (err) {
+      rmSync(sourcePart, { force: true })
+      if (!aborter.signal.aborted) this.clearSegmentSession(id)
+      throw err
+    }
+  }
+
   /** AbortError 收尾：删除半成品；暂停发生在封面阶段时可保留已验证原片断点，继续后不重复请求视频。 */
-  private finishAbort(id: number, status: VideoStatus, paths: string[], keepPath?: string): void {
+  private finishAbort(id: number, status: VideoStatus, paths: string[], keepPath?: string, preservePaths: string[] = []): void {
+    const preserved = new Set(preservePaths)
     for (const path of paths) {
-      if (path === keepPath) continue
+      if (path === keepPath || preserved.has(path)) continue
       try { rmSync(path, { force: true }) } catch { /* ignore */ }
     }
     this.db.prepare("UPDATE videos SET status=?, error=NULL, local_path=?, original_path=NULL, normalization_error=NULL WHERE id=?")
@@ -269,39 +565,19 @@ export class Downloader {
         if (row.play_addr && row.play_addr.includes('playwm')) candidates.push(row.play_addr.replace('playwm', 'play'))
         let lastErr: unknown = new Error('bad_mp4')
         for (const url of candidates) {
+          if (!url) continue
           rmSync(sourcePart, { force: true })
-          // R20：无数据超时——服务器不回话或传到一半不动了，以前这条下载会永远挂着、占着一个并发名额。
-          // 单独一个 AbortController：用户取消/暂停走 aborter（catch 里按 aborter.signal.aborted 分流），
-          // 超时走 idle，抛普通错误 → 归为网络错误 → 原有的自动重试逻辑接手。
-          const idle = new AbortController()
-          const signal = AbortSignal.any([aborter.signal, idle.signal])
-          let idleTimer: ReturnType<typeof setTimeout> | null = null
-          const armIdle = (): void => {
-            if (idleTimer !== null) clearTimeout(idleTimer)
-            idleTimer = setTimeout(() => idle.abort(), this.idleTimeoutMs)
-          }
-          armIdle()
           try {
-            const res = await this.fetchImpl(url!, { signal, headers })
-            if (!res.ok || !res.body) { lastErr = new Error(`http_${res.status}`); continue }
-            armIdle()
-            // 每收到一块数据就重新计时：慢但一直在传的不算卡住
-            const watchdog = new Transform({
-              transform(chunk, _enc, cb) { armIdle(); cb(null, chunk) }
-            })
-            // Response.body 是 Web ReadableStream，不是 Node 流，需经 Readable.fromWeb 转成 Node Readable。
-            await pipeline(
-              Readable.fromWeb(res.body as import('stream/web').ReadableStream, { signal }),
-              watchdog,
-              createWriteStream(sourcePart)
-            )
+            const segmented = this.segmentCount() > 1
+              ? await this.downloadSegmented(id, url, sourcePart, headers, aborter, cleanupPaths)
+              : false
+            if (!segmented) await this.downloadSingle(url, sourcePart, headers, aborter)
           } catch (err) {
-            if (idle.signal.aborted && !aborter.signal.aborted) {
-              throw new Error(`download_idle_timeout：${Math.round(this.idleTimeoutMs / 1000)} 秒没收到数据`)
-            }
-            throw err
-          } finally {
-            if (idleTimer !== null) clearTimeout(idleTimer)
+            if (aborter.signal.aborted) throw err
+            lastErr = err
+            rmSync(sourcePart, { force: true })
+            this.clearSegmentSession(id)
+            continue
           }
           const size = statSync(sourcePart).size
           const validContent = this.validator
@@ -313,6 +589,7 @@ export class Downloader {
             break
           }
           rmSync(sourcePart, { force: true })
+          this.clearSegmentSession(id)
           lastErr = new Error('bad_mp4')
         }
         if (lastErr) throw lastErr
@@ -364,35 +641,40 @@ export class Downloader {
         this.abortReasons.delete(id)
         const cur = this.db.prepare('SELECT status FROM videos WHERE id = ?').get(id) as { status: VideoStatus } | undefined
         const checkpoint = sourceValidated && sourcePart && existsSync(sourcePart) ? sourcePart : undefined
+        const segmentCheckpoints = checkpoint ? [] : this.completedSegmentPaths(id)
         if (reason === 'paused') {
           if (this.pausedIds.has(id)) {
             // 单条暂停（全局继续未发生过）：标 paused，继续后手动恢复
-            this.finishAbort(id, 'paused', cleanupPaths, checkpoint)
+            this.finishAbort(id, 'paused', cleanupPaths, checkpoint, segmentCheckpoints)
           } else if (cur?.status !== 'cancelled') {
             // 全局暂停（回调时无论是否已 resume）：标回 pending 重新入队，drain 自然续下；
             // 已取消项不再覆盖为 pending 重排
-            this.finishAbort(id, 'pending', cleanupPaths, checkpoint)
+            this.finishAbort(id, 'pending', cleanupPaths, checkpoint, segmentCheckpoints)
             this.queue.push(id)
           } else {
             this.finishAbort(id, 'cancelled', cleanupPaths)
+            this.clearSegmentSession(id)
           }
         } else if (reason === 'cancelled') {
           this.finishAbort(id, 'cancelled', cleanupPaths)
+          this.clearSegmentSession(id)
         } else {
           // 无快照（兜底）：按当下状态判断——单条暂停 / 全局暂停 / 用户取消
           if (this.pausedIds.has(id)) {
-            this.finishAbort(id, 'paused', cleanupPaths, checkpoint)
+            this.finishAbort(id, 'paused', cleanupPaths, checkpoint, segmentCheckpoints)
           } else if (this.paused && cur?.status !== 'cancelled') {
-            this.finishAbort(id, 'pending', cleanupPaths, checkpoint)
+            this.finishAbort(id, 'pending', cleanupPaths, checkpoint, segmentCheckpoints)
             this.queue.push(id)
           } else {
             this.finishAbort(id, 'cancelled', cleanupPaths)
+            this.clearSegmentSession(id)
           }
         }
         return
       }
       const retry = row.retry_count + 1
       const code = classifyDownloadError(err)
+      this.clearSegmentSession(id)
       for (const path of cleanupPaths) try { rmSync(path, { force: true }) } catch { /* ignore */ }
       // 网络类错误自动重试2次（利用 retry_count）；磁盘(ENOENT/EPERM/ENOSPC)/风控等非网络错误直接失败
       if (retry <= 2 && code === ERROR.NETWORK) {

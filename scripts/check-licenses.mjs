@@ -17,7 +17,10 @@ const requireFile = (file, phrases = []) => {
 
 requireFile('LICENSE', ['Commons Clause', 'right to Sell the Software', 'MIT License', 'Licensor: Sakeroux168'])
 requireFile('LICENSE.zh-CN.md', ['源码可用', '禁止出售软件本身', '允许利用软件输出赚钱'])
-requireFile('NOTICE', ['FFmpeg 8.0.1', '894da5ca7d', 'Electron 35.7.5', 'sherpa-onnx-node'])
+requireFile('NOTICE', [
+  'FFmpeg 8.0.1', '894da5ca7d', 'Electron 35.7.5', 'sherpa-onnx-node',
+  'HFrost0/bilix', 'bilix/download/base_downloader_part.py', 'bb5b234cdfe3fafc4db9d992b91091f2edf791e5'
+])
 requireFile('TRADEMARKS.md', ['不授予商标权'])
 requireFile('third_party/licenses/FFmpeg-GPLv3.txt', ['GNU GENERAL PUBLIC LICENSE', 'Version 3, 29 June 2007'])
 requireFile('third_party/licenses/FFmpeg-BUILD-INFO.txt', ['License: GPL v3', '894da5ca7d'])

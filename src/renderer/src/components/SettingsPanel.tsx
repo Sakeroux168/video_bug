@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { api } from '../api'
 import type { AppSettings, AsrStatus, AsrProgress } from '../../../shared/types'
-import { clampStuckTimeoutMin } from '../../../shared/types'
+import { clampDownloadSegments, clampStuckTimeoutMin } from '../../../shared/types'
 import { Card, btnPrimary, inputCls } from './ui'
 
 /** 字节数格式化成可读体积 */
@@ -51,10 +51,14 @@ export default function SettingsPanel() {
     }
     // R20 复查：卡住判定只收 2-60 分钟（空、0、1 以前会被悄悄收下）；夹紧后把实际值显示回输入框
     const stuck = clampStuckTimeoutMin(s.stuckTimeoutMin)
-    const toSave = stuck === s.stuckTimeoutMin ? s : { ...s, stuckTimeoutMin: stuck }
+    const segments = clampDownloadSegments(s.downloadSegments)
+    const toSave = stuck === s.stuckTimeoutMin && segments === s.downloadSegments
+      ? s
+      : { ...s, stuckTimeoutMin: stuck, downloadSegments: segments }
     if (toSave !== s) setS(toSave)
     await api.saveSettings(toSave)
-    ok(stuck === s.stuckTimeoutMin ? '已保存' : `已保存（卡住判定只能 2-60 分钟，已按 ${stuck} 分钟保存）`)
+    if (segments !== s.downloadSegments) ok(`已保存（分段数只能 1-4，已按 ${segments} 段保存）`)
+    else ok(stuck === s.stuckTimeoutMin ? '已保存' : `已保存（卡住判定只能 2-60 分钟，已按 ${stuck} 分钟保存）`)
     setTimeout(() => setMsg(null), 1500)
   }
 
@@ -116,6 +120,13 @@ export default function SettingsPanel() {
             <label className="flex flex-col gap-1">
               下载并发
               <input type="number" min={1} max={5} className={inputCls} value={s.downloadConcurrency} onChange={e => set('downloadConcurrency', Number(e.target.value))} />
+            </label>
+            <label className="flex flex-col gap-1">
+              分段数
+              <input aria-label="分段数" type="number" min={1} max={4} className={inputCls}
+                value={Number.isFinite(s.downloadSegments) ? s.downloadSegments : ''}
+                onChange={e => set('downloadSegments', e.target.value === '' ? Number.NaN : Number(e.target.value))} />
+              <span className="text-slate-400">同一文件并行下载；1 表示关闭，最多 4 段</span>
             </label>
             <label className="flex flex-col gap-1">
               地址过期(分钟)
