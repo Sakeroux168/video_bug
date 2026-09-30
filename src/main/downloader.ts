@@ -1,7 +1,7 @@
 import type { DatabaseSync } from 'node:sqlite'
 import { createWriteStream, existsSync, mkdirSync, renameSync, rmSync, statSync } from 'fs'
 import { pipeline } from 'stream/promises'
-import { Readable } from 'stream'
+import { Readable, Transform } from 'stream'
 import { join } from 'path'
 import { execFile } from 'child_process'
 import { findBin } from './ffbin'
@@ -29,6 +29,13 @@ export function buildRequestHeaders(platform: string): Record<string, string> {
 /** 下载链只认这三项。历史 settings.json 里残留的 normalizeVideo/keepOriginalVideo 即使随整份设置传进来也不会被读取——
  *  下载任务保存平台解析到的原视频，统一分辨率是「视频处理」页的手动批处理，不再是下载的必经步骤。 */
 type DlSettings = Pick<AppSettings, 'downloadDir' | 'downloadConcurrency' | 'addressTtlMin'>
+
+/** R20：下载「多久没收到一个字节」就判断卡住（掐断后走原有的网络错误自动重试） */
+export const DOWNLOAD_IDLE_TIMEOUT_MS = 60000
+/** R20：ffprobe 校验视频轨最多跑多久（卡住当作校验不过，不让一条下载永远占着并发名额） */
+export const FFPROBE_TIMEOUT_MS = 30000
+/** R20：封面整体最多下多久（封面是附属品，超时就不要封面，视频照常完成） */
+const COVER_TIMEOUT_MS = 60000
 type DlEvent =
   | { type: 'video:status'; id: number; status: string; error?: string; localPath?: string }
 
@@ -46,16 +53,19 @@ export class Downloader {
   private listeners: Array<(e: DlEvent) => void> = []
   private fetching: Record<number, boolean> = {}
   private validator: ((file: string) => Promise<boolean>) | null
+  /** R20：无数据超时毫秒（测试可调小） */
+  private idleTimeoutMs: number
 
   constructor(
     private db: DatabaseSync,
     private settings: DlSettings,
     private fetchImpl: typeof fetch = fetch,
-    opts?: { validator?: (file: string) => Promise<boolean> }
+    opts?: { validator?: (file: string) => Promise<boolean>; idleTimeoutMs?: number }
   ) {
     // C1: 确保下载目录存在（recursive 幂等）；目录不可写时由下载错误分类兜底为 ERROR.DISK
     try { mkdirSync(this.settings.downloadDir, { recursive: true }) } catch { /* ignore */ }
     this.validator = opts?.validator ?? null
+    this.idleTimeoutMs = opts?.idleTimeoutMs ?? DOWNLOAD_IDLE_TIMEOUT_MS
   }
 
   /** 设置保存后热更新下载参数（目录/并发/地址TTL），无需重建 Downloader */
@@ -260,16 +270,39 @@ export class Downloader {
         let lastErr: unknown = new Error('bad_mp4')
         for (const url of candidates) {
           rmSync(sourcePart, { force: true })
-          const res = await this.fetchImpl(url!, {
-            signal: aborter.signal,
-            headers
-          })
-          if (!res.ok || !res.body) { lastErr = new Error(`http_${res.status}`); continue }
-          // Response.body 是 Web ReadableStream，不是 Node 流，需经 Readable.fromWeb 转成 Node Readable。
-          await pipeline(
-            Readable.fromWeb(res.body as import('stream/web').ReadableStream, { signal: aborter.signal }),
-            createWriteStream(sourcePart)
-          )
+          // R20：无数据超时——服务器不回话或传到一半不动了，以前这条下载会永远挂着、占着一个并发名额。
+          // 单独一个 AbortController：用户取消/暂停走 aborter（catch 里按 aborter.signal.aborted 分流），
+          // 超时走 idle，抛普通错误 → 归为网络错误 → 原有的自动重试逻辑接手。
+          const idle = new AbortController()
+          const signal = AbortSignal.any([aborter.signal, idle.signal])
+          let idleTimer: ReturnType<typeof setTimeout> | null = null
+          const armIdle = (): void => {
+            if (idleTimer !== null) clearTimeout(idleTimer)
+            idleTimer = setTimeout(() => idle.abort(), this.idleTimeoutMs)
+          }
+          armIdle()
+          try {
+            const res = await this.fetchImpl(url!, { signal, headers })
+            if (!res.ok || !res.body) { lastErr = new Error(`http_${res.status}`); continue }
+            armIdle()
+            // 每收到一块数据就重新计时：慢但一直在传的不算卡住
+            const watchdog = new Transform({
+              transform(chunk, _enc, cb) { armIdle(); cb(null, chunk) }
+            })
+            // Response.body 是 Web ReadableStream，不是 Node 流，需经 Readable.fromWeb 转成 Node Readable。
+            await pipeline(
+              Readable.fromWeb(res.body as import('stream/web').ReadableStream, { signal }),
+              watchdog,
+              createWriteStream(sourcePart)
+            )
+          } catch (err) {
+            if (idle.signal.aborted && !aborter.signal.aborted) {
+              throw new Error(`download_idle_timeout：${Math.round(this.idleTimeoutMs / 1000)} 秒没收到数据`)
+            }
+            throw err
+          } finally {
+            if (idleTimer !== null) clearTimeout(idleTimer)
+          }
           const size = statSync(sourcePart).size
           const validContent = this.validator
             ? await this.validator(sourcePart)
@@ -299,8 +332,12 @@ export class Downloader {
             dir: downloadDir,
             stem,
             fetchImpl: this.fetchImpl,
-            signal: aborter.signal,
+            // R20：封面最多下 60 秒；超时只是不要封面（下面 catch），取消/暂停照旧抛给外层处理
+            signal: AbortSignal.any([aborter.signal, AbortSignal.timeout(COVER_TIMEOUT_MS)]),
             headers
+          }).catch((err: unknown) => {
+            if (aborter.signal.aborted) throw err
+            return null
           })
         : null
       if (coverPath) cleanupPaths.push(coverPath)
@@ -400,8 +437,16 @@ function hasVideoStream(file: string): Promise<boolean> {
   const fp = findFfprobe()
   if (!fp) return Promise.resolve(true)
   return new Promise(resolve => {
-    execFile(fp, ['-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=codec_type', '-of', 'csv=p=0', file], (err, stdout) => {
-      resolve(!err && /video/i.test(stdout))
-    })
+    // R20：最多跑 30 秒（execFile 超时会杀掉进程并回调 err），不让这条下载永远挂着
+    execFile(fp, ['-v', 'error', '-select_streams', 'v:0', '-show_entries', 'stream=codec_type', '-of', 'csv=p=0', file],
+      { timeout: FFPROBE_TIMEOUT_MS, windowsHide: true }, (err, stdout) => {
+        // 超时被杀（killed）不说明文件坏了——和「找不到 ffprobe」一样放行（前面已校验过 MP4 文件头）
+        if (err && (err as { killed?: boolean }).killed) {
+          console.warn(`[downloader] ffprobe ${FFPROBE_TIMEOUT_MS / 1000} 秒没跑完，跳过视频轨校验: ${file}`)
+          resolve(true)
+          return
+        }
+        resolve(!err && /video/i.test(String(stdout)))
+      })
   })
 }

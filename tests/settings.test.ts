@@ -34,6 +34,7 @@ function fullSettings(over: Partial<AppSettings> = {}): AppSettings {
     asrMaxSec: 120,
     stallThresholdSec: 10,
     rescueCooldownSec: 10,
+    stuckTimeoutMin: 5,
     organizeByCategory: false,
     organizeByAuthor: true,
     organizeByOrientation: false,
@@ -62,6 +63,7 @@ describe('settings', () => {
     // 全新安装若仍是 5，设置页显示值与说明页自相矛盾。
     expect(s.stallThresholdSec).toBe(25)
     expect(s.rescueCooldownSec).toBe(10)
+    expect(s.stuckTimeoutMin).toBe(5) // R20：卡住判定默认 5 分钟
     expect(s.scrollIntervalMs).toBe(3500) // R12：默认滚动间隔放慢降风控
     // 归档层级：全新安装默认四层全关 —— 视频平铺在下载目录，不再套四层文件夹
     expect(s.organizeByCategory).toBe(false)

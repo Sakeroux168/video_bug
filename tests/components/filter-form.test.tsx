@@ -157,3 +157,75 @@ it('小红书允许关键词和作者任务，并说明网页筛选与详情精�
   fireEvent.click(screen.getByText('开始抓取'))
   await waitFor(() => expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({ platform: 'xiaohongshu', type: 'author' })))
 })
+
+// R20：作者模式的「时间」多一个「自定义」，可选从哪天到哪天
+describe('作者模式：时间可自定义日期段（R20）', () => {
+  function toAuthor(): void {
+    fireEvent.click(screen.getByLabelText('作者'))
+    fireEvent.change(screen.getByLabelText(/作者主页链接或 ID/), { target: { value: 'https://www.douyin.com/user/SEC_X' } })
+  }
+
+  it('关键词/话题模式没有「自定义」；作者模式才有', () => {
+    setup()
+    const opts = (): string[] => Array.from((screen.getByLabelText('时间') as HTMLSelectElement).options).map(o => o.value)
+    expect(opts()).not.toContain('custom')
+    fireEvent.click(screen.getByLabelText('作者'))
+    expect(opts()).toContain('custom')
+  })
+
+  it('选「自定义」出现「从」「到」两个日期框，按所选日期提交 custom 日期段', async () => {
+    const onSubmit = setup()
+    toAuthor()
+    fireEvent.change(screen.getByLabelText('时间'), { target: { value: 'custom' } })
+    fireEvent.change(screen.getByLabelText('从'), { target: { value: '2026-09-01' } })
+    fireEvent.change(screen.getByLabelText('到'), { target: { value: '2026-09-20' } })
+    expect(screen.getByText(/只要 2026-09-01 到 2026-09-20 发的/)).toBeInTheDocument()
+    fireEvent.click(screen.getByText('开始抓取'))
+
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'author',
+      allowDuplicateAuthor: true,
+      filters: expect.objectContaining({ timeRange: 'custom', startDate: '2026-09-01', endDate: '2026-09-20' })
+    })))
+  })
+
+  it('开始晚于结束 / 一个都没选 → 不能提交，并提示原因', () => {
+    setup()
+    toAuthor()
+    fireEvent.change(screen.getByLabelText('时间'), { target: { value: 'custom' } })
+    expect(screen.getByText('请至少选一个日期')).toBeInTheDocument()
+    expect(screen.getByText('开始抓取')).toBeDisabled()
+    fireEvent.change(screen.getByLabelText('从'), { target: { value: '2026-09-20' } })
+    fireEvent.change(screen.getByLabelText('到'), { target: { value: '2026-09-01' } })
+    expect(screen.getByText('开始日期不能晚于结束日期')).toBeInTheDocument()
+    expect(screen.getByText('开始抓取')).toBeDisabled()
+  })
+
+  it('只填「到」可以提交（那天及以前）', async () => {
+    const onSubmit = setup()
+    toAuthor()
+    fireEvent.change(screen.getByLabelText('时间'), { target: { value: 'custom' } })
+    fireEvent.change(screen.getByLabelText('到'), { target: { value: '2026-09-20' } })
+    fireEvent.click(screen.getByText('开始抓取'))
+    await waitFor(() => expect(onSubmit).toHaveBeenCalled())
+    const f = (onSubmit.mock.calls[0][0] as { filters: Record<string, unknown> }).filters
+    expect(f.timeRange).toBe('custom')
+    expect(f.startDate).toBeUndefined()
+    expect(f.endDate).toBe('2026-09-20')
+  })
+
+  it('选了自定义再切回关键词 → 时间回到「全部」，日期框消失', async () => {
+    const onSubmit = setup()
+    fireEvent.click(screen.getByLabelText('作者'))
+    fireEvent.change(screen.getByLabelText('时间'), { target: { value: 'custom' } })
+    expect(screen.getByLabelText('从')).toBeInTheDocument()
+    fireEvent.click(screen.getByLabelText('关键词'))
+    expect((screen.getByLabelText('时间') as HTMLSelectElement).value).toBe('all')
+    expect(screen.queryByLabelText('从')).toBeNull()
+    fireEvent.change(screen.getByPlaceholderText('输入内容'), { target: { value: '美食' } })
+    fireEvent.click(screen.getByText('开始抓取'))
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({
+      filters: expect.objectContaining({ timeRange: 'all', startDate: undefined, endDate: undefined })
+    })))
+  })
+})

@@ -19,6 +19,7 @@ import type { Transcript } from './asr/asr'
 import { status as asrStatus, pathFor } from './asr/models'
 import { findFfmpeg } from './asr/media'
 import { startBridge, DEFAULT_BRIDGE_PORT } from './bridge'
+import { TaskQueue } from './taskQueue'
 import type { Server } from 'http'
 import type { VideoRow } from '../shared/types'
 
@@ -50,9 +51,16 @@ function setBrowserVisible(v: boolean): void {
   updateBrowserDisplay(v) // 用户操作 → 聚焦显示（传 true）
 }
 
-// I4 简单 FIFO 任务队列：串行执行，任务终态后自动出队跑下一个；去重防同一任务重复入队
-const pendingTasks: number[] = []
-const queuedTaskIds = new Set<number>()
+// I4 简单 FIFO 任务队列：串行执行，任务终态后自动出队跑下一个；去重防同一任务重复入队。
+// R20：挪到 taskQueue.ts——任务**不管怎么结束**（完成/暂停/失败/卡住）都放行下一个，验证码暂停除外。
+const taskQueue = new TaskQueue({
+  isRunning: () => Boolean(scheduler?.isRunning),
+  run: id => scheduler ? scheduler.run(id) : Promise.resolve(),
+  log: msg => {
+    console.error(`[任务] ${msg}`)
+    pushFilterLog(msg)
+  }
+})
 
 /** I3 根据当前设置重建 Analyzer（settings:save 后调用，让 AI 配置即时生效） */
 function reloadAnalyzer(): void {
@@ -60,38 +68,10 @@ function reloadAnalyzer(): void {
   analyzer = s.aiApiKey ? new Analyzer(s) : null
 }
 
-function dequeueAndRun(): void {
-  // setImmediate 延迟到当前调用栈结束：任务 emit 终态事件时 running 尚未复位，直接 run 会被静默丢弃
-  setImmediate(() => {
-    if (scheduler?.isRunning) return
-    const next = pendingTasks.shift()
-    if (next === undefined) return
-    queuedTaskIds.delete(next)
-    // run() 进入自身 try 之前若抛错（取任务行、取适配器等），异常会被 void 吞掉：
-    // 任务已被移出队列、状态还停在 pending、日志一个字没有 —— 真机上排查了很久。
-    // 这里兜住并打日志，同时把队列继续往下踢，别让一次异常卡死整条队列。
-    void scheduler?.run(next).catch((err: unknown) => {
-      const detail = err instanceof Error ? err.message : String(err)
-      console.error(`[任务] 启动任务 ${next} 时异常：${detail}`)
-      pushFilterLog(`启动任务 ${next} 时异常：${detail}`)
-      dequeueAndRun()
-    })
-  })
-}
-
-function enqueueTask(id: number): void {
-  if (queuedTaskIds.has(id)) return
-  queuedTaskIds.add(id)
-  pendingTasks.push(id)
-  void dequeueAndRun()
-}
+function enqueueTask(id: number): void { taskQueue.enqueue(id) }
 
 /** 把任务从队列里摘掉（删任务用）。已经开跑的不在队列里，由调度器那边叫停。 */
-function dequeueTask(id: number): void {
-  queuedTaskIds.delete(id)
-  const i = pendingTasks.indexOf(id)
-  if (i >= 0) pendingTasks.splice(i, 1)
-}
+function dequeueTask(id: number): void { taskQueue.remove(id) }
 
 function createWindow(): void {
   win = new BrowserWindow({
@@ -115,6 +95,8 @@ function push(evt: unknown): void {
     return
   }
   win?.webContents.send('evt:task:progress', evt)
+  // R20：队列据此判断当前任务是否结束（完成/暂停/失败/卡住都放行下一个；验证码暂停按住）
+  taskQueue.onEvent(evt)
   if (t) {
     if (t.type === 'task:progress' && t.status === 'running') {
       taskRunning = true
@@ -125,12 +107,11 @@ function push(evt: unknown): void {
       taskRunning = false
       forceBrowserFull = false
       updateBrowserDisplay()
-      void dequeueAndRun() // 只有真正完成才放行下一个排队任务
     }
     if (t.type === 'task:paused') {
       taskRunning = false
       if (t.reason === 'stalled_verify') {
-        // 触发验证：显示独立抖音窗口让用户过验证（showInactive 不抢焦点），并提示；不自动放行下一个任务
+        // 触发验证：显示独立抖音窗口让用户过验证（showInactive 不抢焦点），并提示；不自动放行下一个任务（taskQueue 按住）
         forceBrowserFull = true
         updateBrowserDisplay()
         win?.webContents.send('evt:task:notice', {
@@ -230,6 +211,8 @@ app.whenReady().then(() => {
     },
     // R11：停滞阈值由 scheduler 每次 run 现读（设置保存即生效，无需重启）
     getStallThresholdSec: () => getSettings().stallThresholdSec ?? 25,
+    // R20：卡住判定分钟数（看门狗），每次 run 现读
+    getStuckTimeoutMin: () => getSettings().stuckTimeoutMin ?? 5,
     organizer,
     organizeDebounceMs: settings.organizeDebounceMs ?? 5000,
     // R12：停滞自救全链路日志（停滞检测/到底命中/重搜冷却/重搜计数）：汇入 rawLog 面板（与 platform:raw 拦截日志同列展示）
@@ -244,7 +227,7 @@ app.whenReady().then(() => {
     getOrganizer: () => organizer,
     enqueueTask,
     dequeueTask,
-    kickQueue: dequeueAndRun,
+    kickQueue: () => taskQueue.kick(),
     setBrowserVisible
   })
 

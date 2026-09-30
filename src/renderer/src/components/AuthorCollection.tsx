@@ -6,6 +6,7 @@ import { useMarqueeSelect } from './useMarqueeSelect'
 import { useTableSelection } from './useTableSelection'
 import { parsePastedAuthors } from './parsePastedAuthors'
 import { parseAuthorsCsv, buildAuthorsCsv, decodeCsvBytes } from './authorsCsv'
+import { checkDateRange, describeDateRange } from './dateRange'
 
 type ImportResult = { created: number; results: Array<{ line: number; raw: string; ok: boolean; reason?: string }> }
 
@@ -33,6 +34,10 @@ export default function AuthorCollection({ notify }: { notify: (text: string) =>
   const [crawlTarget, setCrawlTarget] = useState<AuthorRow | null>(null)
   const [crawlCount, setCrawlCount] = useState('200')
   const [crawlAuto, setCrawlAuto] = useState(true)
+  // R20：可选的日期段——只要这段时间发的作品。默认不勾 = 原来的行为（不限时间）
+  const [crawlRangeOn, setCrawlRangeOn] = useState(false)
+  const [crawlFrom, setCrawlFrom] = useState('')
+  const [crawlTo, setCrawlTo] = useState('')
   const [platforms, setPlatforms] = useState<Array<{ name: string; displayName: string; authorInputPlaceholder: string; supportedTaskTypes?: readonly TaskType[] }>>([])
   const [importText, setImportText] = useState('')
   const [importResult, setImportResult] = useState<ImportResult | null>(null)
@@ -130,23 +135,33 @@ export default function AuthorCollection({ notify }: { notify: (text: string) =>
     setCrawlTarget(a)
     setCrawlCount('200')
     setCrawlAuto(true)
+    setCrawlRangeOn(false)
+    setCrawlFrom('')
+    setCrawlTo('')
   }
 
   // 与筛选表单同一套校验：正整数 1-1000
   const crawlCountValid = /^\d+$/.test(crawlCount.trim()) &&
     Number(crawlCount) >= 1 && Number(crawlCount) <= 1000
+  // 没勾「只要这段时间发的」时日期怎么填都不管
+  const crawlRangeError = crawlRangeOn ? checkDateRange(crawlFrom, crawlTo) : null
 
   async function startCrawl(): Promise<void> {
     const a = crawlTarget
-    if (!a || !crawlCountValid) return
+    if (!a || !crawlCountValid || crawlRangeError) return
     setCrawlTarget(null) // 先收面板，避免连点重复提交
     // Fix5: 点击立即反馈，让用户知道主页爬取已开始（此前静默启动，用户不知道）
     notify(`正在爬取 ${a.nickname} 的主页…`)
+    const targetCount = Number(crawlCount)
     const r = await api.createTask({
       platform: a.platform, type: 'author', query: a.sec_uid,
-      filters: { timeRange: 'all', duration: 'all', targetCount: Number(crawlCount) },
+      filters: crawlRangeOn
+        ? { timeRange: 'custom', startDate: crawlFrom || undefined, endDate: crawlTo || undefined, duration: 'all', targetCount }
+        : { timeRange: 'all', duration: 'all', targetCount },
       aiFilterEnabled: false, aiOrganizeEnabled: false,
-      autoDownload: crawlAuto
+      autoDownload: crawlAuto,
+      // 按日期段抓通常就是「这个作者以前爬过，现在补某段时间的」——不能被「已爬过主页」去重拦掉
+      ...(crawlRangeOn ? { allowDuplicateAuthor: true } : {})
     })
     if (r.skipped) notify(r.reason ?? '该作者主页已爬取过')
     else notify(`已开始爬取 ${a.nickname} 的主页，可在任务列表查看进度`)
@@ -336,9 +351,43 @@ export default function AuthorCollection({ notify }: { notify: (text: string) =>
             <input type="radio" name="crawl-mode" checked={!crawlAuto} onChange={() => setCrawlAuto(false)} />
             <span>手动挑选</span>
           </label>
-          <button className={btn('primary', 'sm')} disabled={!crawlCountValid} onClick={() => void startCrawl()}>开始爬取</button>
+          <label className="flex items-center gap-1">
+            <input type="checkbox" checked={crawlRangeOn} onChange={e => setCrawlRangeOn(e.target.checked)} />
+            <span>只要这段时间发的</span>
+          </label>
+          {crawlRangeOn && (
+            <>
+              <label htmlFor="crawl-from" className="flex items-center gap-1">
+                从
+                <input
+                  id="crawl-from"
+                  type="date"
+                  className="rounded-md border border-slate-300 px-2 py-1 text-xs outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500"
+                  value={crawlFrom}
+                  max={crawlTo || undefined}
+                  onChange={e => setCrawlFrom(e.target.value)}
+                />
+              </label>
+              <label htmlFor="crawl-to" className="flex items-center gap-1">
+                到
+                <input
+                  id="crawl-to"
+                  type="date"
+                  className="rounded-md border border-slate-300 px-2 py-1 text-xs outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500"
+                  value={crawlTo}
+                  min={crawlFrom || undefined}
+                  onChange={e => setCrawlTo(e.target.value)}
+                />
+              </label>
+            </>
+          )}
+          <button className={btn('primary', 'sm')} disabled={!crawlCountValid || !!crawlRangeError} onClick={() => void startCrawl()}>开始爬取</button>
           <button className={btn('ghost', 'sm')} onClick={() => setCrawlTarget(null)}>取消</button>
           {!crawlCountValid && <span className="text-danger-600">数量需在 1-1000</span>}
+          {crawlRangeError && <span className="text-danger-600">{crawlRangeError}</span>}
+          {crawlRangeOn && !crawlRangeError && (
+            <span className="text-slate-400">{describeDateRange(crawlFrom, crawlTo)}（按北京时间，含当天）</span>
+          )}
         </div>
       )}
       {importOpen && (

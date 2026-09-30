@@ -125,6 +125,27 @@ describe('task:create 作者去重', () => {
     expect(enqueued).toEqual([r.id])
   })
 
+  // R20 复查：只按日期段抓过的不算「主页已爬取过」——那只抓了一段时间
+  it('只按日期段抓过（done 且 timeRange=custom）→ 之后正常整页抓取不被拦', async () => {
+    const { db, enqueued, create } = setup()
+    const id = createTask(db, input({ type: 'author', query: AUTHOR_URL,
+      filters: { timeRange: 'custom', startDate: '2026-09-01', endDate: '2026-09-20', duration: 'all', targetCount: 50 } }))
+    db.prepare("UPDATE tasks SET status='done' WHERE id=?").run(id)
+
+    const r = await create(input({ type: 'author', query: AUTHOR_URL }))
+    expect(r.skipped).toBe(false)
+    expect(enqueued).toEqual([r.id])
+  })
+
+  it('整页抓过一次（非日期段）仍然照旧拦（日期段行只是不参与判断）', async () => {
+    const { db, create } = setup()
+    seedDoneAuthor(db)
+    const id = createTask(db, input({ type: 'author', query: AUTHOR_URL,
+      filters: { timeRange: 'custom', startDate: '2026-09-01', duration: 'all', targetCount: 50 } }))
+    db.prepare("UPDATE tasks SET status='done' WHERE id=?").run(id)
+    expect((await create(input({ type: 'author', query: AUTHOR_URL }))).skipped).toBe(true)
+  })
+
   it('非 author 类型（keyword）→ 不查作者去重，直接创建', async () => {
     const { enqueued, create } = setup()
     const r = await create(input({ type: 'keyword', query: '美食' }))

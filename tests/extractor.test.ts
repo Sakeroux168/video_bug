@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { filterVideos, matchTimeRange, matchDuration, dedupeVideos } from '../src/main/extractor'
+import { filterVideos, matchTimeRange, matchDuration, dedupeVideos, chinaDayStartSec, chinaDayEndSec, chinaToday } from '../src/main/extractor'
 import type { VideoItem } from '../src/main/adapters/types'
 import type { Filters } from '../src/shared/types'
 import { douyinAdapter } from '../src/main/adapters/douyin'
@@ -25,6 +25,46 @@ describe('matchTimeRange', () => {
     const outRange = new Date('2025-06-01T00:00:00Z').getTime() / 1000
     expect(matchTimeRange(inRange, 'custom', start, end, NOW)).toBe(true)
     expect(matchTimeRange(outRange, 'custom', start, end, NOW)).toBe(false)
+  })
+})
+
+describe('matchTimeRange 自定义日期按北京时间整天算（R20）', () => {
+  const cst = (iso: string): number => Date.parse(iso + '+08:00') / 1000
+  it('起始日北京时间 00:00:00 算在内，前一秒不算（以前按 UTC，差 8 小时）', () => {
+    expect(matchTimeRange(cst('2024-03-10T00:00:00'), 'custom', '2024-03-10', '2024-03-20')).toBe(true)
+    expect(matchTimeRange(cst('2024-03-09T23:59:59'), 'custom', '2024-03-10', '2024-03-20')).toBe(false)
+    // 北京时间 3 月 10 日早上 7 点 = UTC 3 月 9 日 23 点：旧实现会错误地排除
+    expect(matchTimeRange(cst('2024-03-10T07:00:00'), 'custom', '2024-03-10', '2024-03-20')).toBe(true)
+  })
+  it('结束日北京时间 23:59:59 算在内，次日 00:00:00 不算', () => {
+    expect(matchTimeRange(cst('2024-03-20T23:59:59'), 'custom', '2024-03-10', '2024-03-20')).toBe(true)
+    expect(matchTimeRange(cst('2024-03-21T00:00:00'), 'custom', '2024-03-10', '2024-03-20')).toBe(false)
+    // 北京时间 3 月 21 日早上 5 点 = UTC 3 月 20 日 21 点：旧实现会错误地收进来
+    expect(matchTimeRange(cst('2024-03-21T05:00:00'), 'custom', '2024-03-10', '2024-03-20')).toBe(false)
+  })
+  it('只填「从」= 从那天到现在；只填「到」= 那天及以前；都不填 = 不限', () => {
+    expect(matchTimeRange(cst('2030-01-01T12:00:00'), 'custom', '2024-03-10', undefined)).toBe(true)
+    expect(matchTimeRange(cst('2024-03-09T12:00:00'), 'custom', '2024-03-10', undefined)).toBe(false)
+    expect(matchTimeRange(cst('2000-01-01T12:00:00'), 'custom', undefined, '2024-03-20')).toBe(true)
+    expect(matchTimeRange(cst('2024-03-21T12:00:00'), 'custom', undefined, '2024-03-20')).toBe(false)
+    expect(matchTimeRange(0, 'custom', undefined, undefined)).toBe(true)
+  })
+  it('边界换算用固定 +08:00，不看这台电脑的时区', () => {
+    expect(chinaDayStartSec('2024-03-10')).toBe(Date.UTC(2024, 2, 9, 16, 0, 0) / 1000)
+    expect(chinaDayEndSec('2024-03-10')).toBe(Date.UTC(2024, 2, 10, 15, 59, 59) / 1000)
+    expect(chinaDayStartSec('3.10')).toBeNull()
+  })
+  it('日期不存在 → null（R20 复查：以前 2026-02-31 会悄悄滚到 3 月 3 日、13 月会变成 NaN）', () => {
+    expect(chinaDayStartSec('2024-13-01')).toBeNull()
+    expect(chinaDayStartSec('2026-02-31')).toBeNull()
+    expect(chinaDayStartSec('2026-02-29')).toBeNull()
+    expect(chinaDayStartSec('2026-04-31')).toBeNull()
+    expect(chinaDayStartSec('2024-02-29')).not.toBeNull()
+    expect(chinaDayStartSec('2026-12-31')).not.toBeNull()
+  })
+  it('chinaToday：UTC 晚上 16 点以后已经是北京时间第二天', () => {
+    expect(chinaToday(Date.UTC(2026, 8, 28, 15, 59, 0))).toBe('2026-09-28')
+    expect(chinaToday(Date.UTC(2026, 8, 28, 16, 0, 0))).toBe('2026-09-29')
   })
 })
 

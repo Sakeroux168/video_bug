@@ -71,3 +71,55 @@ describe('TaskList 冒烟', () => {
   })
 
 })
+
+// R20：看门狗判卡住的任务要说清楚，不能只显示「已暂停」让人以为是自己点的
+describe('卡住的任务（R20）', () => {
+  it('error=stuck 的暂停任务显示「卡住了，已跳过」并提示可点「继续」重试', async () => {
+    installFakeApi()
+    vi.mocked(window.api.onTaskProgress).mockReturnValue(() => {})
+    vi.mocked(window.api.getTaskStats).mockResolvedValue(emptyStats)
+    vi.mocked(window.api.listTasks).mockResolvedValue([
+      { ...makeTask(1), status: 'paused', error: 'stuck' },
+      { ...makeTask(2), status: 'paused', error: 'user' }
+    ] as never)
+
+    render(<TaskList notify={() => {}} />)
+    expect(await screen.findByText('卡住了，已跳过')).toBeInTheDocument()
+    expect(screen.getByText(/卡住了，已跳过（可点「继续」重试）/)).toBeInTheDocument()
+    expect(screen.getAllByText('已暂停')).toHaveLength(1) // 用户自己暂停的照旧
+    expect(screen.getAllByRole('button', { name: '继续' })).toHaveLength(2)
+  })
+})
+
+// R20 复查：用户暂停 / 疑似风控 / 要过验证后队列按住不自动跑——界面要说清楚、给出接着跑的办法
+describe('队列按住时的提示（R20 复查）', () => {
+  function prep(tasks: unknown[]): void {
+    installFakeApi()
+    vi.mocked(window.api.onTaskProgress).mockReturnValue(() => {})
+    vi.mocked(window.api.getTaskStats).mockResolvedValue(emptyStats)
+    vi.mocked(window.api.listTasks).mockResolvedValue(tasks as never)
+  }
+
+  it('有暂停的任务（用户暂停）+ 有排队的 + 没有在跑的 → 提示点「开始」/「继续」接着跑，排队任务有「开始」按钮', async () => {
+    prep([{ ...makeTask(1), status: 'paused', error: 'user' }, { ...makeTask(2), status: 'pending' }])
+    const { container } = render(<TaskList notify={() => {}} />)
+    await screen.findByText(/排队的任务先不自动开跑/)
+    expect(container.querySelector('[data-queue-held]')!.textContent).toContain('开始')
+    expect(screen.getByRole('button', { name: '开始' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '继续' })).toBeInTheDocument()
+  })
+
+  it('疑似风控暂停 → 行下说明「疑似风控，已暂停」', async () => {
+    prep([{ ...makeTask(1), status: 'paused', error: 'risk' }, { ...makeTask(2), status: 'pending' }])
+    render(<TaskList notify={() => {}} />)
+    expect(await screen.findByText(/疑似风控，已暂停/)).toBeInTheDocument()
+    expect(screen.getByText(/排队的任务先不自动开跑/)).toBeInTheDocument()
+  })
+
+  it('有任务在跑 / 没有排队的 → 不显示提示', async () => {
+    prep([{ ...makeTask(1), status: 'paused', error: 'user' }, { ...makeTask(2), status: 'running' }, { ...makeTask(3), status: 'pending' }])
+    render(<TaskList notify={() => {}} />)
+    await screen.findAllByText(/测试/)
+    expect(screen.queryByText(/排队的任务先不自动开跑/)).toBeNull()
+  })
+})

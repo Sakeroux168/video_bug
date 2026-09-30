@@ -29,6 +29,7 @@ const SETTING_LABELS: Record<keyof AppSettings, string> = {
   asrMaxSec: '语音分析时长(秒)',
   stallThresholdSec: '停滞检测(秒)',
   rescueCooldownSec: '重搜冷却(秒)',
+  stuckTimeoutMin: '卡住判定(分钟)',
   organizeByCategory: '按品类分文件夹',
   organizeByAuthor: '按作者分文件夹',
   organizeByOrientation: '按横屏/竖屏分文件夹',
@@ -91,6 +92,17 @@ describe('SettingsPanel 分组与字段完整性', () => {
       expect(control).toBeEnabled()
       expect(control).not.toHaveAttribute('readonly')
     }
+  })
+
+  // R20 复查：卡住判定只收 2-60 分钟；空、0、1 以前会被悄悄收下
+  it.each([['1', 2], ['0', 5], ['', 5], ['100', 60], ['7', 7]])('卡住判定填「%s」→ 按 %s 分钟保存，并把实际值显示回输入框', async (typed, saved) => {
+    installFakeApi()
+    render(<SettingsPanel />)
+    const box = await screen.findByLabelText('卡住判定(分钟)')
+    fireEvent.change(box, { target: { value: typed } })
+    fireEvent.click(screen.getByRole('button', { name: '保存设置' }))
+    await waitFor(() => expect(window.api.saveSettings).toHaveBeenCalledWith(expect.objectContaining({ stuckTimeoutMin: saved })))
+    await waitFor(() => expect((screen.getByLabelText('卡住判定(分钟)') as HTMLInputElement).value).toBe(String(saved)))
   })
 
   it('新增的归档延迟和语音时长会按正确单位保存', async () => {

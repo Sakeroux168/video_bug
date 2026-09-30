@@ -7,12 +7,46 @@ export function matchTimeRange(tsSec: number, range: TimeRange, start?: string, 
     const days = range === '7d' ? 7 : 30
     return tsSec >= now - days * 86400
   }
-  if (range === 'custom' && start && end) {
-    const s = new Date(start + 'T00:00:00Z').getTime() / 1000
-    const e = new Date(end + 'T23:59:59Z').getTime() / 1000
-    return tsSec >= s && tsSec <= e
+  if (range === 'custom') {
+    // 日期按中国时间（UTC+8）算整天：用户选「3 月 10 日」指的是北京时间那一天，
+    // 以前按 UTC 算会差 8 小时（当天早上 8 点前发的被算到前一天）。起止任一可以不填。
+    const s = start ? chinaDayStartSec(start) : null
+    const e = end ? chinaDayEndSec(end) : null
+    if (s !== null && tsSec < s) return false
+    if (e !== null && tsSec > e) return false
+    return true
   }
   return true
+}
+
+/** 中国时区偏移：固定 +08:00，不看这台电脑设的是什么时区（员工电脑时区设错也不影响）。 */
+const CHINA_OFFSET_SEC = 8 * 3600
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
+
+/** YYYY-MM-DD 这一天北京时间 00:00:00 的秒级时间戳；格式不对 / 日期不存在（2024-13-01、2026-02-31）返回 null（当没填）。
+ *  R20 复查：只看格式不够——JS 会把 2026-02-31 悄悄滚成 3 月 3 日，这里换算回去对不上就判无效。 */
+export function chinaDayStartSec(date: string): number | null {
+  if (!DATE_RE.test(date)) return null
+  const ms = new Date(date + 'T00:00:00+08:00').getTime()
+  if (!Number.isFinite(ms)) return null
+  if (chinaToday(ms) !== date) return null
+  return ms / 1000
+}
+
+/** YYYY-MM-DD 格式正确且这一天真实存在 */
+export function isValidChinaDate(date: string): boolean {
+  return chinaDayStartSec(date) !== null
+}
+
+/** YYYY-MM-DD 这一天北京时间 23:59:59 的秒级时间戳；格式不对返回 null（当没填） */
+export function chinaDayEndSec(date: string): number | null {
+  const s = chinaDayStartSec(date)
+  return s === null ? null : s + 86400 - 1
+}
+
+/** 北京时间的「今天」，YYYY-MM-DD */
+export function chinaToday(nowMs: number = Date.now()): string {
+  return new Date(nowMs + CHINA_OFFSET_SEC * 1000).toISOString().slice(0, 10)
 }
 
 export function matchDuration(durSec: number, d: DurationFilter, minSec?: number, maxSec?: number): boolean {
