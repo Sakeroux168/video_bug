@@ -4,6 +4,7 @@ import type { IncomingMessage, Server, ServerResponse } from 'http'
 import type { DatabaseSync } from 'node:sqlite'
 import { globalStats, listTasks, taskStats } from './db'
 import { createTaskChecked } from './taskCreate'
+import { chinaToday } from './extractor'
 import type { CreateTaskInput, Filters } from '../shared/types'
 
 /**
@@ -62,7 +63,7 @@ export function jobFromBody(body: JobBody): CreateTaskInput | string {
   const filters: Filters = { timeRange: 'all', duration: 'all', targetCount: Math.floor(n) }
   if (body.startDate !== undefined || body.endDate !== undefined) {
     const s = typeof body.startDate === 'string' ? body.startDate : ''
-    const e = typeof body.endDate === 'string' ? body.endDate : new Date().toISOString().slice(0, 10)
+    const e = typeof body.endDate === 'string' ? body.endDate : chinaToday() // 北京时间的今天（按 UTC 取早上 8 点前会变成昨天）
     if (!DATE_RE.test(s) || !DATE_RE.test(e)) return 'startDate / endDate 要写成 YYYY-MM-DD'
     if (s > e) return 'startDate 不能晚于 endDate'
     filters.timeRange = 'custom'

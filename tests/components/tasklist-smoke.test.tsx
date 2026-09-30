@@ -64,3 +64,22 @@ describe('TaskList 冒烟', () => {
   })
 
 })
+
+// R20：看门狗判卡住的任务要说清楚，不能只显示「已暂停」让人以为是自己点的
+describe('卡住的任务（R20）', () => {
+  it('error=stuck 的暂停任务显示「卡住了，已跳过」并提示可点「继续」重试', async () => {
+    installFakeApi()
+    vi.mocked(window.api.onTaskProgress).mockReturnValue(() => {})
+    vi.mocked(window.api.getTaskStats).mockResolvedValue(emptyStats)
+    vi.mocked(window.api.listTasks).mockResolvedValue([
+      { ...makeTask(1), status: 'paused', error: 'stuck' },
+      { ...makeTask(2), status: 'paused', error: 'user' }
+    ] as never)
+
+    render(<TaskList notify={() => {}} />)
+    expect(await screen.findByText('卡住了，已跳过')).toBeInTheDocument()
+    expect(screen.getByText(/卡住了，已跳过（可点「继续」重试）/)).toBeInTheDocument()
+    expect(screen.getAllByText('已暂停')).toHaveLength(1) // 用户自己暂停的照旧
+    expect(screen.getAllByRole('button', { name: '继续' })).toHaveLength(2)
+  })
+})

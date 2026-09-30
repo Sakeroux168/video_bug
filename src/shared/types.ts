@@ -150,6 +150,8 @@ export interface AppSettings {
   stallThresholdSec: number
   /** R12：重搜冷却秒数（停滞自救两次重搜的最小间隔，默认 10；到底文案命中可忽略冷却立即重搜） */
   rescueCooldownSec: number
+  /** R20：卡住判定分钟数（默认 5）——任务这么久没抓到新数据、页面也没在滚，就强制停下、标「卡住了」，放行后面排队的任务 */
+  stuckTimeoutMin: number
   /** 归档层级：按品类建目录（需要 AI 解析品类；关闭后不再调用 resolveCategory） */
   organizeByCategory: boolean
   /** 归档层级：按作者建目录 */

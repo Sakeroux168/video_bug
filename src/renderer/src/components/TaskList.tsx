@@ -423,7 +423,8 @@ export default function TaskList({ notify }: { notify: (text: string) => void })
                       )}
                     </td>
                     <td className={`whitespace-nowrap py-2 pr-3 text-xs ${t.status === 'failed' ? 'text-red-500' : t.status === 'running' ? 'text-sky-600' : 'text-slate-500'}`}>
-                      {TASK_STATUS_LABEL[t.status]}
+                      {/* R20：看门狗判卡住的任务单独说清楚，别只显示一个「已暂停」让人以为是自己点的 */}
+                      {t.status === 'paused' && t.error === 'stuck' ? <span className="text-amber-600">卡住了，已跳过</span> : TASK_STATUS_LABEL[t.status]}
                     </td>
                     <td className="whitespace-nowrap py-2" onClick={e => e.stopPropagation()}>
                       <div className="flex items-center gap-2 text-xs">
@@ -446,6 +447,13 @@ export default function TaskList({ notify }: { notify: (text: string) => void })
                     <tr className="border-b border-slate-100 bg-amber-50/60">
                       <td colSpan={6} className="px-2 py-1.5 text-xs text-amber-700">
                         任务可能触发验证，请到「内置浏览器」完成验证（滑块/扫码）后点「继续」
+                      </td>
+                    </tr>
+                  )}
+                  {t.status === 'paused' && t.error === 'stuck' && (
+                    <tr className="border-b border-slate-100 bg-amber-50/60">
+                      <td colSpan={6} className="px-2 py-1.5 text-xs text-amber-700">
+                        卡住了，已跳过（可点「继续」重试）——这个任务好几分钟没有任何进展，已自动停下，排队的任务接着跑了
                       </td>
                     </tr>
                   )}

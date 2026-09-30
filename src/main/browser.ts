@@ -52,14 +52,21 @@ export const LOAD_TIMEOUT_MS = 30000
 /** R11-4：滚动脚本强制超时毫秒（超时视为滚动结束返回，防循环永久卡死） */
 export const SCROLL_TIMEOUT_MS = 60000
 
-/** R11-4：长操作强制超时——Promise.race 竞速，超时侧 reject 带 code=OP_TIMEOUT 的标记错误（不引入依赖） */
+/** R20：页面里跑一段查询脚本（查验证码 / 到底文案 / 作者昵称）的最长等待毫秒。
+ *  页面卡死、正在跳转或渲染进程无响应时 executeJavaScript 可能永远不返回——
+ *  以前调度器就卡在这一步：任务一直「进行中」、一动不动，后面排队的全都等着。 */
+export const JS_EVAL_TIMEOUT_MS = 15000
+
+/** R11-4：长操作强制超时——Promise.race 竞速，超时侧 reject 带 code=OP_TIMEOUT 的标记错误（不引入依赖）。
+ *  R20：无论哪边先完成都清掉计时器，不留一堆悬着的 setTimeout。 */
 export function withTimeout<T>(p: Promise<T>, ms: number, label: string): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | null = null
   return Promise.race([
     p,
-    new Promise<never>((_, reject) =>
-      setTimeout(() => reject(Object.assign(new Error(`${label}超时（${ms}ms）`), { code: 'OP_TIMEOUT' })), ms)
-    )
-  ])
+    new Promise<never>((_, reject) => {
+      timer = setTimeout(() => reject(Object.assign(new Error(`${label}超时（${ms}ms）`), { code: 'OP_TIMEOUT' })), ms)
+    })
+  ]).finally(() => { if (timer !== null) clearTimeout(timer) })
 }
 
 export class VideoBrowser {
@@ -79,6 +86,27 @@ export class VideoBrowser {
 
   constructor(private host: BrowserWindow) {
     // 不再依赖宿主窗口布局：独立子窗口自行定位，无需订阅 resize
+  }
+
+  /** R20：在页面里跑查询脚本，最多等 JS_EVAL_TIMEOUT_MS；超时抛 OP_TIMEOUT（调用方一律按「没查到」处理） */
+  private evalInPage(script: string, label: string): Promise<unknown> {
+    if (!this.win || this.win.isDestroyed?.()) return Promise.resolve(null)
+    return withTimeout(Promise.resolve(this.win.webContents.executeJavaScript(script)), JS_EVAL_TIMEOUT_MS, label)
+  }
+
+  /**
+   * R20：看门狗判定任务卡住时调用——叫停页面里的滚动脚本和正在进行的加载，再刷新一次页面，
+   * 把可能卡死的页面状态清掉。全部是「发出去不等」：页面若真卡死，等它只会把程序也一起卡住。
+   * 下一个任务 load 自己的地址时会盖掉这次刷新（load 已把 ERR_ABORTED 当正常）。
+   */
+  resetPage(): void {
+    const win = this.win
+    if (!win || win.isDestroyed?.()) return
+    try {
+      this.abortScroll()
+      win.webContents.stop()
+      win.webContents.reload()
+    } catch { /* 页面已经坏了也不能影响调度器收尾 */ }
   }
 
   /** 当前窗口服务的平台适配器；尚未 load 过任何页面时为 null */
@@ -309,7 +337,7 @@ export class VideoBrowser {
   async findVerifyIndicator(): Promise<string | null> {
     if (!this.win) return null
     try {
-      const r = await this.win.webContents.executeJavaScript(buildVerifyScript())
+      const r = await this.evalInPage(buildVerifyScript(), '查验证码')
       return typeof r === 'string' && r.length > 0 ? r : null
     } catch { return null }
   }
@@ -349,7 +377,7 @@ export class VideoBrowser {
       return t;
     })()`
     try {
-      const r = await this.win.webContents.executeJavaScript(script)
+      const r = await this.evalInPage(script, '读作者昵称')
       return typeof r === 'string' && r.length > 0 ? r : null
     } catch { return null }
   }
@@ -453,7 +481,7 @@ export class VideoBrowser {
       return null;
     })()`
     try {
-      const r = await this.win.webContents.executeJavaScript(script)
+      const r = await this.evalInPage(script, '查到底文案')
       return typeof r === 'string' && r.length > 0 ? r : null
     } catch { return null }
   }

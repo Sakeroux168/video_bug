@@ -20,6 +20,7 @@ const DEFAULTS: AppSettings = {
   // 且内置「使用说明」页告诉员工这里应为 25，全新安装若仍是 5 会与说明页自相矛盾。
   stallThresholdSec: 25,
   rescueCooldownSec: 10, // R12：重搜冷却秒数（停滞自救两次重搜最小间隔）
+  stuckTimeoutMin: 5, // R20：任务 5 分钟没任何进展 → 判卡住，强制停下并放行排队的任务
   // 归档层级：全新安装默认四层全关，视频平铺在下载目录。
   // 员工反馈旧版 {品类}/{作者}/{横竖屏}/{时长} 四层套下来文件夹太多、翻不动。
   organizeByCategory: false,

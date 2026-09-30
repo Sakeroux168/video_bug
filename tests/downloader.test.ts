@@ -868,3 +868,49 @@ describe('下载请求头按平台取，不再靠 www.{platform}.com 拼字符�
     expect(buildRequestHeaders('kuaishou')['user-agent']).toMatch(/Mozilla/)
   })
 })
+
+describe('R20 下载卡住：一段时间没收到数据就掐断，交给原来的自动重试', () => {
+  it('服务器发了一点就不动了 → 无数据超时掐断，按网络错误自动重试（不会永远占着一个下载名额）', async () => {
+    const taskId = createTask(db, input)
+    insertVideos(db, [item('IDLE-1')], taskId, 'douyin')
+    const [v] = listVideos(db, taskId)
+    const fetchImpl = (async () => new Response(new ReadableStream<Uint8Array>({
+      start(c) { c.enqueue(new Uint8Array(100)) } // 发 100 字节后再也不动，也不结束
+    }), { status: 200 })) as typeof fetch
+    const dl = new Downloader(db, { downloadDir: dir, downloadConcurrency: 1, addressTtlMin: 30 }, fetchImpl,
+      { validator: async () => true, idleTimeoutMs: 80 })
+    const events: Array<{ status: string; error?: string }> = []
+    dl.onEvent(e => events.push(e))
+    dl.enqueue(v.id)
+
+    await vi.waitFor(() => expect(events.some(e => e.status === 'failed')).toBe(true), { timeout: 3000 })
+    expect(events.find(e => e.status === 'failed')!.error).toBe('network')
+    // 走的是原来的网络重试：回到 pending、重试次数 +1（5 秒后自动再下）
+    expect(db.prepare('SELECT status, retry_count FROM videos WHERE id=?').get(v.id)).toEqual({ status: 'pending', retry_count: 1 })
+    await vi.waitFor(() => expect(dl.isIdle()).toBe(true)) // 名额已经让出来
+    expect(readdirSync(dir).some(n => n.includes('.part.'))).toBe(false) // 半截文件已清掉
+    dl.cancel([v.id]) // 清掉 5 秒后的重试计时器
+  })
+
+  it('慢但一直在传（每次间隔都小于超时）→ 不算卡住，正常下完', async () => {
+    const taskId = createTask(db, input)
+    insertVideos(db, [item('SLOW-1')], taskId, 'douyin')
+    const [v] = listVideos(db, taskId)
+    const chunk = Buffer.alloc(256)
+    chunk.write('ftypisom', 4)
+    const fetchImpl = (async () => new Response(new ReadableStream<Uint8Array>({
+      async start(c) {
+        for (let i = 0; i < 8; i++) {
+          c.enqueue(new Uint8Array(chunk))
+          await new Promise(r => setTimeout(r, 30))
+        }
+        c.close()
+      }
+    }), { status: 200 })) as typeof fetch
+    const dl = new Downloader(db, { downloadDir: dir, downloadConcurrency: 1, addressTtlMin: 30 }, fetchImpl,
+      { validator: async () => true, idleTimeoutMs: 150 })
+    dl.enqueue(v.id)
+    await vi.waitFor(() => expect(listVideos(db, taskId)[0].status).toBe('done'), { timeout: 3000 })
+    expect(listVideos(db, taskId)[0].file_size).toBe(256 * 8)
+  })
+})

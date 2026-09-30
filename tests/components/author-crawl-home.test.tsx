@@ -118,3 +118,93 @@ describe('爬主页前先问清楚爬多少', () => {
     await waitFor(() => expect(window.api.createTask).toHaveBeenCalledWith(expect.objectContaining({ query: '3xA2' })))
   })
 })
+
+// R20：用户要的「用户页可以自己选择时间，选什么时间到什么时间内的视频」——可选功能，默认不勾 = 原行为
+describe('爬主页：可选「只要这段时间发的」（R20）', () => {
+  it('默认不勾：不显示日期框，按原来的「不限时间」建任务', async () => {
+    await open()
+    clickCrawl('快手甲')
+    await screen.findByText(/爬取「快手甲」的主页/)
+
+    expect((screen.getByLabelText('只要这段时间发的') as HTMLInputElement).checked).toBe(false)
+    expect(screen.queryByLabelText('从')).toBeNull()
+    expect(screen.queryByLabelText('到')).toBeNull()
+
+    fireEvent.click(screen.getByRole('button', { name: '开始爬取' }))
+    await waitFor(() => expect(window.api.createTask).toHaveBeenCalled())
+    const arg = vi.mocked(window.api.createTask).mock.calls[0][0]
+    expect(arg.filters).toEqual({ timeRange: 'all', duration: 'all', targetCount: 200 })
+    expect(arg.allowDuplicateAuthor).toBeUndefined()
+  })
+
+  it('勾上并选「从」「到」→ 按北京时间日期段建任务（custom + startDate/endDate），且不被「已爬过」去重拦掉', async () => {
+    await open()
+    clickCrawl('快手甲')
+    fireEvent.click(await screen.findByLabelText('只要这段时间发的'))
+    fireEvent.change(screen.getByLabelText('从'), { target: { value: '2026-09-01' } })
+    fireEvent.change(screen.getByLabelText('到'), { target: { value: '2026-09-20' } })
+    expect(screen.getByText(/只要 2026-09-01 到 2026-09-20 发的/)).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: '开始爬取' }))
+    await waitFor(() => expect(window.api.createTask).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'author',
+      query: '3xA1',
+      allowDuplicateAuthor: true,
+      filters: expect.objectContaining({ timeRange: 'custom', startDate: '2026-09-01', endDate: '2026-09-20', targetCount: 200 })
+    })))
+  })
+
+  it('只填「从」也行（从那天到现在）；只填「到」也行（那天及以前）', async () => {
+    await open()
+    clickCrawl('快手甲')
+    fireEvent.click(await screen.findByLabelText('只要这段时间发的'))
+    fireEvent.change(screen.getByLabelText('从'), { target: { value: '2026-09-01' } })
+    expect(screen.getByText(/只要 2026-09-01 以后发的/)).toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: '开始爬取' }))
+    await waitFor(() => expect(window.api.createTask).toHaveBeenCalled())
+    const f = vi.mocked(window.api.createTask).mock.calls[0][0].filters
+    expect(f.timeRange).toBe('custom')
+    expect(f.startDate).toBe('2026-09-01')
+    expect(f.endDate).toBeUndefined()
+  })
+
+  it('勾了但一个日期都没选 / 开始晚于结束 → 开始按钮禁用并给出提示', async () => {
+    await open()
+    clickCrawl('快手甲')
+    fireEvent.click(await screen.findByLabelText('只要这段时间发的'))
+    expect(screen.getByRole('button', { name: '开始爬取' })).toBeDisabled()
+    expect(screen.getByText('请至少选一个日期')).toBeInTheDocument()
+
+    fireEvent.change(screen.getByLabelText('从'), { target: { value: '2026-09-20' } })
+    fireEvent.change(screen.getByLabelText('到'), { target: { value: '2026-09-01' } })
+    expect(screen.getByRole('button', { name: '开始爬取' })).toBeDisabled()
+    expect(screen.getByText('开始日期不能晚于结束日期')).toBeInTheDocument()
+
+    fireEvent.change(screen.getByLabelText('到'), { target: { value: '2026-09-20' } })
+    expect(screen.getByRole('button', { name: '开始爬取' })).toBeEnabled()
+    expect(screen.getByText(/只要 2026-09-20 当天发的/)).toBeInTheDocument()
+  })
+
+  it('取消勾选 → 日期不再生效，又按不限时间建任务', async () => {
+    await open()
+    clickCrawl('快手甲')
+    const box = await screen.findByLabelText('只要这段时间发的')
+    fireEvent.click(box)
+    fireEvent.change(screen.getByLabelText('从'), { target: { value: '2026-09-20' } })
+    fireEvent.click(box)
+    fireEvent.click(screen.getByRole('button', { name: '开始爬取' }))
+    await waitFor(() => expect(window.api.createTask).toHaveBeenCalled())
+    expect(vi.mocked(window.api.createTask).mock.calls[0][0].filters.timeRange).toBe('all')
+  })
+
+  it('换一个作者 → 日期段不会带到下一个人身上', async () => {
+    await open([author(), author({ id: 2, sec_uid: '3xA2', nickname: '快手乙' })])
+    clickCrawl('快手甲')
+    fireEvent.click(await screen.findByLabelText('只要这段时间发的'))
+    fireEvent.change(screen.getByLabelText('从'), { target: { value: '2026-09-01' } })
+
+    clickCrawl('快手乙')
+    await screen.findByText(/爬取「快手乙」的主页/)
+    expect((screen.getByLabelText('只要这段时间发的') as HTMLInputElement).checked).toBe(false)
+  })
+})

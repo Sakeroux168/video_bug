@@ -35,8 +35,7 @@ export interface IpcDeps {
   enqueueTask: (id: number) => void
   /** 把任务从 FIFO 队列里摘掉（删任务时用，避免轮到它时再跑一遍已删除的任务） */
   dequeueTask: (id: number) => void
-  /** 放行队列里的下一个任务。dequeueAndRun 只在 task:done 时触发，
-   *  删除运行中的任务走的是 pause()、不发事件，必须显式踢一脚。 */
+  /** 放行队列里的下一个任务（删任务等用户操作之后踢一脚；R20 起任务结束的各种结局都会自动放行，这里是兜底） */
   kickQueue: () => void
   /** 渲染层切换浏览器标签时通知主进程（主进程据此结合任务状态决定显示/小窗/隐藏） */
   setBrowserVisible: (v: boolean) => void
@@ -58,10 +57,27 @@ export function registerIpc(deps: IpcDeps): void {
     source_url: resolveVideoSourceUrl(video.platform, video.aweme_id, video.source_url)
   })))
   ipcMain.handle('task:stats', (_e, taskId: number) => taskStats(db, taskId))
-  // A1：先等 scheduler.pause()（run 完全退出）再置状态，避免渲染层立刻看到 paused 而 run 还在收尾
-  ipcMain.handle('task:pause', async (_e, id: number) => { await scheduler.pause(); setTaskStatus(db, id, 'paused', 'user') })
-  // A1：走 scheduler.resume（内含 run 退出守卫，并发 resume 不会被 running 挡回静默丢弃）
-  ipcMain.handle('task:resume', (_e, id: number) => { void scheduler.resume(id) })
+  // A1：先等 scheduler.pause()（run 完全退出）再置状态，避免渲染层立刻看到 paused 而 run 还在收尾。
+  // R20：pause() 最多等 10 秒，等不到就强制停，按钮不会再跟着卡死；
+  // 只叫停「正在跑的就是它」的情况——以前不管暂停哪个任务都会把正在跑的那个停掉。
+  // 暂停的是还在排队的任务 → 从队列摘掉，不然轮到它时又会被跑起来。
+  ipcMain.handle('task:pause', async (_e, id: number) => {
+    if (scheduler.currentTaskId === id) await scheduler.pause()
+    else deps.dequeueTask(id)
+    setTaskStatus(db, id, 'paused', 'user')
+  })
+  // A1：走 scheduler.resume（内含 run 退出守卫，并发 resume 不会被 running 挡回静默丢弃）。
+  // R20：别的任务正在跑时，点「继续」/「开始」不能被静默吞掉（以前 run 发现在忙就直接 return，
+  // 按钮点了没反应）——改成放回队列排队，前一个结束后自动接着跑。
+  ipcMain.handle('task:resume', (_e, id: number) => {
+    if (scheduler.isRunning && scheduler.currentTaskId !== id) {
+      setTaskStatus(db, id, 'pending')
+      deps.enqueueTask(id)
+      return
+    }
+    deps.dequeueTask(id) // 直接开跑的不能还留在队列里，否则跑完又被队列再跑一遍
+    void scheduler.resume(id)
+  })
   // 删任务必须把这个任务相关的活全停掉，否则会留下"幽灵任务"：
   // 调度器攥着内存里的 taskId 继续滚页面、继续停滞重搜，最后想标 paused 时那行已经没了，
   // UPDATE 静默失败——用户在界面上什么都看不到，只看见浏览器自己在动（真机踩过）。
@@ -74,8 +90,7 @@ export function registerIpc(deps: IpcDeps): void {
     if (videoIds.length > 0) downloader.cancel(videoIds)
     db.prepare('DELETE FROM videos WHERE task_id=?').run(id)
     db.prepare('DELETE FROM tasks WHERE id=?').run(id)
-    // 放行队列：dequeueAndRun 只在 task:done 时触发（刻意如此，暂停不放行下一个），
-    // 而删除走的是 pause()、不发任何事件——不踢这一脚，排队中的任务会永远卡在「等待」。
+    // 放行队列：删掉的若是正在跑的任务，pause() 发的暂停事件已经会放行；这里再踢一脚兜底（重复踢无害）。
     deps.kickQueue()
   })
 

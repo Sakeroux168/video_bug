@@ -205,6 +205,11 @@ export default function SettingsPanel() {
               <input type="number" min={1} max={60} className={inputCls} value={s.rescueCooldownSec}
                 onChange={e => set('rescueCooldownSec', Number(e.target.value))} />
             </label>
+            <label className="flex flex-col gap-1" title="任务这么多分钟没抓到新视频、页面也没在动，就当它卡住了：自动停下，让排队的下一个任务接着跑">
+              卡住判定(分钟)
+              <input type="number" min={2} max={60} className={inputCls} value={s.stuckTimeoutMin ?? 5}
+                onChange={e => set('stuckTimeoutMin', Number(e.target.value))} />
+            </label>
           </div>
         </Card>
 

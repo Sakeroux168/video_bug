@@ -29,6 +29,7 @@ const SETTING_LABELS: Record<keyof AppSettings, string> = {
   asrMaxSec: '语音分析时长(秒)',
   stallThresholdSec: '停滞检测(秒)',
   rescueCooldownSec: '重搜冷却(秒)',
+  stuckTimeoutMin: '卡住判定(分钟)',
   organizeByCategory: '按品类分文件夹',
   organizeByAuthor: '按作者分文件夹',
   organizeByOrientation: '按横屏/竖屏分文件夹',

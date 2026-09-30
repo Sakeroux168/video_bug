@@ -15,6 +15,7 @@ vi.mock('electron', () => ({
 }))
 
 import { startBridge, jobFromBody } from '../src/main/bridge'
+import { chinaToday } from '../src/main/extractor'
 
 const AUTHOR_URL = 'https://www.douyin.com/user/abc'
 
@@ -113,7 +114,7 @@ describe('bridge', () => {
     const only = jobFromBody({ query: 'u', startDate: '2026-09-10' })
     if (typeof only !== 'string') {
       expect(only.filters.timeRange).toBe('custom')
-      expect(only.filters.endDate).toBe(new Date().toISOString().slice(0, 10))
+      expect(only.filters.endDate).toBe(chinaToday())
     } else {
       expect(only).toBe('')
     }
