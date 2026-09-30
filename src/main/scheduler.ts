@@ -606,10 +606,22 @@ export class Scheduler {
   private async resolveDetailFast(adapter: PlatformAdapter, stub: ListStub): Promise<VideoItem | null> {
     if (this.aborted) return null
     const url = adapter.buildDetailUrl!(stub)
-    const res = await this.deps.browser.fetchDetailHtml!(adapter, url).catch(() => null)
+    // 与稳妥模式同一个详情超时；暂停/取消经 abortDetail 立即打断。
+    // 不只依赖 fetch 响应 signal：请求卡死不理会 abort 时，由 race 保证照样返回。
+    const controller = new AbortController()
+    const abortedOrTimedOut = new Promise<null>(resolve =>
+      controller.signal.addEventListener('abort', () => resolve(null), { once: true }))
+    const timer = setTimeout(() => controller.abort(), this.deps.detailTimeoutMs ?? 30000)
+    this.abortDetail = () => controller.abort()
+    const res = await Promise.race([
+      this.deps.browser.fetchDetailHtml!(adapter, url, controller.signal).catch(() => null),
+      abortedOrTimedOut
+    ])
+    clearTimeout(timer)
+    this.abortDetail = null
     if (this.aborted) return null
     if (!res) {
-      this.deps.onFilterLog?.(`笔记 ${stub.noteId}：快速模式请求失败，跳过`)
+      this.deps.onFilterLog?.(`笔记 ${stub.noteId}：${controller.signal.aborted ? '快速模式请求超时' : '快速模式请求失败'}，跳过`)
       return null
     }
     let outcome: FastDetailOutcome

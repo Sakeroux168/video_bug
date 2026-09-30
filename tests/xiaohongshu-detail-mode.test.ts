@@ -120,6 +120,47 @@ describe('快速模式（detailMode=fast）：详情走 session fetch，不导�
     t.db.close()
   })
 
+  it('请求一直不回：到详情超时就取消请求、跳过该条，继续下一条', async () => {
+    const t = setup(2, 'fast', { detailTimeoutMs: 1000 })
+    t.browser.load.mockImplementation(async (_a: unknown, url?: string) => {
+      if (url?.includes('search_result')) await t.s.handleRaw(adapter, searchUrl, list(['HANG', 'OK']))
+    })
+    const signals: AbortSignal[] = []
+    t.browser.fetchDetailHtml = vi.fn((_a: unknown, url: string, signal?: AbortSignal) => {
+      const noteId = new URL(url).pathname.split('/').pop()!
+      if (signal) signals.push(signal)
+      if (noteId === 'HANG') return new Promise<never>(() => {}) // 网络卡死，且不理会 signal
+      return Promise.resolve({ status: 200, finalUrl: url, body: fastDetailHtml(noteId) })
+    })
+    const run = t.s.run(t.id); await vi.advanceTimersByTimeAsync(3000); await run
+    expect(t.rows().map(r => r.aweme_id)).toEqual(['OK'])
+    expect(signals[0]?.aborted).toBe(true)
+    expect(t.logs.join('')).toMatch(/HANG.*超时/)
+    t.db.close()
+  })
+
+  it('请求卡住时暂停：立即退出并取消在途请求', async () => {
+    const t = setup(1, 'fast')
+    t.browser.load.mockImplementation(async (_a: unknown, url?: string) => {
+      if (url?.includes('search_result')) await t.s.handleRaw(adapter, searchUrl, list(['STUCK']))
+    })
+    let signal: AbortSignal | undefined
+    t.browser.fetchDetailHtml = vi.fn((_a: unknown, _url: string, s?: AbortSignal) => {
+      signal = s
+      return new Promise<never>(() => {})
+    })
+    const run = t.s.run(t.id)
+    await vi.advanceTimersByTimeAsync(200)
+    expect(t.browser.fetchDetailHtml).toHaveBeenCalledTimes(1)
+    let paused = false
+    const pausing = t.s.pause().then(() => { paused = true })
+    await vi.advanceTimersByTimeAsync(100)
+    expect(paused).toBe(true)
+    expect(signal?.aborted).toBe(true)
+    await pausing; await run
+    t.db.close()
+  })
+
   it('稳妥默认：不设 detailMode 时仍走窗口导航', async () => {
     const t = setup(1)
     t.browser.load.mockImplementation(async (_a: unknown, url?: string) => {

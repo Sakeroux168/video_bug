@@ -300,11 +300,11 @@ export class VideoBrowser {
    * 失败返回 null，不抛出——调度器按单条跳过处理。
    * 注意：url 带一次性令牌，任何日志都不得原样写这个地址。
    */
-  async fetchDetailHtml(adapter: PlatformAdapter, url: string): Promise<{ status: number; finalUrl: string; body: string } | null> {
+  async fetchDetailHtml(adapter: PlatformAdapter, url: string, signal?: AbortSignal): Promise<{ status: number; finalUrl: string; body: string } | null> {
     try {
       const { session } = await import('electron')
       const ses = session.fromPartition(adapter.sessionPartition)
-      const res = await ses.fetch(url, { redirect: 'follow', headers: { Referer: adapter.downloadReferer } })
+      const res = await ses.fetch(url, { redirect: 'follow', headers: { Referer: adapter.downloadReferer }, signal })
       const body = await res.text()
       return { status: res.status, finalUrl: res.url, body }
     } catch { return null }
