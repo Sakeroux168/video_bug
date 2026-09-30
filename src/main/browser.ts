@@ -275,15 +275,38 @@ export class VideoBrowser {
     } catch { return false }
   }
 
-  /** 从当前详情页注水状态读取完整条目；适配器脚本负责只接受当前等待的 noteId。 */
+  /**
+   * 从当前详情页注水状态读取完整条目；适配器脚本负责只接受当前等待的 noteId。
+   * 用 mainFrame.executeJavaScript（WebFrameMain）：它的执行不等页面停止加载——
+   * 小红书详情页常年挂着尾部资源，webContents.executeJavaScript 会一直等到
+   * loadURL 结束才执行，每条详情被拖到 15s 兜底。mainFrame 没有这个等待，
+   * 注水一到位（真机 ~2.5s）就能读到。每次调用都重新取 mainFrame：跨域导航后
+   * 旧 frame 引用会失效。
+   */
   async extractCurrentDetail(adapter: PlatformAdapter, noteId: string): Promise<VideoItem | null> {
     if (!this.win || this.win.isDestroyed() || !adapter.buildDetailDomScript || !adapter.parseDetail) return null
     const script = adapter.buildDetailDomScript(noteId)
     if (!script) return null
     try {
-      const raw = await this.win.webContents.executeJavaScript(script)
+      const raw = await this.win.webContents.mainFrame.executeJavaScript(script)
       const item = adapter.parseDetail(raw)
       return item?.awemeId === noteId ? item : null
+    } catch { return null }
+  }
+
+  /**
+   * 快速模式：用平台登录态分区 session 直接拉详情页 HTML（不导航窗口）。
+   * Cookie 由分区自动带上；Referer 与下载同源，减少多余差异。
+   * 失败返回 null，不抛出——调度器按单条跳过处理。
+   * 注意：url 带一次性令牌，任何日志都不得原样写这个地址。
+   */
+  async fetchDetailHtml(adapter: PlatformAdapter, url: string): Promise<{ status: number; finalUrl: string; body: string } | null> {
+    try {
+      const { session } = await import('electron')
+      const ses = session.fromPartition(adapter.sessionPartition)
+      const res = await ses.fetch(url, { redirect: 'follow', headers: { Referer: adapter.downloadReferer } })
+      const body = await res.text()
+      return { status: res.status, finalUrl: res.url, body }
     } catch { return null }
   }
 

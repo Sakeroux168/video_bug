@@ -43,6 +43,8 @@ export interface JobBody {
   endDate?: unknown
   /** R19：下到哪（绝对路径） */
   outputDir?: unknown
+  /** 详情取数模式（仅小红书有差异）：safe=稳妥（默认）/ fast=快速 */
+  detailMode?: unknown
 }
 
 export const BRIDGE_FEATURES = ['outputDir'] as const
@@ -68,6 +70,10 @@ export function jobFromBody(body: JobBody): CreateTaskInput | string {
     filters.timeRange = 'custom'
     filters.startDate = s
     filters.endDate = e
+  }
+  if (body.detailMode !== undefined) {
+    if (body.detailMode !== 'safe' && body.detailMode !== 'fast') return 'detailMode 只能是 safe / fast'
+    filters.detailMode = body.detailMode
   }
   const input: CreateTaskInput = {
     platform, type, query, filters,

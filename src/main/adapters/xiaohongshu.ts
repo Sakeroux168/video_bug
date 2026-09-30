@@ -1,4 +1,4 @@
-import type { PlatformAdapter, VideoItem, ListStub, ListStubResult } from './types'
+import type { PlatformAdapter, VideoItem, ListStub, ListStubResult, FastDetailOutcome } from './types'
 import type { Filters, TaskType } from '../../shared/types'
 
 /**
@@ -376,6 +376,23 @@ export function parseXiaohongshuNoteDetail(json: unknown): VideoItem | null {
 }
 
 /**
+ * note（页面注水形态，字段驼峰）→ 与 /feed 响应同构的 {data:{items:[{id,note_card}]}}，
+ * 之后统一走 parseXiaohongshuNoteDetail 的字段口径。
+ * buildXiaohongshuDetailDomScript 在页面里按同一份口径生成同样的结构，两处必须保持一致；
+ * 白名单字段本身就是脱敏：xsecToken 之类不会混进解析结果。
+ */
+export function noteToDetailPayload(noteId: string, note: Obj): unknown {
+  const user = asObj(note.user)
+  return { data: { items: [{ id: noteId, note_card: {
+    noteId: note.noteId, type: note.type, title: note.title, desc: note.desc, time: note.time,
+    user: { userId: user.userId, nickname: user.nickname, nickName: user.nickName },
+    interactInfo: note.interactInfo,
+    imageList: note.imageList,
+    video: note.video
+  } }] } }
+}
+
+/**
  * 2026-09-28 真机确认：直接打开详情页不会请求 /feed，页面把详情注水到
  * __INITIAL_STATE__.note.noteDetailMap[noteId].note。只返回解析所需字段，主动排除
  * 笔记与作者对象里的 xsecToken；currentNoteId 与 note.noteId 必须同时匹配。
@@ -400,6 +417,125 @@ export function buildXiaohongshuDetailDomScript(noteId: string): string {
     } }] } };
     return JSON.parse(JSON.stringify(result));
   })()`
+}
+
+// ---------------------------------------------------------------------------
+// 快速模式：登录态 session 拉详情 HTML，解析 window.__INITIAL_STATE__。
+// 这段状态不是标准 JSON（含 undefined、new Map([]) 等写法），先宽松清理再 JSON.parse。
+// 日志安全：所有 skip 原因都是固定文案，不携带响应体片段；令牌只用于拼请求地址。
+// ---------------------------------------------------------------------------
+
+const LOGIN_PATH_RE = /\/login(?:[/?#]|$)/i
+const VERIFY_HINT_RE = /验证码|安全验证|captcha|verify/i
+const STATE_MARKER_RE = /window\.__INITIAL_STATE__\s*=\s*/
+
+/** 从 HTML 里截取 __INITIAL_STATE__ 赋值表达式（到 </script> 为止，剥尾部分号） */
+function extractInitialState(html: string): string | null {
+  const m = STATE_MARKER_RE.exec(html)
+  if (!m) return null
+  const start = m.index + m[0].length
+  const end = html.indexOf('</script>', start)
+  const raw = (end < 0 ? html.slice(start) : html.slice(start, end)).trim()
+  return raw.endsWith(';') ? raw.slice(0, -1) : raw
+}
+
+/**
+ * 把 `new Map(...)` / `new Set(...)` 换成括号里的表达式（Map 摊平成 [键, 值] 对数组），
+ * 再由调用方把 `undefined` 换成 null。构造器的实参里可能出现嵌套对象/数组/字符串，
+ * 必须按括号配平扫描，不能用正则一把梭；扫描时跳过字符串字面量防止括号误配。
+ */
+function stripJsCtors(src: string): string {
+  let out = ''
+  let i = 0
+  while (i < src.length) {
+    if (src.startsWith('new', i)) {
+      const m = /^new\s+(?:Map|Set)\s*\(/.exec(src.slice(i))
+      if (m) {
+        let depth = 0
+        let quote: string | null = null
+        let j = i + m[0].length - 1 // 指向 '('
+        for (; j < src.length; j++) {
+          const ch = src[j]
+          if (quote) {
+            if (ch === '\\') { j++; continue }
+            if (ch === quote) quote = null
+            continue
+          }
+          if (ch === '"' || ch === "'" || ch === '`') { quote = ch; continue }
+          if (ch === '(' || ch === '[' || ch === '{') depth++
+          else if (ch === ')' || ch === ']' || ch === '}') {
+            depth--
+            if (depth === 0) break
+          }
+        }
+        out += src.slice(i + m[0].length, j) // 括号内的表达式，替换掉 new X(...) 本身
+        i = j + 1
+        continue
+      }
+    }
+    const next = src.indexOf('new', i + 1)
+    if (next < 0) { out += src.slice(i); break }
+    out += src.slice(i, next)
+    i = next
+  }
+  return out
+}
+
+/** 真机确认过 currentNoteId 会在注水后变成 Vue ref（{_rawValue,_value,...}），按同一套启发拆值 */
+function unref(value: unknown): unknown {
+  if (!value || typeof value !== 'object') return value
+  const o = value as Obj
+  return o.__v_isRef || '_value' in o || 'value' in o
+    ? (o._value ?? o.value ?? o._rawValue)
+    : value
+}
+
+/** noteDetailMap 可能是对象，也可能因 new Map 清理变成 [键, 值] 对数组，两种都认 */
+function detailMapOf(raw: unknown): Record<string, unknown> {
+  const v = unref(raw)
+  if (v && typeof v === 'object' && !Array.isArray(v)) return v as Record<string, unknown>
+  if (Array.isArray(v)) {
+    const out: Record<string, unknown> = {}
+    for (const pair of v) {
+      if (Array.isArray(pair) && pair.length >= 1) out[String(pair[0])] = pair[1]
+    }
+    return out
+  }
+  return {}
+}
+
+/**
+ * 快速模式入口：解析登录态拉回的详情页 HTML。复用 parseXiaohongshuNoteDetail 的
+ * 字段口径（noteToDetailPayload 与 buildXiaohongshuDetailDomScript 同构）。
+ */
+export function parseXiaohongshuDetailHtml(finalUrl: string, html: string, noteId: string): FastDetailOutcome {
+  let path = finalUrl
+  try { path = new URL(finalUrl).pathname } catch { /* finalUrl 不是合法 URL 时按原文匹配 */ }
+  if (LOGIN_PATH_RE.test(path)) return { kind: 'login' }
+  const raw = extractInitialState(html)
+  if (raw === null) {
+    const title = /<title>([^<]*)<\/title>/i.exec(html)?.[1] ?? ''
+    if (VERIFY_HINT_RE.test(`${title} ${path}`)) return { kind: 'verify' }
+    return { kind: 'skip', reason: '详情页没有注水状态，可能被风控拦截' }
+  }
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(stripJsCtors(raw).replace(/\bundefined\b/g, 'null'))
+  } catch {
+    return { kind: 'skip', reason: '注水状态宽松解析失败' }
+  }
+  const noteState = asObj(asObj(parsed).note)
+  if (String(unref(noteState.currentNoteId) ?? '') !== noteId) {
+    return { kind: 'skip', reason: '注水状态不属于当前笔记' }
+  }
+  const map = detailMapOf(noteState.noteDetailMap)
+  const note = asObj(unref(asObj(unref(map[noteId])).note))
+  if (String(unref(note.noteId) ?? '') !== noteId) {
+    return { kind: 'skip', reason: '注水状态里找不到当前笔记的详情' }
+  }
+  const item = parseXiaohongshuNoteDetail(noteToDetailPayload(noteId, note))
+  if (!item) return { kind: 'skip', reason: '详情解析失败或无视频地址' }
+  return { kind: 'ok', item }
 }
 
 export const xiaohongshuAdapter: PlatformAdapter = {
@@ -450,6 +586,7 @@ export const xiaohongshuAdapter: PlatformAdapter = {
   buildDetailDomScript: buildXiaohongshuDetailDomScript,
   isDetailResponse: isXiaohongshuDetailResponse,
   parseDetail: parseXiaohongshuNoteDetail,
+  parseDetailHtml: parseXiaohongshuDetailHtml,
 
   normalizePlayUrl: (rawUrl: string) => rawUrl
 }

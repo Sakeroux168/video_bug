@@ -18,6 +18,7 @@ export default function FilterForm({ onSubmit }: { onSubmit: (t: CreateTaskInput
   const [aiRule, setAiRule] = useState('')
   const [aiOrganize, setAiOrganize] = useState(false)
   const [autoDownload, setAutoDownload] = useState(true)
+  const [detailMode, setDetailMode] = useState<Filters['detailMode']>('safe')
   const [allowDuplicateAuthor, setAllowDuplicateAuthor] = useState<boolean | undefined>(undefined)
   const [err, setErr] = useState('')
 
@@ -57,7 +58,8 @@ export default function FilterForm({ onSubmit }: { onSubmit: (t: CreateTaskInput
         timeRange, duration,
         durationMinSec: duration === 'custom' ? customMin : undefined,
         durationMaxSec: duration === 'custom' ? customMax : undefined,
-        targetCount: target, aiFilterRule: aiFilter ? aiRule.trim() : undefined
+        targetCount: target, aiFilterRule: aiFilter ? aiRule.trim() : undefined,
+        detailMode: platform === 'xiaohongshu' ? detailMode : undefined
       },
       aiFilterEnabled: aiFilter, aiOrganizeEnabled: aiOrganize,
       autoDownload,
@@ -122,7 +124,21 @@ export default function FilterForm({ onSubmit }: { onSubmit: (t: CreateTaskInput
         <button className={btnPrimary} onClick={submit} disabled={!targetValid || !customDurationValid}>开始抓取</button>
       </div>
       {platform === 'xiaohongshu' && (
-        <p className="mt-2 text-xs text-slate-500">小红书会先应用“视频”网页筛选，再逐条打开笔记获取下载地址；作者主页按卡片播放标识只收视频。近30天、自定义日期和时长会在详情阶段精确筛选，建议先试抓 3 条。</p>
+        <>
+          <div className="mt-2 flex flex-wrap items-center gap-4 text-sm">
+            <span className="text-xs text-slate-500">详情取数模式</span>
+            <label className="flex items-center gap-1">
+              <input type="radio" name="detailMode" checked={detailMode === 'safe'} onChange={() => setDetailMode('safe')} />
+              稳妥
+            </label>
+            <label className="flex items-center gap-1">
+              <input type="radio" name="detailMode" checked={detailMode === 'fast'} onChange={() => setDetailMode('fast')} />
+              快速
+            </label>
+            <span className="text-xs text-slate-500">快速模式更快，但更像程序访问。</span>
+          </div>
+          <p className="mt-2 text-xs text-slate-500">小红书会先应用“视频”网页筛选，再逐条打开笔记获取下载地址；作者主页按卡片播放标识只收视频。近30天、自定义日期和时长会在详情阶段精确筛选，建议先试抓 3 条。</p>
+        </>
       )}
       {duration === 'custom' && !customDurationValid && (
         <p className="mt-2 text-xs text-red-500">自定义时长需为正整数，且最长秒数不能小于最短秒数</p>

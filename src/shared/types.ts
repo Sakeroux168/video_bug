@@ -3,6 +3,8 @@ export type TaskStatus = 'pending' | 'running' | 'done' | 'paused' | 'failed'
 export type VideoStatus = 'pending' | 'downloading' | 'done' | 'failed' | 'filtered' | 'collected' | 'cancelled' | 'paused'
 export type TimeRange = 'all' | '7d' | '30d' | 'custom'
 export type DurationFilter = 'all' | 'under30' | 'short' | 'medium' | 'long' | 'custom'
+/** 详情取数模式（仅小红书）：safe=窗口逐条导航读注水状态；fast=登录态后台取 HTML 解析注水状态 */
+export type DetailMode = 'safe' | 'fast'
 
 export interface Filters {
   timeRange: TimeRange
@@ -12,6 +14,8 @@ export interface Filters {
   durationMinSec?: number
   durationMaxSec?: number
   targetCount: number
+  /** 详情取数模式，缺省视为 'safe'；随 filters JSON 落库，不改表结构 */
+  detailMode?: DetailMode
   aiFilterRule?: string
   aiFilterEnabled?: boolean // createTask 会把它序列化进 filters JSON 列（Task 6）
   aiOrganizeEnabled?: boolean // 同上，任务级开关随 filters 落库

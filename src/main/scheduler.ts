@@ -1,5 +1,5 @@
 import type { DatabaseSync } from 'node:sqlite'
-import type { PlatformAdapter, ListStub, VideoItem } from './adapters/types'
+import type { PlatformAdapter, ListStub, VideoItem, FastDetailOutcome } from './adapters/types'
 import type { AppSettings, TaskRow, TaskStatus, Filters } from '../shared/types'
 import { ERROR } from '../shared/types'
 import { filterVideos, dedupeVideos, extractCategory } from './extractor'
@@ -463,11 +463,19 @@ export class Scheduler {
       const block = await this.detectPageBlock()
       if (block) return block
       if (this.aborted) break
-      const item = await this.resolveDetail(adapter, stub)
+      // 快速模式：详情不在窗口里导航，用登录态 session 直接拉 HTML 解析注水状态。
+      // 仅当 filters.detailMode='fast' 且适配器与浏览器都支持时启用；稳妥仍是默认。
+      const useFast = this.filters?.detailMode === 'fast'
+        && typeof adapter.parseDetailHtml === 'function'
+        && typeof this.deps.browser.fetchDetailHtml === 'function'
+      const item = useFast
+        ? await this.resolveDetailFast(adapter, stub)
+        : await this.resolveDetail(adapter, stub)
       if (this.aborted) break
       if (this.loginFound) return 'login'
       if (this.verifyFound) return 'verify'
       if (item) await this.saveItems(adapter, [item])
+      // 任务之间的间隔照样遵守（scrollIntervalMs），快速模式不额外加压
       if (!this.aborted && this.fetched < target) await this.sleep(this.scrollIntervalMs)
     }
     if (!this.aborted && this.fetched < target) {
@@ -537,14 +545,12 @@ export class Scheduler {
     return new Promise(resolve => {
       let settled = false
       let detailTimer: ReturnType<typeof setInterval> | null = null
-      let xhsResourceTimer: ReturnType<typeof setTimeout> | null = null
       const finish = (item: VideoItem | null): void => {
         if (settled) return
         settled = true
         clearTimeout(timer)
         clearInterval(verifyTimer)
         if (detailTimer) clearInterval(detailTimer)
-        if (xhsResourceTimer) clearTimeout(xhsResourceTimer)
         this.pendingDetail = null
         this.abortDetail = null
         resolve(item)
@@ -555,10 +561,9 @@ export class Scheduler {
         finish(null)
         this.deps.browser.stopLoading?.()
       }
-      // 小红书 loadURL 可能一直等尾部资源，到 30s 强制 stop 后 Vue 才完成详情注水；
-      // 默认多留 5s 给 DOM 提取器，避免页面刚变可读就被同一时刻的详情定时器跳过。
-      const defaultDetailTimeoutMs = adapter.name === 'xiaohongshu' ? 35000 : 30000
-      const timer = setTimeout(() => skip('详情超时，跳过'), this.deps.detailTimeoutMs ?? defaultDetailTimeoutMs)
+      // 详情提取改用 mainFrame.executeJavaScript（不等页面停止加载），注水一到位就能读到，
+      // 不再需要「15 秒 stop 兜底 + 35 秒专用超时」——所有平台统一默认 30 秒。
+      const timer = setTimeout(() => skip('详情超时，跳过'), this.deps.detailTimeoutMs ?? 30000)
       let checking = false
       const verifyTimer = setInterval(() => {
         if (checking || settled) return
@@ -571,12 +576,6 @@ export class Scheduler {
       this.pendingDetail = { noteId: stub.noteId, finish }
       this.abortDetail = () => { finish(null); this.deps.browser.stopLoading?.() }
       if (adapter.buildDetailDomScript && this.deps.browser.extractCurrentDetail) {
-        // 小红书详情页常驻的尾部资源会让 Electron 的 executeJavaScript 一直等到 loadURL
-        // 结束；真机上注水早已到齐，却要等 30s 总超时才被 stop。15s 后只停止继续加载
-        // 资源，不结束详情等待，让已经排队的 DOM 提取立即执行。
-        if (adapter.name === 'xiaohongshu') {
-          xhsResourceTimer = setTimeout(() => this.deps.browser.stopLoading?.(), 15000)
-        }
         let extracting = false
         const extract = (): void => {
           if (extracting || settled) return
@@ -596,6 +595,42 @@ export class Scheduler {
         if (!settled && !this.aborted) return this.deps.browser.load(adapter, adapter.buildDetailUrl!(stub))
       }).catch(() => skip('详情加载失败，跳过'))
     })
+  }
+
+  /**
+   * 快速模式：登录态 session 拉详情 HTML → 适配器解析注水状态。
+   * 登录/验证码页 → 置位对应标志（主循环按 login_required / stalled_verify 暂停）；
+   * 解析失败 → 写脱敏诊断（适配器保证 reason 不携带响应体/令牌）并跳过该条。
+   * 详情地址带一次性令牌，日志一律只写 noteId。
+   */
+  private async resolveDetailFast(adapter: PlatformAdapter, stub: ListStub): Promise<VideoItem | null> {
+    if (this.aborted) return null
+    const url = adapter.buildDetailUrl!(stub)
+    const res = await this.deps.browser.fetchDetailHtml!(adapter, url).catch(() => null)
+    if (this.aborted) return null
+    if (!res) {
+      this.deps.onFilterLog?.(`笔记 ${stub.noteId}：快速模式请求失败，跳过`)
+      return null
+    }
+    let outcome: FastDetailOutcome
+    try {
+      outcome = adapter.parseDetailHtml!(res.finalUrl, res.body, stub.noteId)
+    } catch {
+      outcome = { kind: 'skip', reason: '详情解析异常' }
+    }
+    if (outcome.kind === 'login') {
+      this.loginFound = this.loginFound ?? '详情请求被重定向到登录页'
+      return null
+    }
+    if (outcome.kind === 'verify') {
+      this.verifyFound = this.verifyFound ?? '详情请求被重定向到验证码页'
+      return null
+    }
+    if (outcome.kind === 'skip') {
+      this.deps.onFilterLog?.(`笔记 ${stub.noteId}：快速模式跳过（${outcome.reason}）`)
+      return null
+    }
+    return outcome.item
   }
 
   /**

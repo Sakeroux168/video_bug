@@ -45,6 +45,16 @@ export interface NativeSearchFilter {
   option: string
 }
 
+/**
+ * 快速模式详情取数结果。reason 必须是固定文案或从错误类型推导，
+ * 不得携带响应体片段 / URL 查询串——详情地址带 xsec_token，落日志前一律脱敏。
+ */
+export type FastDetailOutcome =
+  | { kind: 'ok'; item: VideoItem }
+  | { kind: 'login' }   // 被重定向到登录页 → 调度器按 login_required 暂停
+  | { kind: 'verify' }  // 被重定向到验证码页 → 调度器按 stalled_verify 暂停
+  | { kind: 'skip'; reason: string }
+
 export interface PlatformAdapter {
   name: string
   displayName: string
@@ -96,5 +106,8 @@ export interface PlatformAdapter {
   buildDetailDomScript?(noteId: string): string | null
   isDetailResponse?(url: string, json: unknown, noteId?: string): boolean
   parseDetail?(json: unknown): VideoItem | null
+  /** 快速模式：不在窗口里导航，用登录态 session 拉详情 HTML 后解析注水状态。
+   *  finalUrl 是跟随重定向后的最终地址（登录页/验证码页靠它识别）。 */
+  parseDetailHtml?(finalUrl: string, html: string, noteId: string): FastDetailOutcome
   normalizePlayUrl(rawUrl: string): string
 }
