@@ -19,6 +19,11 @@ export interface CreateTaskResult {
  *    比对时对已有 done 行的 query 也归一化一次（库里可能有修复前存的完整 URL 历史行）。
  * 通过检查就入库并 enqueue；返回值形状与 task:create 一致。
  */
+/** 这一行任务是不是「按日期段抓」（filters.timeRange=custom）；filters 坏了当不是 */
+function isRangeCrawl(filters: string | null): boolean {
+  try { return (JSON.parse(filters ?? '{}') as { timeRange?: string }).timeRange === 'custom' } catch { return false }
+}
+
 export function createTaskChecked(db: DatabaseSync, rawInput: CreateTaskInput, enqueue: (id: number) => void): CreateTaskResult {
   let input = rawInput
   // 接入中的平台（解析器还没按真机接口写）不能建任务。
@@ -43,9 +48,11 @@ export function createTaskChecked(db: DatabaseSync, rawInput: CreateTaskInput, e
   }
   if (input.type === 'author' && !(input.allowDuplicateAuthor ?? getSettings().allowDuplicateAuthor)) {
     const adapter = getAdapter(input.platform)
-    const doneRows = db.prepare("SELECT query FROM tasks WHERE type='author' AND status='done'")
-      .all() as Array<{ query: string }>
-    const dup = doneRows.some(r => (adapter?.parseAuthorInput(r.query) ?? r.query) === input.query)
+    const doneRows = db.prepare("SELECT query, filters FROM tasks WHERE type='author' AND status='done'")
+      .all() as Array<{ query: string; filters: string | null }>
+    // R20 复查：只按日期段抓过（timeRange=custom）不算「主页已爬取过」——那只抓了一段时间，
+    // 以后再来一次正常的整页抓取不能被它拦掉。
+    const dup = doneRows.some(r => !isRangeCrawl(r.filters) && (adapter?.parseAuthorInput(r.query) ?? r.query) === input.query)
     if (dup) return { id: null, skipped: true, reason: '该作者主页已爬取过，可在作者表格中直接管理' }
   }
   const id = createTask(db, input)

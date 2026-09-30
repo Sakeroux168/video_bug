@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { api } from '../api'
 import type { AppSettings, AsrStatus, AsrProgress } from '../../../shared/types'
+import { clampStuckTimeoutMin } from '../../../shared/types'
 import { Card, btnPrimary, inputCls } from './ui'
 
 /** 字节数格式化成可读体积 */
@@ -48,8 +49,12 @@ export default function SettingsPanel() {
       err('自动归档延迟不能小于 0 秒')
       return
     }
-    await api.saveSettings(s)
-    ok('已保存')
+    // R20 复查：卡住判定只收 2-60 分钟（空、0、1 以前会被悄悄收下）；夹紧后把实际值显示回输入框
+    const stuck = clampStuckTimeoutMin(s.stuckTimeoutMin)
+    const toSave = stuck === s.stuckTimeoutMin ? s : { ...s, stuckTimeoutMin: stuck }
+    if (toSave !== s) setS(toSave)
+    await api.saveSettings(toSave)
+    ok(stuck === s.stuckTimeoutMin ? '已保存' : `已保存（卡住判定只能 2-60 分钟，已按 ${stuck} 分钟保存）`)
     setTimeout(() => setMsg(null), 1500)
   }
 
@@ -207,8 +212,8 @@ export default function SettingsPanel() {
             </label>
             <label className="flex flex-col gap-1" title="任务这么多分钟没抓到新视频、页面也没在动，就当它卡住了：自动停下，让排队的下一个任务接着跑">
               卡住判定(分钟)
-              <input type="number" min={2} max={60} className={inputCls} value={s.stuckTimeoutMin ?? 5}
-                onChange={e => set('stuckTimeoutMin', Number(e.target.value))} />
+              <input type="number" min={2} max={60} className={inputCls} value={Number.isFinite(s.stuckTimeoutMin) ? s.stuckTimeoutMin : ''}
+                onChange={e => set('stuckTimeoutMin', e.target.value === '' ? Number.NaN : Number(e.target.value))} />
             </label>
           </div>
         </Card>

@@ -5,13 +5,18 @@
  * 或者干脆卡死不动，后面排队的就永远停在「等待中」——用户看到的就是
  * 「有个人一直卡着说运行中，动也不动，其他的都排着队」。
  *
- * 现在的规则：
- * - 当前任务**只要结束了**（完成 / 暂停 / 失败 / 出错 / 被看门狗判卡住）就放行下一个。
- * - 唯一例外：弹了验证码（stalled_verify）。这时要等人在浏览器里过验证，
- *   接着跑下一个会把验证页面冲掉、而且下一个多半也会被拦——所以先按住不放，
- *   等有任务重新跑起来（用户点「继续」）或用户手动建/删任务时再说。
+ * 现在的规则（R20 复查后）：
+ * - 任务**结束了**就放行下一个：完成 / 失败 / 调度出错 / 被看门狗判卡住（stuck）/ 重搜用尽（stalled）/ 作者校验不过，
+ *   以及 run 不发事件就退出的早退。
+ * - **按住不放**的三种：弹验证码（stalled_verify，要等人过验证，接着跑会把验证页冲掉、下一个多半也被拦）、
+ *   疑似风控（risk，连着跑只会继续撞风控）、用户自己点了暂停（user，用户就是想停）。
+ *   按住期间新进来的任务（包括发布助手经本机接口建的）也只排队不开跑；
+ *   用户点某个任务的「开始」/「继续」让它跑起来、或删任务时才松开。
  * - 暂停的任务不会自己重新排队（不会循环重试），要用户点「继续」。
  */
+/** 这些暂停原因会按住队列 */
+const HOLD_REASONS = new Set(['stalled_verify', 'risk', 'user'])
+
 export interface TaskQueueDeps {
   /** 调度器是否正有任务在跑 */
   isRunning: () => boolean
@@ -36,12 +41,13 @@ export class TaskQueue {
   /** 是否因验证码暂停而按住了自动放行 */
   get isHeld(): boolean { return this.held }
 
-  /** 新任务入队（去重）。这是用户/外部程序的主动操作，不受「按住」影响。 */
+  /** 新任务入队（去重）。R20 复查：按住期间只排队不开跑——发布助手趁用户过验证码时建任务，
+   *  以前会直接开跑、把验证页面冲掉。 */
   enqueue(id: number): void {
     if (this.queued.has(id)) return
     this.queued.add(id)
     this.pending.push(id)
-    this.next(false)
+    this.next(true)
   }
 
   /** 从队列里摘掉（删任务 / 用户直接「开始」某个排队任务时用） */
@@ -51,8 +57,11 @@ export class TaskQueue {
     if (i >= 0) this.pending.splice(i, 1)
   }
 
-  /** 手动踢一脚（删任务等用户操作之后）：不受「按住」影响 */
-  kick(): void { this.next(false) }
+  /** 用户明确操作之后（删任务）踢一脚：松开按住，接着跑下一个 */
+  kick(): void {
+    this.held = false
+    this.next(false)
+  }
 
   /** 调度器事件：据此判断当前任务是否结束、要不要放行下一个 */
   onEvent(evt: unknown): void {
@@ -61,7 +70,7 @@ export class TaskQueue {
     if (t.type === 'task:progress' && t.status === 'running') { this.held = false; return }
     if (t.type === 'task:done') { this.next(true); return }
     if (t.type === 'task:paused') {
-      if (t.reason === 'stalled_verify') { this.held = true; return }
+      if (t.reason && HOLD_REASONS.has(t.reason)) { this.held = true; return }
       this.next(true)
     }
   }

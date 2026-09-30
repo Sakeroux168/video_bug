@@ -111,6 +111,13 @@ describe('bridge', () => {
     expect(f.endDate).toBe('2026-09-27')
     expect((await post('/job', { query: AUTHOR_URL, allowDuplicateAuthor: true, startDate: '9.10' })).status).toBe(400)
     expect((await post('/job', { query: AUTHOR_URL, allowDuplicateAuthor: true, startDate: '2026-09-28', endDate: '2026-09-27' })).status).toBe(400)
+    // R20 复查：格式对但这一天不存在 → 400 并说清楚（以前 13 月会变成「不限」、2 月 31 日会滚到 3 月）
+    for (const [s, e] of [['2024-13-01', '2024-12-31'], ['2026-02-01', '2026-02-31'], ['2026-00-10', '2026-01-10']]) {
+      const bad = await post('/job', { query: AUTHOR_URL, allowDuplicateAuthor: true, startDate: s, endDate: e })
+      expect(bad.status).toBe(400)
+      expect(String(bad.json.error)).toContain('不是有效日期')
+    }
+    expect(jobFromBody({ query: 'u', startDate: '2024-02-29', endDate: '2024-03-01' })).not.toBeTypeOf('string') // 闰年 2 月 29 日是有效的
     const only = jobFromBody({ query: 'u', startDate: '2026-09-10' })
     if (typeof only !== 'string') {
       expect(only.filters.timeRange).toBe('custom')

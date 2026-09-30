@@ -49,7 +49,6 @@ describe('任务队列：任务怎么结束都放行下一个（R20）', () => {
   })
 
   it.each([
-    ['用户暂停', '用户暂停或风控'],
     ['停滞重搜用尽', 'stalled'],
     ['调度出错 / 失败', 'scheduler_error'],
     ['看门狗判卡住', 'stuck'],
@@ -122,7 +121,7 @@ describe('任务队列：任务怎么结束都放行下一个（R20）', () => {
     expect(s.started).toEqual([1, 2])
   })
 
-  it('验证码按住期间，用户手动操作（新建任务 / 删任务踢一脚）照样放行', async () => {
+  it('验证码按住期间，用户删任务踢一脚（kick）照样放行', async () => {
     const { q, s } = setup()
     q.enqueue(1); q.enqueue(2)
     await settle()
@@ -133,6 +132,61 @@ describe('任务队列：任务怎么结束都放行下一个（R20）', () => {
     q.kick()
     await settle()
     expect(s.started).toEqual([1, 2])
+  })
+
+  // R20 复查：用户点暂停 / 疑似风控也要按住——用户就是想停；风控时连着跑只会继续撞
+  it.each([
+    ['用户点了暂停', 'user'],
+    ['疑似风控', 'risk'],
+    ['要过验证码', 'stalled_verify']
+  ])('%s（reason=%s）→ 按住队列，后面的不自动开跑', async (_name, reason) => {
+    const { q, s } = setup()
+    q.enqueue(1); q.enqueue(2)
+    await settle()
+    s.state.running = false
+    q.onEvent({ type: 'task:paused', taskId: 1, reason })
+    s.finish.get(1)!()
+    await settle()
+    expect(s.started).toEqual([1])
+    expect(q.isHeld).toBe(true)
+    expect(q.ids).toEqual([2])
+  })
+
+  it('按住期间新进来的任务（比如发布助手经本机接口建的）只排队不开跑——不能把验证页冲掉', async () => {
+    const { q, s } = setup()
+    q.enqueue(1)
+    await settle()
+    s.state.running = false
+    q.onEvent({ type: 'task:paused', taskId: 1, reason: 'stalled_verify' })
+    await settle()
+    q.enqueue(2)
+    await settle()
+    expect(s.started).toEqual([1])
+    expect(q.ids).toEqual([2])
+  })
+
+  it('没有按住时新任务照常立刻开跑', async () => {
+    const { q, s } = setup()
+    q.enqueue(1)
+    await settle()
+    expect(s.started).toEqual([1])
+  })
+
+  it('用户删任务（kick）→ 松开按住，接着跑下一个；之后结束也恢复自动放行', async () => {
+    const { q, s } = setup()
+    q.enqueue(1); q.enqueue(2); q.enqueue(3)
+    await settle()
+    s.state.running = false
+    q.onEvent({ type: 'task:paused', taskId: 1, reason: 'user' })
+    await settle()
+    expect(s.started).toEqual([1])
+    q.kick()
+    await settle()
+    expect(s.started).toEqual([1, 2])
+    expect(q.isHeld).toBe(false)
+    s.finish.get(2)!()
+    await settle()
+    expect(s.started).toEqual([1, 2, 3])
   })
 
   it('remove：还在排队的任务被摘掉，轮不到它', async () => {

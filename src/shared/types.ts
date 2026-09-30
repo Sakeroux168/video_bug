@@ -192,6 +192,15 @@ export interface AsrProgress {
   total: number
 }
 
+/** R20：卡住判定分钟数的允许范围（设置页保存时夹紧；调度器读的时候再夹一次，手改 settings.json 也不怕） */
+export const STUCK_TIMEOUT_MIN_RANGE = { min: 2, max: 60, default: 5 } as const
+/** 空 / 非数字 → 默认 5；小于 2 → 2；大于 60 → 60；小数取整 */
+export function clampStuckTimeoutMin(v: unknown): number {
+  const n = Math.round(Number(v))
+  if (v === '' || v === null || v === undefined || !Number.isFinite(n) || n <= 0) return STUCK_TIMEOUT_MIN_RANGE.default
+  return Math.min(STUCK_TIMEOUT_MIN_RANGE.max, Math.max(STUCK_TIMEOUT_MIN_RANGE.min, n))
+}
+
 export const ERROR = {
   NETWORK: 'network', ADDRESS_EXPIRED: 'address_expired', FORBIDDEN: 'forbidden',
   LOGIN_EXPIRED: 'login_expired', DISK: 'disk', PARSE_ERROR: 'parse_error',

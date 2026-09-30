@@ -359,6 +359,14 @@ export default function TaskList({ notify }: { notify: (text: string) => void })
           >暂停下载</button>
         )}
       </div>
+      {/* R20 复查：用户暂停 / 疑似风控 / 要过验证之后，排队的任务不会自动开跑（主进程按住队列）——
+          不说清楚的话用户只看到一排「等待中」一动不动，跟卡住没区别 */}
+      {tasks.some(t => t.status === 'pending') && !tasks.some(t => t.status === 'running') &&
+        tasks.some(t => t.status === 'paused' && (t.error === 'user' || t.error === 'risk' || t.error === 'stalled_verify')) && (
+        <div data-queue-held className="mb-3 rounded-md bg-amber-50 px-3 py-2 text-xs text-amber-700">
+          排队的任务先不自动开跑：刚才有任务被暂停（你点了暂停 / 疑似风控 / 要过验证）。想接着跑，点排队任务右边的「开始」，或对暂停的任务点「继续」。
+        </div>
+      )}
       {tasks.length === 0 ? (
         <div className="py-8 text-center text-sm text-slate-400">暂无任务，先在上方「筛选条件」发起抓取</div>
       ) : (
@@ -447,6 +455,13 @@ export default function TaskList({ notify }: { notify: (text: string) => void })
                     <tr className="border-b border-slate-100 bg-amber-50/60">
                       <td colSpan={6} className="px-2 py-1.5 text-xs text-amber-700">
                         任务可能触发验证，请到「内置浏览器」完成验证（滑块/扫码）后点「继续」
+                      </td>
+                    </tr>
+                  )}
+                  {t.status === 'paused' && t.error === 'risk' && (
+                    <tr className="border-b border-slate-100 bg-amber-50/60">
+                      <td colSpan={6} className="px-2 py-1.5 text-xs text-amber-700">
+                        疑似风控，已暂停（连续几批都没抓到数据）——排队的任务先不自动跑，过一会儿再点「继续」
                       </td>
                     </tr>
                   )}

@@ -11,7 +11,8 @@ function hungBrowser(): { b: VideoBrowser; wc: Record<string, ReturnType<typeof 
     executeJavaScript: vi.fn(() => new Promise(() => {})),
     send: vi.fn(),
     stop: vi.fn(),
-    reload: vi.fn()
+    reload: vi.fn(),
+    loadURL: vi.fn(async () => {})
   }
   const b = new VideoBrowser({} as never)
   ;(b as unknown as { win: unknown }).win = { webContents: wc, isDestroyed: () => false }
@@ -54,12 +55,21 @@ describe('页面查询脚本超时（R20）', () => {
     expect(vi.getTimerCount()).toBe(0)
   })
 
-  it('resetPage：叫停滚动、停止加载并刷新页面（都是发出去不等，页面卡死也不会把程序卡住）', () => {
+  it('resetPage：叫停滚动、停止加载并换成空白页（都是发出去不等，页面卡死也不会把程序卡住）', () => {
     const { b, wc } = hungBrowser()
     b.resetPage()
     expect(wc.send).toHaveBeenCalledWith('platform:scroll-abort')
     expect(wc.stop).toHaveBeenCalled()
-    expect(wc.reload).toHaveBeenCalled()
+    // R20 复查：不能 reload——刷新的还是上一个任务的作者主页，它的接口数据会串进下一个任务
+    expect(wc.loadURL).toHaveBeenCalledWith('about:blank')
+    expect(wc.reload).not.toHaveBeenCalled()
+  })
+
+  it('resetPage：空白页打不开（loadURL 拒绝）也不会变成未处理的异常', async () => {
+    const { b, wc } = hungBrowser()
+    wc.loadURL.mockImplementation(async () => { throw new Error('ERR_ABORTED') })
+    expect(() => b.resetPage()).not.toThrow()
+    await new Promise(r => setTimeout(r, 0))
   })
 
   it('resetPage：没有窗口 / 页面抛错都不影响调用方', () => {

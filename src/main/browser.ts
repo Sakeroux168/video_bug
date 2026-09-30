@@ -95,9 +95,10 @@ export class VideoBrowser {
   }
 
   /**
-   * R20：看门狗判定任务卡住时调用——叫停页面里的滚动脚本和正在进行的加载，再刷新一次页面，
+   * R20：看门狗判定任务卡住时调用——叫停页面里的滚动脚本和正在进行的加载，再换成空白页，
    * 把可能卡死的页面状态清掉。全部是「发出去不等」：页面若真卡死，等它只会把程序也一起卡住。
-   * 下一个任务 load 自己的地址时会盖掉这次刷新（load 已把 ERR_ABORTED 当正常）。
+   * R20 复查：以前是 reload()——刷新的还是上一个任务的作者主页，它的接口数据会串进下一个任务
+   * （作者主页接口只按路径认）。换成 about:blank 就没有这些数据了；下一个任务 load 自己的地址。
    */
   resetPage(): void {
     const win = this.win
@@ -105,7 +106,7 @@ export class VideoBrowser {
     try {
       this.abortScroll()
       win.webContents.stop()
-      win.webContents.reload()
+      void Promise.resolve(win.webContents.loadURL('about:blank')).catch(() => { /* 空白页都打不开也不影响收尾 */ })
     } catch { /* 页面已经坏了也不能影响调度器收尾 */ }
   }
 

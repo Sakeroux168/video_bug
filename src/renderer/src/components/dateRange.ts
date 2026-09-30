@@ -5,12 +5,19 @@
  */
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
 
+/** 格式对且这一天真实存在（2026-02-31 这种会被 JS 悄悄滚到下个月，要挡掉） */
+function isRealDate(d: string): boolean {
+  if (!DATE_RE.test(d)) return false
+  const t = new Date(d + 'T00:00:00Z')
+  return Number.isFinite(t.getTime()) && t.toISOString().slice(0, 10) === d
+}
+
 /** 合法返回 null，不合法返回一句给用户看的中文提示 */
 export function checkDateRange(from: string, to: string): string | null {
   const f = from.trim()
   const t = to.trim()
   if (!f && !t) return '请至少选一个日期'
-  if ((f && !DATE_RE.test(f)) || (t && !DATE_RE.test(t))) return '日期格式不对'
+  if ((f && !isRealDate(f)) || (t && !isRealDate(t))) return '日期不对（这一天不存在）'
   if (f && t && f > t) return '开始日期不能晚于结束日期'
   return null
 }

@@ -23,11 +23,19 @@ export function matchTimeRange(tsSec: number, range: TimeRange, start?: string, 
 const CHINA_OFFSET_SEC = 8 * 3600
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
 
-/** YYYY-MM-DD 这一天北京时间 00:00:00 的秒级时间戳；格式不对返回 null（当没填） */
+/** YYYY-MM-DD 这一天北京时间 00:00:00 的秒级时间戳；格式不对 / 日期不存在（2024-13-01、2026-02-31）返回 null（当没填）。
+ *  R20 复查：只看格式不够——JS 会把 2026-02-31 悄悄滚成 3 月 3 日，这里换算回去对不上就判无效。 */
 export function chinaDayStartSec(date: string): number | null {
   if (!DATE_RE.test(date)) return null
   const ms = new Date(date + 'T00:00:00+08:00').getTime()
-  return Number.isFinite(ms) ? ms / 1000 : null
+  if (!Number.isFinite(ms)) return null
+  if (chinaToday(ms) !== date) return null
+  return ms / 1000
+}
+
+/** YYYY-MM-DD 格式正确且这一天真实存在 */
+export function isValidChinaDate(date: string): boolean {
+  return chinaDayStartSec(date) !== null
 }
 
 /** YYYY-MM-DD 这一天北京时间 23:59:59 的秒级时间戳；格式不对返回 null（当没填） */

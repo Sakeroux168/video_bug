@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { DatabaseSync } from 'node:sqlite'
 import { buildStopDecision, Scheduler } from '../src/main/scheduler'
-import { initDb, createTask, listAuthors, insertAuthorIfAbsent, upsertAuthor } from '../src/main/db'
+import { initDb, createTask, listAuthors, insertAuthorIfAbsent, upsertAuthor, insertVideos } from '../src/main/db'
 import { douyinAdapter } from '../src/main/adapters/douyin'
 import type { PlatformAdapter } from '../src/main/adapters/types'
 import type { CreateTaskInput } from '../src/shared/types'
@@ -1808,5 +1808,207 @@ describe('R20 暂停/删除不再跟着卡死', () => {
     await s.run(taskId)
     expect((db.prepare('SELECT status FROM tasks WHERE id=?').get(taskId) as { status: string }).status).toBe('failed')
     expect(events).toContainEqual({ type: 'task:paused', taskId, reason: 'scheduler_error' })
+  })
+})
+
+describe('R20 复查：作者主页按日期段的空批 / 重复批 / 翻到底', () => {
+  const authorUrl = 'https://www.douyin.com/aweme/v1/web/aweme/post/?device_platform=webapp'
+  const authorInput: CreateTaskInput = {
+    ...input, type: 'author', query: 'https://www.douyin.com/user/SEC_R20',
+    filters: { timeRange: 'custom', startDate: '2024-03-10', endDate: '2024-03-20', duration: 'all', targetCount: 200 }
+  }
+  const cst = (iso: string): number => Date.parse(iso + '+08:00') / 1000
+  function aweme(id: string, createTime: number, durationMs = 8000): Record<string, unknown> {
+    return { aweme_id: id, desc: '作品', create_time: createTime, author: { sec_uid: 'SEC_R20', nickname: '作者' },
+      video: { play_addr: { url_list: ['https://cdn.test/r20.mp4'] } }, statistics: { digg_count: 1 }, duration: durationMs }
+  }
+  const page = (list: unknown[], extra: Record<string, unknown> = {}): unknown => ({ aweme_list: list, ...extra })
+
+  async function startBlocked(filters = authorInput.filters, seedIds: string[] = []) {
+    const db = newDb()
+    if (seedIds.length > 0) {
+      // 以前抓过这段：库里已有这些作品（补抓同一段时 seen 去重会把它们全丢掉）
+      const old = createTask(db, { ...authorInput, filters })
+      insertVideos(db, douyinAdapter.parseApiJson(authorUrl, page(seedIds.map(id => aweme(id, cst('2024-03-15T12:00:00'))))), old, 'douyin')
+    }
+    const taskId = createTask(db, { ...authorInput, filters })
+    const browser = new FakeBrowser()
+    const { s, events, logs } = setup(db, new FakeDownloader(), browser)
+    let now = 7_000_000
+    vi.spyOn(Date, 'now').mockImplementation(() => now)
+    browser.blockNextLoad()
+    const p = s.run(taskId)
+    await new Promise(r => setTimeout(r, 10))
+    return { db, taskId, browser, s, events, logs, p, tick: (ms: number) => { now += ms }, now: () => now }
+  }
+
+  it('补抓同一段：日期段内的作品全都抓过（seen）→ 不累计空轮、不当风控；页面在往下翻就算进展', async () => {
+    const ids = ['7330000000000007001', '7330000000000007002', '7330000000000007003', '7330000000000007004']
+    const c = await startBlocked(authorInput.filters, ids)
+    for (const id of ids) {
+      c.tick(30_000)
+      expect(await c.s.handleRaw(douyinAdapter, authorUrl, page([aweme(id, cst('2024-03-15T12:00:00'))]))).toEqual({ items: 1, kept: 0 })
+      expect((c.s as any).emptyRounds).toBe(0)
+      expect((c.s as any).aborted).toBe(false)
+      expect((c.s as any).lastFetchedAt).toBe(c.now())
+    }
+    c.browser.releaseLoad()
+    await c.s.pause()
+    await c.p
+  }, 10000)
+
+  it('日期段内但被时长筛掉 → 同样不当风控', async () => {
+    const c = await startBlocked({ ...authorInput.filters, duration: 'under30' })
+    for (let i = 0; i < 4; i++) {
+      await c.s.handleRaw(douyinAdapter, authorUrl, page([aweme(`733000000000000710${i}`, cst('2024-03-15T12:00:00'), 120_000)]))
+    }
+    expect((c.s as any).emptyRounds).toBe(0)
+    expect((c.s as any).aborted).toBe(false)
+    c.browser.releaseLoad()
+    await c.s.pause()
+    await c.p
+  }, 10000)
+
+  it('同一批「比结束日期还新」的作品反复出现（游标卡住 / 软风控）→ 只有第一次算进展，之后不刷新停滞计时', async () => {
+    const c = await startBlocked()
+    const same = page([aweme('7330000000000007201', cst('2024-04-01T12:00:00'))])
+    c.tick(1000)
+    await c.s.handleRaw(douyinAdapter, authorUrl, same)
+    const first = c.now()
+    expect((c.s as any).lastFetchedAt).toBe(first)
+    for (let i = 0; i < 3; i++) {
+      c.tick(30_000)
+      await c.s.handleRaw(douyinAdapter, authorUrl, same)
+    }
+    expect((c.s as any).lastFetchedAt).toBe(first) // 没被重复批刷新 → 停滞检测会照常触发
+    expect((c.s as any).aborted).toBe(false) // 也不当风控
+    c.browser.releaseLoad()
+    await c.s.pause()
+    await c.p
+  }, 10000)
+
+  it('接口真的一条都没有（空列表）连续 3 批 → 仍按疑似风控暂停：error=risk、事件 reason=risk', async () => {
+    const c = await startBlocked()
+    for (let i = 0; i < 3; i++) await c.s.handleRaw(douyinAdapter, authorUrl, page([]))
+    expect((c.s as any).aborted).toBe(true)
+    c.browser.releaseLoad()
+    await c.p
+    expect(c.db.prepare('SELECT status, error FROM tasks WHERE id=?').get(c.taskId)).toEqual({ status: 'paused', error: 'risk' })
+    expect(c.events).toContainEqual({ type: 'task:paused', taskId: c.taskId, reason: 'risk' })
+  }, 10000)
+
+  it('接口说后面没有了（has_more=0）→ 这一批处理完就算抓完（done）', async () => {
+    const c = await startBlocked({ timeRange: 'custom', endDate: '2024-03-20', duration: 'all', targetCount: 200 })
+    await c.s.handleRaw(douyinAdapter, authorUrl, page([aweme('7330000000000007301', cst('2024-03-01T12:00:00'))], { has_more: 0 }))
+    expect((c.s as any).pastRange).toBe(true)
+    c.browser.releaseLoad()
+    await c.p
+    const row = c.db.prepare('SELECT status, fetched_count FROM tasks WHERE id=?').get(c.taskId) as { status: string; fetched_count: number }
+    expect(row).toEqual({ status: 'done', fetched_count: 1 })
+    expect(c.logs.some(l => l.includes('已经翻到底'))).toBe(true)
+  }, 10000)
+
+  it('has_more=1 不收尾', async () => {
+    const c = await startBlocked()
+    await c.s.handleRaw(douyinAdapter, authorUrl, page([aweme('7330000000000007401', cst('2024-03-15T12:00:00'))], { has_more: 1 }))
+    expect((c.s as any).pastRange).toBe(false)
+    c.browser.releaseLoad()
+    await c.s.pause()
+    await c.p
+  }, 10000)
+
+  it('只填「到」、页面翻到底（停滞自救看到「暂时没有更多了」）→ 按抓完收尾（done），不重搜回顶部', async () => {
+    const db = newDb()
+    const taskId = createTask(db, { ...authorInput, filters: { timeRange: 'custom', endDate: '2024-03-20', duration: 'all', targetCount: 200 } })
+    const browser = new FakeBrowser() // bottomText 默认「暂时没有更多了」
+    const loadSpy = vi.spyOn(browser, 'load')
+    advancingClock()
+    const { s } = setup(db, new FakeDownloader(), browser)
+    await s.run(taskId)
+    expect((db.prepare('SELECT status FROM tasks WHERE id=?').get(taskId) as { status: string }).status).toBe('done')
+    expect(loadSpy).toHaveBeenCalledTimes(1) // 只有开头那次，没有重搜
+  }, 10000)
+
+  it('对照：关键词任务到底照旧重搜（不适用「到底即抓完」）', async () => {
+    const db = newDb()
+    const taskId = createTask(db, input)
+    const browser = new FakeBrowser()
+    const loadSpy = vi.spyOn(browser, 'load')
+    advancingClock()
+    const { s } = setup(db, new FakeDownloader(), browser)
+    await s.run(taskId)
+    expect(loadSpy.mock.calls.length).toBeGreaterThan(1)
+  }, 10000)
+
+  it('接口地址带的 sec_user_id 不是本任务的作者（上一个任务的页面数据）→ 不收', async () => {
+    const c = await startBlocked()
+    const body = page([aweme('7330000000000007501', cst('2024-03-15T12:00:00'))])
+    expect(await c.s.handleRaw(douyinAdapter, authorUrl + '&sec_user_id=SOMEONE_ELSE', body)).toBeNull()
+    expect(c.db.prepare('SELECT COUNT(*) c FROM videos WHERE task_id=?').get(c.taskId)).toEqual({ c: 0 })
+    expect(await c.s.handleRaw(douyinAdapter, authorUrl + '&sec_user_id=SEC_R20', body)).toEqual({ items: 1, kept: 1 })
+    c.browser.releaseLoad()
+    await c.s.pause()
+    await c.p
+  }, 10000)
+})
+
+describe('R20 复查：暂停原因分清「用户」和「风控」', () => {
+  it('用户点暂停 → 事件 reason=user（主进程据此按住队列）', async () => {
+    const db = newDb()
+    const taskId = createTask(db, input)
+    const browser = new FakeBrowser()
+    const { s, events } = setup(db, new FakeDownloader(), browser)
+    browser.blockNextLoad()
+    const p = s.run(taskId)
+    await new Promise(r => setTimeout(r, 10))
+    browser.releaseLoad()
+    await s.pause()
+    await p
+    expect(events).toContainEqual({ type: 'task:paused', taskId, reason: 'user' })
+  }, 10000)
+})
+
+describe('R20 复查：卡住判定分钟数夹到 2-60', () => {
+  afterEach(() => { vi.useRealTimers() })
+  function build(db: DatabaseSync, browser: FakeBrowser, minutes: unknown) {
+    const logs: string[] = []
+    const s = new Scheduler({
+      db, browser: browser as never, analyzer: null, downloader: new FakeDownloader() as never,
+      emit: () => {}, onFilterLog: m => logs.push(m),
+      getScrollParams: () => ({ scrollSpeed: 'slow' as const, scrollPageWaitMs: 8000, scrollIntervalMs: 1 }),
+      getStallThresholdSec: () => 0.01,
+      getStuckTimeoutMin: () => minutes as number
+    })
+    return { s, logs }
+  }
+
+  it('设成 100 分钟 → 按 60 分钟执行（并打日志说明）', async () => {
+    vi.useFakeTimers()
+    const db = newDb()
+    const taskId = createTask(db, input)
+    const browser = new FakeBrowser()
+    browser.blockNextScroll()
+    const { s, logs } = build(db, browser, 100)
+    void s.run(taskId)
+    await vi.advanceTimersByTimeAsync(59 * 60 * 1000)
+    expect(s.isRunning).toBe(true)
+    await vi.advanceTimersByTimeAsync(60 * 1000 + 5000)
+    expect(s.isRunning).toBe(false)
+    expect((db.prepare('SELECT error FROM tasks WHERE id=?').get(taskId) as { error: string }).error).toBe('stuck')
+    expect(logs.some(l => l.includes('按 60 分钟执行'))).toBe(true)
+  })
+
+  it.each([[0, 5], [Number.NaN, 5], [1, 2]])('设成 %s → 按 %s 分钟执行', async (v, expected) => {
+    vi.useFakeTimers()
+    const db = newDb()
+    const taskId = createTask(db, input)
+    const browser = new FakeBrowser()
+    browser.blockNextScroll()
+    const { s } = build(db, browser, v)
+    void s.run(taskId)
+    await vi.advanceTimersByTimeAsync(expected * 60 * 1000 - 20000)
+    expect(s.isRunning).toBe(true)
+    await vi.advanceTimersByTimeAsync(30000)
+    expect(s.isRunning).toBe(false)
   })
 })

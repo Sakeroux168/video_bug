@@ -4,7 +4,7 @@ import type { IncomingMessage, Server, ServerResponse } from 'http'
 import type { DatabaseSync } from 'node:sqlite'
 import { globalStats, listTasks, taskStats } from './db'
 import { createTaskChecked } from './taskCreate'
-import { chinaToday } from './extractor'
+import { chinaToday, isValidChinaDate } from './extractor'
 import type { CreateTaskInput, Filters } from '../shared/types'
 
 /**
@@ -65,6 +65,9 @@ export function jobFromBody(body: JobBody): CreateTaskInput | string {
     const s = typeof body.startDate === 'string' ? body.startDate : ''
     const e = typeof body.endDate === 'string' ? body.endDate : chinaToday() // 北京时间的今天（按 UTC 取早上 8 点前会变成昨天）
     if (!DATE_RE.test(s) || !DATE_RE.test(e)) return 'startDate / endDate 要写成 YYYY-MM-DD'
+    // R20 复查：格式对但日期不存在（2024-13-01、2026-02-31）以前会被收下，变成「不限」或悄悄滚到下个月
+    if (!isValidChinaDate(s)) return `startDate 不是有效日期：${s}（这一天不存在）`
+    if (!isValidChinaDate(e)) return `endDate 不是有效日期：${e}（这一天不存在）`
     if (s > e) return 'startDate 不能晚于 endDate'
     filters.timeRange = 'custom'
     filters.startDate = s

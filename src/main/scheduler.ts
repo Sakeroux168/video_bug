@@ -1,7 +1,7 @@
 import type { DatabaseSync } from 'node:sqlite'
 import type { PlatformAdapter } from './adapters/types'
 import type { AppSettings, TaskRow, TaskStatus, Filters } from '../shared/types'
-import { ERROR } from '../shared/types'
+import { ERROR, clampStuckTimeoutMin } from '../shared/types'
 import { filterVideos, dedupeVideos, extractCategory, chinaDayStartSec, chinaDayEndSec } from './extractor'
 import { isRiskSignal } from './errors'
 import { upsertAuthor, listAuthors, setAuthorVerify } from './db'
@@ -35,6 +35,13 @@ export function buildStopDecision(fetched: number, target: number, emptyRounds: 
   if (fetched >= target) return 'reached'
   if (emptyRounds >= 5) return 'stop'
   return 'continue'
+}
+
+/** R20 复查：接口响应自带的「后面没有了」标记（抖音作者主页 aweme/post 根上的 has_more=0/false）。
+ *  没有这个字段的平台一律当「不知道」，不据此收尾。 */
+function feedEnded(json: unknown): boolean {
+  const hm = (json as { has_more?: unknown } | null)?.has_more
+  return hm === 0 || hm === false
 }
 
 /** R20：等一个 Promise 最多 ms 毫秒；按时完成返回 true，超时返回 false（不抛错，计时器必清） */
@@ -133,6 +140,15 @@ export class Scheduler {
   private idleTicks = 0
   /** R20：作者主页按日期段抓、正在翻「比结束日期还新」的作品时只打一次日志 */
   private skippingNewerLogged = false
+  /** R20 复查：作者主页按日期段抓时，本次页面里已经滚过的作品 id（不管留没留）。
+   *  一批里有没见过的 id 才算「往下翻了」；同一批反复出现（游标卡住 / 软风控）不算进展，停滞检测照常起作用。
+   *  重搜重新加载页面时清空。 */
+  private scrolledIds = new Set<string>()
+  /** R20 复查：作者任务要抓的 sec_uid（接口地址里带 sec_user_id 时据此认人，防止上一个任务的页面数据串进来） */
+  private authorSecUid = ''
+  /** R20 复查：本次 aborted 的原因——user=用户点暂停（含 10 秒没停下来被强制停），risk=连续空数据疑似风控。
+   *  两种都会让队列按住不自动跑下一个（不连着撞风控 / 用户就是想停） */
+  private abortReason: 'user' | 'risk' | null = null
 
   /** 供主进程任务队列判断当前是否有任务在跑（避免重复入队/串行丢任务） */
   get isRunning(): boolean { return this.running }
@@ -165,6 +181,7 @@ export class Scheduler {
   /** A1：暂停——置 aborted + 即时唤醒当前 sleep + 通知页面滚动脚本立即中止（不等 scrollToBottom 跑完）
    *  + 等 run() 完全退出后才返回（跑完收尾，避免状态/上下文竞态） */
   async pause(): Promise<void> {
+    if (this.running && !this.aborted) this.abortReason = 'user'
     this.aborted = true
     this.abortWait?.()
     this.deps.browser.abortScroll?.() // 页面级中止信号：滚动脚本下个检查点即退出，1 秒内停止滚动
@@ -207,8 +224,10 @@ export class Scheduler {
    *  只有它还能发现并把任务停下来，让后面排队的任务接着跑。 */
   private startWatchdog(gen: number): void {
     if (this.watchdog !== null) clearInterval(this.watchdog)
-    const userMin = Number(this.deps.getStuckTimeoutMin?.() ?? DEFAULT_STUCK_MIN)
-    const min = Number.isFinite(userMin) && userMin > 0 ? userMin : DEFAULT_STUCK_MIN
+    // R20 复查：空 / 0 / 1 / 超大值一律夹到 2-60 分钟（设置页保存时也会夹，这里防手改 settings.json）
+    const raw = this.deps.getStuckTimeoutMin?.() ?? DEFAULT_STUCK_MIN
+    const min = clampStuckTimeoutMin(raw)
+    if (min !== raw) this.deps.onFilterLog?.(`卡住判定设置为「${String(raw)}」不在 2-60 分钟内，按 ${min} 分钟执行`)
     const interval = Number(this.deps.getScrollParams().scrollIntervalMs) || 0
     const stuckMs = Math.max(min * 60 * 1000, STUCK_FLOOR_MS + interval)
     this.idleTicks = 0
@@ -288,6 +307,9 @@ export class Scheduler {
       this.lastFetchedAt = Date.now() // T4/R11：X 秒无新视频计时的起点
       this.pastRange = false // R18：每次 run 重置
       this.skippingNewerLogged = false
+      this.scrolledIds = new Set<string>()
+      this.abortReason = null
+      this.authorSecUid = task.type === 'author' ? (adapter.parseAuthorInput(task.query) ?? task.query) : ''
       this.pendingVideoIds = []
       this.aiEnabled = !!(this.deps.analyzer) && !!this.filters.aiFilterEnabled
       this.autoDownload = !!task.auto_download
@@ -444,8 +466,14 @@ export class Scheduler {
       // R20：已被看门狗/强制暂停接管——状态早已写好、下一个任务可能已经在跑，旧 run 什么都不许再动
       if (gen !== this.runGen) return
       if (this.aborted) {
-        db.prepare("UPDATE tasks SET status='paused' WHERE id=?").run(taskId)
-        this.deps.emit({ type: 'task:paused', taskId, reason: '用户暂停或风控' })
+        // R20 复查：分清「用户暂停」和「疑似风控」——两种主进程都按住队列，但界面要说清楚是哪种
+        if (this.abortReason === 'risk') {
+          db.prepare("UPDATE tasks SET status='paused', error='risk' WHERE id=?").run(taskId)
+          this.deps.emit({ type: 'task:paused', taskId, reason: 'risk' })
+        } else {
+          db.prepare("UPDATE tasks SET status='paused' WHERE id=?").run(taskId)
+          this.deps.emit({ type: 'task:paused', taskId, reason: 'user' })
+        }
       } else if (stopReason === 'verify') {
         // R11-4：心跳检测到验证码 → 自动暂停（error=stalled_verify；index.ts push 会强制显示抖音窗口 +
         // toast「任务可能触发验证…」，用户完成验证后点「继续」恢复——resume 重置计数重新 run）
@@ -564,6 +592,13 @@ export class Scheduler {
       if (stale()) return 'continue'
       const cooldownSec = getSettings().rescueCooldownSec ?? 10
       const bottomHit = bottomText !== null
+      // R20 复查：作者主页按日期段抓、页面已经到底 → 日期段里能抓的都抓了，按「抓完」收尾（done）。
+      // 重搜只会把主页拉回顶部再翻一遍同样的作品，最后被当成「爬不满」暂停；只填「到」的任务尤其如此（没有起点可翻过）。
+      if (bottomHit && this.isAuthorRange()) {
+        log(`作者主页已经翻到底（「${bottomText}」），日期段内的抓完了（共 ${this.fetched} 条）`)
+        this.pastRange = true
+        return 'continue'
+      }
       if (!bottomHit) {
         const since = Date.now() - this.lastRescueAt
         if (since < cooldownSec * 1000) {
@@ -615,6 +650,7 @@ export class Scheduler {
       }
       if (stale()) return 'continue'
       this.touch() // R20：重搜加载完（成功或超时）= 自救这条路还在走
+      this.scrolledIds = new Set<string>() // 页面回到顶部重新翻，之前滚过的作品会再出现一遍，这是正常的
       // 重置停滞计数继续爬：lastFetchedAt 从加载完成起算；seen 去重保证只收新条目
       this.lastFetchedAt = Date.now()
       this.emptyRounds = 0
@@ -637,13 +673,41 @@ export class Scheduler {
     // 任务接口匹配由适配器决定：抖音看接口路径，快手关键词/作者/详情共用同一个
     // /graphql，URL 完全相同，只能看响应里的 operation 根字段。
     if (!this.task || !adapter.matchesTaskResponse(this.task.type, rawUrl, json)) return null
+    // R20 复查：抖音作者主页接口只按路径认，上一个任务的页面（看门狗刷新 / 还没跳走）发来的数据会串进这个任务；
+    // 地址里带 sec_user_id 的，对不上就不收。
+    if (this.task.type === 'author' && !this.isOwnAuthorFeed(rawUrl)) return null
     this.rawSinceLastRound = true
-    this.touch() // R20：本任务的接口数据还在来 = 没卡住
-    const db = this.deps.db
     const filters = this.filters
     if (!filters) return null
     const items = adapter.parseApiJson(rawUrl, json)
-    const authorRange = this.task?.type === 'author' && filters.timeRange === 'custom'
+    const authorRange = this.isAuthorRange()
+    const result = await this.applyBatch(adapter, items, filters, authorRange)
+    // R20 复查：作者主页按日期段抓，接口说「后面没有了」→ 这一批处理完就算抓完（done），不再等停滞、不当爬不满暂停
+    if (authorRange && feedEnded(json) && this.filters === filters && !this.pastRange) {
+      this.deps.onFilterLog?.(`作者主页已经翻到底（接口说没有更多了），日期段内的抓完了（共 ${this.fetched} 条）`)
+      this.pastRange = true
+      this.deps.browser.abortScroll?.()
+    }
+    return result
+  }
+
+  /** R20 复查：当前任务是不是「作者主页 + 日期段」 */
+  private isAuthorRange(): boolean {
+    return this.task?.type === 'author' && this.filters?.timeRange === 'custom'
+  }
+
+  /** R20 复查：接口地址里的 sec_user_id（有的话）是不是本任务要抓的作者；没带这个参数的平台一律放行 */
+  private isOwnAuthorFeed(rawUrl: string): boolean {
+    if (!this.authorSecUid) return true
+    try {
+      const v = new URL(rawUrl).searchParams.get('sec_user_id')
+      return !v || v === this.authorSecUid
+    } catch { return true }
+  }
+
+  /** 一批接口数据：过滤、去重、入库（原 handleRaw 主体） */
+  private async applyBatch(adapter: PlatformAdapter, items: ReturnType<PlatformAdapter['parseApiJson']>, filters: Filters, authorRange: boolean): Promise<{ items: number; kept: number }> {
+    const db = this.deps.db
     // R18：作者主页是按时间倒序的——这一批全比日期段起点老，说明已经翻过日期段，后面只会更老 → 抓完
     // R20：起点按北京时间当天 00:00 算（以前按 UTC，差 8 小时）
     const startTs = authorRange && filters.startDate ? chinaDayStartSec(filters.startDate) : null
@@ -651,32 +715,44 @@ export class Scheduler {
       if (items.every(i => i.publishTime > 0 && i.publishTime < startTs)) {
         if (!this.pastRange) this.deps.onFilterLog?.(`已翻到 ${filters.startDate} 之前的作品，日期段内的抓完了（共 ${this.fetched} 条）`)
         this.pastRange = true
+        this.touch()
         this.deps.browser.abortScroll?.()
         return { items: items.length, kept: 0 }
       }
     }
     const kept = dedupeVideos(filterVideos(items, filters), this.seen)
+    // R20 复查：作者主页按日期段抓——这一批里有没见过的作品就说明页面确实往下翻了
+    const freshIds = authorRange ? items.filter(i => !this.scrolledIds.has(i.awemeId)) : items
+    if (authorRange) for (const i of items) this.scrolledIds.add(i.awemeId)
     if (kept.length === 0) {
-      // R20：作者主页按日期段抓、结束日期在过去——主页最上面是比结束日期还新的作品，必须先翻过它们才到日期段。
-      // 这些批次一条都不要，但**不是**卡住也不是风控：算作进展（刷新「最近有进展」时刻、不累计空轮），接着往下滚。
-      // 以前这里会累计空轮 → 3 轮就当风控暂停；或者迟迟没有「新视频」→ 判停滞 → 重搜把页面拉回顶部，永远翻不到日期段。
-      const endTs = authorRange && filters.endDate ? chinaDayEndSec(filters.endDate) : null
-      if (endTs !== null && items.some(i => i.publishTime > endTs)) {
-        if (!this.skippingNewerLogged) {
-          this.skippingNewerLogged = true
-          this.deps.onFilterLog?.(`正在往下翻 ${filters.endDate} 之后发的作品（还没到你选的日期段），继续滚动`)
+      if (authorRange && items.length > 0) {
+        // R20：作者主页按日期段抓，这一批一条都没留，但接口是有数据的——可能是
+        //  ① 比结束日期还新（主页最上面，要先翻过去才到日期段）；② 日期段内但以前已经抓过（补抓同一段）；③ 被时长筛掉。
+        // 这些都**不是**风控：不累计空轮。只有页面确实往下翻了（有没见过的作品）才算进展、刷新停滞计时；
+        // 同一批反复出现（游标卡住 / 软风控）不算，停滞检测照常起作用（重搜 3 次后暂停）。
+        // 以前这里会累计空轮 → 3 轮就当风控暂停；或者迟迟没有「新视频」→ 判停滞 → 重搜把页面拉回顶部，永远翻不到日期段。
+        if (freshIds.length > 0) {
+          const endTs = filters.endDate ? chinaDayEndSec(filters.endDate) : null
+          if (endTs !== null && !this.skippingNewerLogged && freshIds.some(i => i.publishTime > endTs)) {
+            this.skippingNewerLogged = true
+            this.deps.onFilterLog?.(`正在往下翻 ${filters.endDate} 之后发的作品（还没到你选的日期段），继续滚动`)
+          }
+          this.lastFetchedAt = Date.now()
+          this.emptyRounds = 0
+          this.touch()
         }
-        this.lastFetchedAt = Date.now()
-        this.emptyRounds = 0
         return { items: items.length, kept: 0 }
       }
+      this.touch() // R20：本任务的接口数据还在来 = 没卡住
       this.emptyRounds++
       if (isRiskSignal(this.emptyRounds) && filters.timeRange !== 'all') {
         // 保守起见：连续空数据→风控，暂停任务（真实风控判定以"连续N轮无有效数据"为信号，不额外发探针请求）
+        if (!this.aborted) this.abortReason = 'risk'
         this.aborted = true
       }
       return { items: items.length, kept: 0 }
     }
+    this.touch() // R20：本任务的接口数据还在来 = 没卡住
     this.emptyRounds = 0
 
     // A2 硬截断：按当前 fetched 算还差多少，只处理这一批里的前 N 条；

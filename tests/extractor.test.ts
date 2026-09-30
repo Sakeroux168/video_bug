@@ -54,6 +54,14 @@ describe('matchTimeRange 自定义日期按北京时间整天算（R20）', () =
     expect(chinaDayEndSec('2024-03-10')).toBe(Date.UTC(2024, 2, 10, 15, 59, 59) / 1000)
     expect(chinaDayStartSec('3.10')).toBeNull()
   })
+  it('日期不存在 → null（R20 复查：以前 2026-02-31 会悄悄滚到 3 月 3 日、13 月会变成 NaN）', () => {
+    expect(chinaDayStartSec('2024-13-01')).toBeNull()
+    expect(chinaDayStartSec('2026-02-31')).toBeNull()
+    expect(chinaDayStartSec('2026-02-29')).toBeNull()
+    expect(chinaDayStartSec('2026-04-31')).toBeNull()
+    expect(chinaDayStartSec('2024-02-29')).not.toBeNull()
+    expect(chinaDayStartSec('2026-12-31')).not.toBeNull()
+  })
   it('chinaToday：UTC 晚上 16 点以后已经是北京时间第二天', () => {
     expect(chinaToday(Date.UTC(2026, 8, 28, 15, 59, 0))).toBe('2026-09-28')
     expect(chinaToday(Date.UTC(2026, 8, 28, 16, 0, 0))).toBe('2026-09-29')
