@@ -11,18 +11,23 @@ import { Card } from './ui'
 const situations: Array<{ scene: string; note: string; action: string }> = [
   {
     scene: '任务自动暂停，提示「已重搜 3 次仍爬不满」',
-    note: '这个关键词的搜索结果就这么多，爬光了',
-    action: '正常。换个关键词，或把目标数量调小'
+    note: '可能没有更多结果，也可能是没登录 / 有验证',
+    action: '先看任务行的暂停原因和平台登录状态，打开平台窗口确认；登录或完成验证后点「继续」，再考虑换关键词或调小数量'
   },
   {
     scene: '弹出验证码 / 机器人验证',
-    note: '抖音风控',
-    action: '程序会自动暂停。你在抖音窗口里手动完成验证，然后点「继续」'
+    note: '当前平台要求验证',
+    action: '程序会自动暂停。你在对应平台窗口里手动完成验证，然后点「继续」'
+  },
+  {
+    scene: '任务行提示「没登录」',
+    note: '当前平台要求先登录',
+    action: '点任务行的「打开平台窗口」，登录后回到任务页点「继续」；各平台登录状态独立'
   },
   {
     scene: '任务显示「已暂停」，错误是 stalled',
     note: '页面卡住不出新内容',
-    action: '点「继续」重试；反复如此就换关键词'
+    action: '先在平台窗口确认是否没登录 / 有验证，处理后点「继续」；没有这些提示再换关键词'
   },
   {
     scene: '顶部「查看拦截日志」',
@@ -67,8 +72,8 @@ export default function HelpPanel(): React.ReactElement {
           <div>
             <div className="text-xs font-medium text-slate-700">扫码登录抖音</div>
             <p className="mt-1 text-xs leading-5 text-slate-500">
-              点开「内置浏览器」窗口，会显示抖音页面。按正常方式扫码登录你自己的抖音账号。
-              登录状态会记住，以后不用重复扫。
+              在「内置浏览器」打开要使用的平台窗口，按正常方式扫码登录你自己的账号。
+              以平台登录状态灯显示「已登录」为准；「未知」时在平台窗口确认。看到首页不代表已经登录。
             </p>
           </div>
         </div>
