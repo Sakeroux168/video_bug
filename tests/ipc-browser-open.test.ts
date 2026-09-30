@@ -28,7 +28,7 @@ import { registerIpc } from '../src/main/ipc'
 
 type OpenResult = { ok: boolean; error?: string }
 
-function setup(isRunning = false) {
+function setup(isRunning = false, currentPlatform?: string) {
   const db = new DatabaseSync(':memory:')
   initDb(db)
   mockIpc.handlers.clear()
@@ -40,6 +40,7 @@ function setup(isRunning = false) {
     downloader: {} as never,
     analyzer: null,
     browser: {
+      adapter: currentPlatform ? getAdapter(currentPlatform) : null,
       load: vi.fn(async (adapter: { name: string }, url: string) => { loaded.push({ platform: adapter.name, url }) })
     } as never,
     getWindow: () => ({}) as never,
@@ -57,6 +58,12 @@ function setup(isRunning = false) {
 beforeEach(() => { mockIpc.handlers.clear() })
 
 describe('browser:open 按平台打开内置浏览器', () => {
+  it('暂停后打开当前平台只显示原页面，不把登录或验证码页面导航掉', async () => {
+    const { loaded, visible, open } = setup(false, 'douyin')
+    await expect(open('douyin')).resolves.toEqual({ ok: true })
+    expect(loaded).toEqual([])
+    expect(visible).toEqual([true])
+  })
   it('打开快手 → 用快手适配器加载快手首页，并把窗口显示出来', async () => {
     const { loaded, visible, open } = setup()
 

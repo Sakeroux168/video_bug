@@ -110,12 +110,12 @@ function push(evt: unknown): void {
     }
     if (t.type === 'task:paused') {
       taskRunning = false
-      if (t.reason === 'stalled_verify') {
-        // 触发验证：显示独立抖音窗口让用户过验证（showInactive 不抢焦点），并提示；不自动放行下一个任务（taskQueue 按住）
+      if (t.reason === 'stalled_verify' || t.reason === 'login_required') {
+        // 登录/验证暂停均显示当前平台窗口。验证码沿用队列按住规则，登录沿用现有队列规则。
         forceBrowserFull = true
         updateBrowserDisplay()
         win?.webContents.send('evt:task:notice', {
-          type: 'stalled_verify', text: '任务可能触发验证，请在浏览器完成验证后点「继续」'
+          type: t.reason, text: t.reason === 'login_required' ? '当前平台没登录，请在浏览器登录后点「继续」' : '当前平台需要验证，请在浏览器完成验证后点「继续」'
         })
       } else {
         updateBrowserDisplay()

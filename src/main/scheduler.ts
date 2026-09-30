@@ -781,11 +781,15 @@ export class Scheduler {
   private async detectPageBlock(): Promise<'verify' | 'login' | null> {
     if (this.verifyFound) return 'verify'
     this.verifyFound = await this.deps.browser.findVerifyIndicator().catch(() => null)
-    if (this.verifyFound) return 'verify'
+    if (this.verifyFound) {
+      this.deps.onFilterLog?.(`页面要求验证：${this.verifyFound} → 暂停等人工处理`)
+      return 'verify'
+    }
     if (this.loginFound) return 'login'
     const findLogin = this.deps.browser.findLoginIndicator
     if (!findLogin) return null
     this.loginFound = await findLogin.call(this.deps.browser).catch(() => null)
+    if (this.loginFound) this.deps.onFilterLog?.(`页面要求登录：${this.loginFound} → 暂停等登录`)
     return this.loginFound ? 'login' : null
   }
 

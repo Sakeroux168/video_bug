@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from 'electron'
 import type { CreateTaskInput, AppSettings, TaskRow, VideoRow, AuthorRow, TaskStats, AsrStatus, AsrProgress, FilesTree, FileDeleteResult, TaskProgressEvent, GlobalStats, RecentDownload, ProcessState } from '../shared/types'
 
 const api = {
+  getLoginStatuses: (): Promise<import('../shared/types').PlatformLoginStatus[]> => ipcRenderer.invoke('platforms:login-status'),
   ping: () => ipcRenderer.sendSync('api:ping') as string,
   listPlatforms: (): Promise<Array<{ name: string; displayName: string; authorInputPlaceholder: string; taskReady: boolean; supportedTaskTypes?: readonly ('keyword' | 'author' | 'hashtag')[] }>> => ipcRenderer.invoke('platforms:list'),
   createTask: (input: CreateTaskInput): Promise<{ id: number | null; skipped: boolean; reason?: string }> => ipcRenderer.invoke('task:create', input),

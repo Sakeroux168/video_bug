@@ -235,3 +235,8 @@ export interface RecentDownload {
   downloaded_at: string | null
   author_nickname: string | null
 }
+export interface PlatformLoginStatus {
+  platform: string
+  displayName: string
+  status: 'logged_in' | 'logged_out' | 'unknown'
+}
