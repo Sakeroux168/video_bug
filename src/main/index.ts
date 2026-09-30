@@ -10,6 +10,7 @@ import { Analyzer } from './analyzer'
 import { Organizer } from './organizer'
 import type { ResolveCategoryFn } from './organizer'
 import { registerIpc } from './ipc'
+import { installDownloadFallback } from './csvExport'
 import { enqueuePendingTasks, recoverPendingVideos } from './recovery'
 import { getSettings } from './settings'
 import { douyinAdapter, drainDurationDiags } from './adapters/douyin'
@@ -78,6 +79,7 @@ function createWindow(): void {
     width: 1280, height: 820, title: '视频爬取工具',
     webPreferences: { preload: join(__dirname, '../preload/index.js'), contextIsolation: true, nodeIntegration: false }
   })
+  installDownloadFallback(win.webContents, () => app.getPath('downloads'))
   // C-1：非 macOS 点×关主窗口必须确定退出。子窗口(抖音视图)的 close 被拦截成 hide，
   // 若不先 dispose，window-all-closed 永不触发、app 不退出、进程挂后台。关窗前先销毁子窗口。
   // createWindow 时 browser 模块变量尚为 null，用闭包引用模块级 browser —— 用户关窗时已赋值；dispose 幂等。

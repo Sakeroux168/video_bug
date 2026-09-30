@@ -18,6 +18,7 @@ export interface VideoExportRow {
   comments: number | null
   durationSec: number
   fileName: string
+  task?: string
 }
 
 /** 只取文件名。Windows 反斜杠与 POSIX 斜杠都要认（库里两种都可能有） */
@@ -69,23 +70,13 @@ function num(v: number | null): string {
 }
 
 /** CRLF 换行：Excel 打开 LF 的 CSV 会把整张表挤成一行 */
-export function buildVideosCsv(rows: VideoExportRow[]): string {
-  const lines = [HEADER, ...rows.map(r => [
+export function buildVideosCsv(rows: VideoExportRow[], includeTask = false): string {
+  const lines = [HEADER + (includeTask ? ',任务（平台 / 类型 / 关键词或作者）' : ''), ...rows.map(r => [
     esc(r.platform), esc(r.author), esc(r.title), esc(r.sourceUrl),
-    num(r.likes), num(r.comments), String(r.durationSec), esc(r.fileName)
+    num(r.likes), num(r.comments), String(r.durationSec), esc(r.fileName),
+    ...(includeTask ? [esc(r.task ?? '')] : [])
   ].join(','))]
   return lines.join('\r\n')
-}
-
-/** 把 CSV 文本存成文件。加 BOM：Excel 不带 BOM 打开 UTF-8 CSV 会把中文显示成乱码。 */
-export function saveCsvFile(csv: string, fileName: string): void {
-  const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8' })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = fileName
-  a.click()
-  URL.revokeObjectURL(url)
 }
 
 /** 导出文件名统一带日期，方便员工分辨哪次导的 */

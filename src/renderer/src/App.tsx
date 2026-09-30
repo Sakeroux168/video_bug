@@ -1,4 +1,5 @@
-import React, { useEffect, useRef, useState } from 'react'
+import React, { useEffect, useState } from 'react'
+import { Notice, useNotice } from './components/Notice'
 import { SideNav, btn, type NavItem } from './components/ui'
 import Overview from './components/Overview'
 import FilterForm from './components/FilterForm'
@@ -54,15 +55,7 @@ export default function App(): JSX.Element {
   }>>([])
   const [showLog, setShowLog] = useState(false)
   const [taskRefreshVersion, setTaskRefreshVersion] = useState(0)
-  const [toast, setToast] = useState<{ text: string } | null>(null)
-  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-
-  // Fix6: 固定右上角 toast，不随内容滚动消失
-  function notify(text: string): void {
-    setToast({ text })
-    if (toastTimer.current) clearTimeout(toastTimer.current)
-    toastTimer.current = setTimeout(() => setToast(null), 3000)
-  }
+  const { notice, notify } = useNotice()
 
   async function startTask(input: CreateTaskInput): Promise<{ id: number | null; skipped: boolean; reason?: string }> {
     const result = await api.createTask(input)
@@ -142,12 +135,8 @@ export default function App(): JSX.Element {
           </div>
         </div>
       )}
-      {/* 固定右上角 toast：不随内容滚动，且在内置浏览器全屏（盖住面板）时也可见（位于顶部标题区） */}
-      {toast && (
-        <div className="pointer-events-none fixed right-4 top-2 z-50 max-w-[70vw] rounded-lg bg-slate-800/90 px-4 py-2 text-sm text-white shadow-lg">
-          {toast.text}
-        </div>
-      )}
+      {/* 提示固定在标题栏下方，定位按钮可点，顶部调试按钮仍可用。 */}
+      <Notice notice={notice} />
       <main className="flex-1 overflow-auto p-4">
         {/* 任务页常驻挂载：切 tab 用 hidden 隐藏而非卸载，参数/展开状态/进度订阅保留 */}
         <div className={tab === 'tasks' ? 'space-y-4' : 'hidden'}>

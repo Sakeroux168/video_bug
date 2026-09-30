@@ -6,7 +6,9 @@ import { useMarqueeSelect } from './useMarqueeSelect'
 import { useTableSelection } from './useTableSelection'
 import { useCoalescedRefresh } from './useCoalescedRefresh'
 import { describeError } from '../errors'
-import { buildVideosCsv, toVideoExportRows, saveCsvFile, csvFileName } from './videosCsv'
+import { buildVideosCsv, toVideoExportRows, csvFileName } from './videosCsv'
+import { saveCsvFile } from './csvSave'
+import type { Notify } from './Notice'
 
 const TASK_STATUS_LABEL: Record<string, string> = { pending: '等待中', running: '进行中', done: '完成', paused: '已暂停', failed: '失败' }
 
@@ -125,11 +127,13 @@ function formatDate(iso: string | null): string {
   return iso ? iso.slice(0, 10) : '—'
 }
 
-export default function TaskList({ notify, refreshVersion = 0 }: { notify: (text: string) => void; refreshVersion?: number }): React.ReactElement {
+export default function TaskList({ notify, refreshVersion = 0 }: { notify: Notify; refreshVersion?: number }): React.ReactElement {
   const [tasks, setTasks] = useState<TaskRow[]>([])
   const [videos, setVideos] = useState<Record<number, VideoRow[]>>({})
   const [expanded, setExpanded] = useState<Set<number>>(new Set())
   const [selected, setSelected] = useState<Set<number>>(new Set())
+  const [selectedTasks, setSelectedTasks] = useState<Set<number>>(new Set())
+  const [merging, setMerging] = useState(false)
   const [stats, setStats] = useState<Record<number, TaskStats>>({})
   const [downloadPaused, setDownloadPaused] = useState(false)
   const [sortState, setSortState] = useState<Record<number, { key: SortKey; dir: 1 | -1 }>>({})
@@ -176,8 +180,23 @@ export default function TaskList({ notify, refreshVersion = 0 }: { notify: (text
 
   /** 导出视频数据表：员工要拿去交差/做选题分析的那份 */
   function exportVideos(rows: VideoRow[]): void {
-    saveCsvFile(buildVideosCsv(toVideoExportRows(rows, platformLabel)), csvFileName('视频数据'))
-    notify(`已导出 ${rows.length} 条视频数据`)
+    void saveCsvFile(buildVideosCsv(toVideoExportRows(rows, platformLabel)), csvFileName('视频数据'), rows.length, notify)
+  }
+
+  const pickedTasks = tasks.filter(t => selectedTasks.has(t.id))
+  async function exportTasks(): Promise<void> {
+    if (merging || pickedTasks.length === 0) return
+    setMerging(true)
+    try {
+      // 不依赖展开缓存，点击时取所选任务的最新完整数据。
+      const batches = await Promise.all(pickedTasks.map(t => api.listTaskVideos(t.id)))
+      const rows = pickedTasks.flatMap((t, i) => toVideoExportRows(batches[i], platformLabel).map(r => ({
+        ...r, task: `${platformLabel(t.platform)} / ${TASK_TYPE_LABEL[t.type] ?? t.type} / ${t.author_nickname ?? t.query}`
+      })))
+      if (rows.length === 0) { notify('选中的任务没有视频，没有可导出的数据'); return }
+      await saveCsvFile(buildVideosCsv(rows, true), csvFileName('视频数据-合并任务'), rows.length, notify)
+    } catch { notify('读取任务数据失败，请稍后重新导出') }
+    finally { setMerging(false) }
   }
 
   useEffect(() => { refreshRef.current = refresh })
@@ -348,6 +367,9 @@ export default function TaskList({ notify, refreshVersion = 0 }: { notify: (text
   return (
     <Card title="任务列表">
       <div className="mb-3 flex items-center gap-2">
+        <button className={btn('secondary', 'sm')} disabled={pickedTasks.length === 0 || merging} onClick={() => void exportTasks()}>
+          {merging ? '正在导出…' : `合并导出选中任务(${pickedTasks.length})`}
+        </button>
         {downloadPaused ? (
           <button
             className="rounded-md border border-emerald-300 bg-emerald-50 px-3 py-1.5 text-xs font-medium text-emerald-700 hover:bg-emerald-100"
@@ -374,7 +396,9 @@ export default function TaskList({ notify, refreshVersion = 0 }: { notify: (text
         <table className="w-full border-collapse text-sm">
           <thead>
             <tr className="border-b border-slate-200 text-left text-xs text-slate-500">
-              <th className="whitespace-nowrap py-2 pr-3 font-normal">平台/类型</th>
+              <th className="whitespace-nowrap py-2 pr-3 font-normal">
+                <input type="checkbox" aria-label="全选任务" className="mr-2" checked={tasks.length > 0 && pickedTasks.length === tasks.length} onChange={() => setSelectedTasks(pickedTasks.length === tasks.length ? new Set() : new Set(tasks.map(t => t.id)))} />平台/类型
+              </th>
               <th className="py-2 pr-3 font-normal">关键词</th>
               <th className="w-52 py-2 pr-3 font-normal">进度</th>
               <th className="w-72 py-2 pr-3 font-normal">下载统计</th>
@@ -394,7 +418,10 @@ export default function TaskList({ notify, refreshVersion = 0 }: { notify: (text
                     className={`cursor-pointer border-b border-slate-100 transition-colors hover:bg-slate-50 ${isOpen ? 'bg-brand-50/40' : ''}`}
                     onClick={() => void toggleExpand(t.id)}
                   >
-                    <td className="whitespace-nowrap py-2 pr-3 text-slate-500">{platformLabel(t.platform)} · {TASK_TYPE_LABEL[t.type] ?? t.type}</td>
+                    <td className="whitespace-nowrap py-2 pr-3 text-slate-500">
+                      <input type="checkbox" aria-label={`选择任务 ${t.id}`} className="mr-2" checked={selectedTasks.has(t.id)} onClick={e => e.stopPropagation()} onChange={() => setSelectedTasks(prev => { const next = new Set(prev); if (next.has(t.id)) next.delete(t.id); else next.add(t.id); return next })} />
+                      <span>{platformLabel(t.platform)} · {TASK_TYPE_LABEL[t.type] ?? t.type}</span>
+                    </td>
                     <td className="max-w-0 py-2 pr-3 font-medium">
                       {/* 作者任务的 query 存的是 sec_uid（P1.5 归一化），直接显示是一串英文认不出是谁；
                           listTasks 已关联带出昵称。库里还没该作者时回落显示原值，不能空白。 */}

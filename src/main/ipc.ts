@@ -1,4 +1,4 @@
-import { ipcMain, BrowserWindow, dialog, shell, clipboard } from 'electron'
+import { app, ipcMain, BrowserWindow, dialog, shell, clipboard } from 'electron'
 import type { DatabaseSync } from 'node:sqlite'
 import { createTask, listTasks, listVideos, listDownloadedVideos, listAuthors, setTaskStatus, setVideoStatus, updateAuthorCategory, deleteAuthors, taskStats, insertAuthorIfAbsent, globalStats, recentDownloads } from './db'
 import { getSettings, saveSettings } from './settings'
@@ -15,6 +15,7 @@ import { status as modelsStatus, ensureModels } from './asr/models'
 import type { EnsureProgress } from './asr/models'
 import { resolveVideoSourceUrl } from './videoSource'
 import { createTaskChecked } from './taskCreate'
+import { exportFailure, revealExportFile, writeCsvToDownloads } from './csvExport'
 
 export interface IpcDeps {
   db: DatabaseSync
@@ -43,6 +44,15 @@ export interface IpcDeps {
 
 export function registerIpc(deps: IpcDeps): void {
   const { db, scheduler, downloader, browser } = deps
+
+  ipcMain.handle('csv:export', async (_e, input: unknown) => {
+    try { return await writeCsvToDownloads(app.getPath('downloads'), input) }
+    catch (error) { return { ok: false, error: exportFailure(error) } }
+  })
+  ipcMain.handle('csv:reveal', (_e, path: unknown) => {
+    try { return revealExportFile(app.getPath('downloads'), path, p => shell.showItemInFolder(p)) }
+    catch { return { ok: false, error: '无法打开下载文件夹，请稍后重试' } }
+  })
 
   ipcMain.on('api:ping', (e) => { e.returnValue = 'pong' })
   ipcMain.handle('platforms:list', () => listAdapters())

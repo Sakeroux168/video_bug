@@ -4,7 +4,9 @@ import type { FilesTree, FilesDirNode } from '../../../shared/types'
 import { Card, btn } from './ui'
 import { useMarqueeSelect } from './useMarqueeSelect'
 import { useTableSelection } from './useTableSelection'
-import { buildVideosCsv, toVideoExportRows, saveCsvFile, csvFileName, filterVideosUnder } from './videosCsv'
+import { buildVideosCsv, toVideoExportRows, csvFileName, filterVideosUnder } from './videosCsv'
+import { saveCsvFile } from './csvSave'
+import type { Notify } from './Notice'
 
 /** 字节 → MB 字符串（保留 1 位小数，行内列用） */
 function formatMB(size: number): string {
@@ -50,7 +52,7 @@ function entriesOf(node: FilesDirNode): Entry[] {
  * 根目录直接平铺的视频与子文件夹同样可见。
  * 定位/导出/删除对文件夹与视频都可用；删除 = 永久删除（文件夹递归）+ DB 联动，window.confirm 二次确认，删除后刷新。
  */
-export default function FileManager({ notify }: { notify: (text: string) => void }) {
+export default function FileManager({ notify }: { notify: Notify }) {
   const [tree, setTree] = useState<FilesTree | null>(null)
   const [cwd, setCwd] = useState<string[]>([]) // 当前文件夹的相对段落（[] = 下载目录根）
   const [selected, setSelected] = useState<Set<string>>(new Set())
@@ -85,29 +87,29 @@ export default function FileManager({ notify }: { notify: (text: string) => void
    * 按路径判永远和用户在这一页看到的一致。
    */
   async function exportUnder(segments: string[], label: string): Promise<void> {
-    const all = await api.listDownloadedVideos()
+    const all = await api.listDownloadedVideos().catch(() => { notify('读取视频数据失败，请稍后重新导出'); return null })
+    if (!all) return
     const rows = segments.length === 0 ? all : filterVideosUnder(all, downloadDir, segments)
     if (rows.length === 0) {
       notify(`${label}没有已下载的视频，没有可导出的数据`)
       return
     }
     const csv = buildVideosCsv(toVideoExportRows(rows, name => platformNames[name] ?? name))
-    saveCsvFile(csv, csvFileName(`视频数据-${label}`))
-    notify(`已导出 ${rows.length} 条视频数据（${label}）`)
+    await saveCsvFile(csv, csvFileName(`视频数据-${label}`), rows.length, notify)
   }
 
   /** 导出勾选的多项（文件夹按目录取、视频按文件取），合并成一张表 */
   async function exportSelected(): Promise<void> {
     const picked = entries.filter(e => selected.has(e.id))
-    const all = await api.listDownloadedVideos()
+    const all = await api.listDownloadedVideos().catch(() => { notify('读取视频数据失败，请稍后重新导出'); return null })
+    if (!all) return
     const rows = picked.flatMap(e => filterVideosUnder(all, downloadDir, [...cwd, e.name]))
     if (rows.length === 0) {
       notify('选中的项目下没有已下载的视频，没有可导出的数据')
       return
     }
     const csv = buildVideosCsv(toVideoExportRows(rows, name => platformNames[name] ?? name))
-    saveCsvFile(csv, csvFileName(`视频数据-${picked.length} 项`))
-    notify(`已导出 ${rows.length} 条视频数据（${picked.length} 项）`)
+    await saveCsvFile(csv, csvFileName(`视频数据-${picked.length} 项`), rows.length, notify)
   }
 
   // 普通点击：文件夹钻取 / 视频排他选择；Ctrl 切换，Shift 范围（与作者表格语义一致）
