@@ -434,6 +434,17 @@ export default function TaskList({ notify, refreshVersion = 0 }: { notify: (text
                     <td className={`whitespace-nowrap py-2 pr-3 text-xs ${t.status === 'failed' ? 'text-red-500' : t.status === 'running' ? 'text-sky-600' : 'text-slate-500'}`}>
                       {/* R20：看门狗判卡住的任务单独说清楚，别只显示一个「已暂停」让人以为是自己点的 */}
                       {t.status === 'paused' && t.error === 'stuck' ? <span className="text-amber-600">卡住了，已跳过</span> : TASK_STATUS_LABEL[t.status]}
+                      {t.status === 'paused' && (t.error === 'login_required' || t.error === 'stalled_verify') && (
+                        <div className="mt-1 max-w-56 whitespace-normal text-amber-700">
+                          <span>{platformLabel(t.platform)}{t.error === 'login_required' ? '没登录' : '需要验证'} → </span>
+                          <button className="text-brand-600 hover:underline" onClick={e => {
+                            e.stopPropagation()
+                            void api.openBrowserFor(t.platform).then(r => { if (!r.ok) notify(r.error ?? '打开窗口失败') }).catch(() => notify('打开窗口失败'))
+                          }}>打开{platformLabel(t.platform)}窗口</button>
+                          <span>，{t.error === 'login_required' ? '登好' : '完成验证'}后点「继续」</span>
+                        </div>
+                      )}
+                      {t.status === 'paused' && t.error === 'stalled' && <div className="mt-1 max-w-56 whitespace-normal text-amber-700">没有新结果，已暂停。请先确认平台是否要求登录或验证，再试其他关键词。</div>}
                     </td>
                     <td className="whitespace-nowrap py-2" onClick={e => e.stopPropagation()}>
                       <div className="flex items-center gap-2 text-xs">
@@ -454,9 +465,7 @@ export default function TaskList({ notify, refreshVersion = 0 }: { notify: (text
                   </tr>
                   {t.status === 'paused' && t.error === 'stalled_verify' && (
                     <tr className="border-b border-slate-100 bg-amber-50/60">
-                      <td colSpan={6} className="px-2 py-1.5 text-xs text-amber-700">
-                        任务可能触发验证，请到「内置浏览器」完成验证（滑块/扫码）后点「继续」
-                      </td>
+                      <td colSpan={6} className="px-2 py-1.5 text-xs text-amber-700">浏览器正在等待人工处理验证，排队的任务暂不自动运行。</td>
                     </tr>
                   )}
                   {t.status === 'paused' && t.error === 'risk' && (

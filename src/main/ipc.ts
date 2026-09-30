@@ -46,6 +46,7 @@ export function registerIpc(deps: IpcDeps): void {
 
   ipcMain.on('api:ping', (e) => { e.returnValue = 'pong' })
   ipcMain.handle('platforms:list', () => listAdapters())
+  ipcMain.handle('platforms:login-status', () => Promise.all(listAdapters().map(p => browser.getLoginStatus(getAdapter(p.name)!))))
 
   // 归一化 + 作者去重 + 入库 + 入队 都在 taskCreate.ts（R18 起和本机 HTTP 口 /job 共用一条路）
   ipcMain.handle('task:create', (_e, rawInput: Parameters<typeof createTask>[1]) =>
@@ -262,7 +263,8 @@ export function registerIpc(deps: IpcDeps): void {
     // 切平台会销毁重建窗口（分区只能建窗口时定死）。任务正在用这个窗口，切了就等于打断它。
     if (scheduler.isRunning) return { ok: false, error: '有任务正在运行，切换平台会打断它，请先暂停任务' }
     try {
-      await browser.load(adapter, adapter.homeUrl)
+      // 同平台直接找回原页，避免把正等人工处理的登录/验证码页面导航掉。
+      if (browser.adapter?.name !== platform) await browser.load(adapter, adapter.homeUrl)
     } catch (err) {
       // 异常抛出 IPC 处理器只会在主进程打一行 Electron 报错，渲染层什么都收不到，
       // 用户看到的是"点了没反应"。一律转成可读结果返回。

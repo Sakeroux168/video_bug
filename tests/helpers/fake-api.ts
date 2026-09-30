@@ -13,6 +13,7 @@ import type { AppSettings } from '../../src/shared/types'
 
 function freshApi(): Api {
   return {
+    getLoginStatuses: vi.fn(async () => []),
     ping: vi.fn(() => 'pong'),
     listPlatforms: vi.fn(async () => []),
     createTask: vi.fn(async () => ({ id: null, skipped: false })),

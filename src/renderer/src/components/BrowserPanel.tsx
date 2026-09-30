@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import { api } from '../api'
+import LoginStatusLights from './LoginStatus'
 import { btn, Card } from './ui'
 import { Icon } from './icons'
 
@@ -56,6 +57,7 @@ export default function BrowserPanel({ notify }: { notify?: (text: string) => vo
       </Card>
 
       <Card title="打开某个平台的窗口">
+        <LoginStatusLights />
         <p className="mb-3 text-xs leading-5 text-slate-500">
           每个平台各有独立的登录状态，互不影响。要登录哪个平台，就打开哪个平台的窗口。
           任务运行中不能切换平台——切换会重建窗口，等于打断正在跑的任务。
@@ -94,8 +96,8 @@ export default function BrowserPanel({ notify }: { notify?: (text: string) => vo
           <div data-login-step className="flex gap-3">
             <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-brand-50 text-xs font-semibold text-brand-700">3</span>
             <div>
-              <h3 className="text-sm font-semibold text-slate-800">确认进入首页</h3>
-              <p className="mt-1 text-xs leading-5 text-slate-500">看到该平台首页即表示成功，登录状态会自动保存，下次不用再登。</p>
+              <h3 className="text-sm font-semibold text-slate-800">确认登录状态</h3>
+              <p className="mt-1 text-xs leading-5 text-slate-500">以该平台状态灯显示「已登录」为准。首页未登录也能打开；状态为「未知」时，请在平台窗口确认是否已登录。</p>
             </div>
           </div>
         </div>

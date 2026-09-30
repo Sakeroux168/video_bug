@@ -1,5 +1,6 @@
 import React, { useCallback, useEffect, useState } from 'react'
 import { api } from '../api'
+import LoginStatusLights from './LoginStatus'
 import { Card, btn } from './ui'
 import { Icon, type IconName } from './icons'
 import { useCoalescedRefresh } from './useCoalescedRefresh'
@@ -130,6 +131,7 @@ export default function Overview({ onGoto }: { onGoto: (tab: string) => void }):
     <div className="space-y-4">
       <div className="flex flex-wrap items-center gap-x-5 gap-y-1 rounded-lg border border-slate-200 bg-white px-4 py-2.5 text-xs">
         <Check ok={!!settings?.downloadDir} label="下载目录" okText="已设置" badText="未设置" />
+        <LoginStatusLights />
         <Check ok={!!asr?.ready} label="语音模型" okText="已就绪" badText="未下载" />
         <Check ok={!!settings?.aiApiKey} label="AI 分类" okText="已配置" badText="未配置（不影响爬取下载）" />
       </div>
