@@ -25,6 +25,7 @@ function fullSettings(over: Partial<AppSettings> = {}): AppSettings {
     aiApiKey: 'sk-test',
     aiModel: 'gpt-4o-mini',
     downloadConcurrency: 5,
+    downloadSegments: 4,
     scrollIntervalMs: 1500,
     scrollSpeed: 'fast',
     scrollPageWaitMs: 3000,
@@ -53,6 +54,7 @@ describe('settings', () => {
     const s = getSettings()
     expect(s.downloadDir).toBe(join(mockPaths.downloads, '爬取视频'))
     expect(s.downloadConcurrency).toBe(3)
+    expect(s.downloadSegments).toBe(3)
     expect(s.scrollSpeed).toBe('slow')
     expect(s.scrollPageWaitMs).toBe(8000)
     expect(s.allowDuplicateAuthor).toBe(false)
@@ -107,9 +109,15 @@ describe('settings', () => {
     writeFileSync(join(mockPaths.userData, 'settings.json'), JSON.stringify({ downloadConcurrency: 5, allowDuplicateAuthor: true }))
     const s = getSettings()
     expect(s.downloadConcurrency).toBe(5)
+    expect(s.downloadSegments).toBe(3)
     expect(s.allowDuplicateAuthor).toBe(true)
     expect(s.aiModel).toBe('gpt-4o-mini') // 未存字段回落到默认
     expect(s.downloadDir).toBe(join(mockPaths.downloads, '爬取视频'))
+  })
+
+  it.each([[0, 1], [1, 1], [3, 3], [9, 4], [2.6, 3]])('分段数 %s → 读配置时夹到 %s', (stored, expected) => {
+    writeFileSync(join(mockPaths.userData, 'settings.json'), JSON.stringify({ downloadSegments: stored }))
+    expect(getSettings().downloadSegments).toBe(expected)
   })
 
   it('旧配置文件里的 normalizeVideo/keepOriginalVideo 被丢弃：不进设置对象，保存后也不写回', () => {

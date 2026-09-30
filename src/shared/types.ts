@@ -138,6 +138,8 @@ export interface AppSettings {
   aiApiKey: string
   aiModel: string
   downloadConcurrency: number
+  /** 同一视频文件的 HTTP Range 分段数；1=关闭分段，默认 3，最多 4 */
+  downloadSegments: number
   scrollIntervalMs: number
   /** T2：滚动速度三档（档位预设 scrollPageWaitMs 初始值：慢8s/中5s/快3s；数字微调直接生效） */
   scrollSpeed: 'slow' | 'medium' | 'fast'
@@ -203,6 +205,15 @@ export function clampStuckTimeoutMin(v: unknown): number {
   const n = Math.round(Number(v))
   if (v === '' || v === null || v === undefined || !Number.isFinite(n) || n <= 0) return STUCK_TIMEOUT_MIN_RANGE.default
   return Math.min(STUCK_TIMEOUT_MIN_RANGE.max, Math.max(STUCK_TIMEOUT_MIN_RANGE.min, n))
+}
+
+export const DOWNLOAD_SEGMENTS_RANGE = { min: 1, max: 4, default: 3 } as const
+
+/** 分段数只允许 1-4；空值/非数字回默认 3，小数四舍五入。 */
+export function clampDownloadSegments(v: unknown): number {
+  const n = Math.round(Number(v))
+  if (v === '' || v === null || v === undefined || !Number.isFinite(n)) return DOWNLOAD_SEGMENTS_RANGE.default
+  return Math.min(DOWNLOAD_SEGMENTS_RANGE.max, Math.max(DOWNLOAD_SEGMENTS_RANGE.min, n))
 }
 
 export const ERROR = {

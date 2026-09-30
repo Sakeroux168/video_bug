@@ -2,6 +2,7 @@ import { app } from 'electron'
 import { readFileSync, writeFileSync, mkdirSync } from 'fs'
 import { join } from 'path'
 import type { AppSettings } from '../shared/types'
+import { clampDownloadSegments } from '../shared/types'
 
 const DEFAULTS: AppSettings = {
   downloadDir: join(app.getPath('downloads'), '爬取视频'),
@@ -9,6 +10,7 @@ const DEFAULTS: AppSettings = {
   aiApiKey: '',
   aiModel: 'gpt-4o-mini',
   downloadConcurrency: 3,
+  downloadSegments: 3,
   scrollIntervalMs: 3500, // R12：默认滚动间隔放慢（2000→3500）降风控
   scrollSpeed: 'slow',
   scrollPageWaitMs: 8000,
@@ -59,12 +61,13 @@ export function getSettings(): AppSettings {
     const stored = JSON.parse(raw) as Record<string, unknown>
     for (const key of RETIRED_KEYS) delete stored[key]
     // 配置文件存在 = 老用户升级：归档层级缺失键按升级前行为（全开）兜底，再让文件里的显式值覆盖
-    return { ...DEFAULTS, ...LEGACY_ORGANIZE_LEVELS, ...(stored as Partial<AppSettings>) }
+    const merged = { ...DEFAULTS, ...LEGACY_ORGANIZE_LEVELS, ...(stored as Partial<AppSettings>) }
+    return { ...merged, downloadSegments: clampDownloadSegments(merged.downloadSegments) }
   } catch { return { ...DEFAULTS } }
 }
 
 export function saveSettings(s: AppSettings): void {
   const f = settingsFile()
   mkdirSync(join(app.getPath('userData')), { recursive: true })
-  writeFileSync(f, JSON.stringify(s, null, 2), 'utf-8')
+  writeFileSync(f, JSON.stringify({ ...s, downloadSegments: clampDownloadSegments(s.downloadSegments) }, null, 2), 'utf-8')
 }

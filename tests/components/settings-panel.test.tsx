@@ -20,6 +20,7 @@ const SETTING_LABELS: Record<keyof AppSettings, string> = {
   aiApiKey: 'API Key',
   aiModel: '模型',
   downloadConcurrency: '下载并发',
+  downloadSegments: '分段数',
   scrollIntervalMs: '滚动间隔(ms)',
   scrollSpeed: '滚动速度',
   scrollPageWaitMs: '每页最大等待(秒)',
@@ -103,6 +104,16 @@ describe('SettingsPanel 分组与字段完整性', () => {
     fireEvent.click(screen.getByRole('button', { name: '保存设置' }))
     await waitFor(() => expect(window.api.saveSettings).toHaveBeenCalledWith(expect.objectContaining({ stuckTimeoutMin: saved })))
     await waitFor(() => expect((screen.getByLabelText('卡住判定(分钟)') as HTMLInputElement).value).toBe(String(saved)))
+  })
+
+  it.each([['0', 1], ['1', 1], ['3', 3], ['9', 4]])('分段数填「%s」→ 按 %s 段保存，并显示实际值', async (typed, saved) => {
+    installFakeApi()
+    render(<SettingsPanel />)
+    const box = await screen.findByLabelText('分段数')
+    fireEvent.change(box, { target: { value: typed } })
+    fireEvent.click(screen.getByRole('button', { name: '保存设置' }))
+    await waitFor(() => expect(window.api.saveSettings).toHaveBeenCalledWith(expect.objectContaining({ downloadSegments: saved })))
+    await waitFor(() => expect((screen.getByLabelText('分段数') as HTMLInputElement).value).toBe(String(saved)))
   })
 
   it('新增的归档延迟和语音时长会按正确单位保存', async () => {
