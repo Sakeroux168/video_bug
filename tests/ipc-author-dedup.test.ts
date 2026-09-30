@@ -202,25 +202,23 @@ describe('task:create 作者 URL 归一化（P1.5）', () => {
   })
 })
 
-// 小红书骨架阶段：适配器已注册（内置浏览器要能打开它去登录、抓包），但解析器还没写。
-// 必须挡住建任务，否则就是「平台能选、任务跑不通」的半成品——交接文档反复点名的坑。
-describe('未就绪平台不能建任务', () => {
-  it('小红书建任务被拒绝，并说明是在接入中', async () => {
+// 小红书关键词、话题与作者主页均已接通。
+describe('任务创建遵守平台能力', () => {
+  it('小红书关键词任务接通后可正常入队', async () => {
     const { enqueued, create } = setup()
     const r = await create(input({ platform: 'xiaohongshu', type: 'keyword', query: '美食' }))
 
-    expect(r.id).toBeNull()
-    expect(r.skipped).toBe(true)
-    expect(r.reason).toMatch(/小红书/)
-    expect(r.reason).toMatch(/接入中|暂不支持/)
-    expect(enqueued).toEqual([])
+    expect(r.id).not.toBeNull()
+    expect(r.skipped).toBe(false)
+    expect(enqueued).toEqual([r.id])
   })
 
-  it('作者任务同样被拒绝（不能绕过 type 混进来）', async () => {
+  it('小红书作者 ID 会归一化并正常入队', async () => {
     const { enqueued, create } = setup()
     const r = await create(input({ platform: 'xiaohongshu', type: 'author', query: '5f2a1b3c0000000001' }))
-    expect(r.skipped).toBe(true)
-    expect(enqueued).toEqual([])
+    expect(r.skipped).toBe(false)
+    expect(r.id).not.toBeNull()
+    expect(enqueued).toEqual([r.id])
   })
 
   it('已就绪平台不受影响', async () => {

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest'
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import TaskList from '../../src/renderer/src/components/TaskList'
 import type { TaskRow, TaskStats } from '../../src/shared/types'
 import { installFakeApi } from '../helpers/fake-api'
@@ -23,6 +23,13 @@ describe('TaskList 冒烟', () => {
     // 恢复假 api 默认实现，隔离各测试
     installFakeApi()
     vi.mocked(window.api.onTaskProgress).mockReturnValue(() => {})
+  })
+
+  it('创建任务后的刷新版本变化会立即重拉任务列表', async () => {
+    const { rerender } = render(<TaskList notify={() => {}} refreshVersion={0} />)
+    await waitFor(() => expect(window.api.listTasks).toHaveBeenCalledTimes(1))
+    rerender(<TaskList notify={() => {}} refreshVersion={1} />)
+    await waitFor(() => expect(window.api.listTasks).toHaveBeenCalledTimes(2))
   })
 
   it('渲染卡片标题与任务表格头', async () => {

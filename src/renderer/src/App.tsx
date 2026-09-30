@@ -53,6 +53,7 @@ export default function App(): JSX.Element {
     filterLog?: string
   }>>([])
   const [showLog, setShowLog] = useState(false)
+  const [taskRefreshVersion, setTaskRefreshVersion] = useState(0)
   const [toast, setToast] = useState<{ text: string } | null>(null)
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -64,7 +65,9 @@ export default function App(): JSX.Element {
   }
 
   async function startTask(input: CreateTaskInput): Promise<{ id: number | null; skipped: boolean; reason?: string }> {
-    return api.createTask(input)
+    const result = await api.createTask(input)
+    if (!result.skipped && result.id !== null) setTaskRefreshVersion(v => v + 1)
+    return result
   }
   async function refreshLog(): Promise<void> {
     setRawLog(await api.getRawLog())
@@ -156,7 +159,7 @@ export default function App(): JSX.Element {
             不知道怎么用？点左侧「使用说明」
           </button>
           <FilterForm onSubmit={startTask} />
-          <TaskList notify={notify} />
+          <TaskList notify={notify} refreshVersion={taskRefreshVersion} />
         </div>
         {tab === 'overview' && <Overview onGoto={setTab} />}
         {tab === 'authors' && <AuthorCollection notify={notify} />}

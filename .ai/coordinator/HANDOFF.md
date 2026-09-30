@@ -1,0 +1,21 @@
+# video_bug 当前交接
+
+> 当前执行快照，随进度重写；历史看 Git。更新于 2026-09-30（PR #3 合并）。
+
+## 基线
+
+- PR #3（`pr1` → `master`）已合并：小红书关键词 / 作者主页两段式抓取，稳妥 / 快速两种详情模式，未登录和验证码分开提示；同时合入了 master 上的 R20（作者日期段、看门狗、队列）。
+- 合并前的最后验证（`f725c86`）：vitest 89 个文件 / 1059 项通过，typecheck、build、CSS、license 检查通过；真机小红书快速、稳妥各 3/3 下载，ffprobe 正常。
+
+## 未完成（后续任务候选）
+
+1. **抖音验证码在内嵌框里时检测不到**：真机上抖音弹出「验证码中间页」（`document.title`），滑块在 `rmc.bytedance.com/verifycenter/captcha` 跨域 iframe 里，页面正文为空。`buildVerifyScript` 看不到，任务以 `stalled` 而不是 `stalled_verify` 暂停。建议把页面标题「验证码」也算作验证码信号。合并前就存在，不是回归。
+2. **下载提速**：小红书 CDN 单连接约 250～300 KB/s；4 路 Range 并行合计约 735 KB/s。可以做分段并行下载，或者调高「同时下载数」（测试档案被设成了 1）。
+3. 小问题：`undefined` 全文替换会改到字符串里的字样（P3）；作者 + 自定义日期的日志误报；`taskCreate` 提示文案写死；`package-lock.json` 不同步（`npm ci` 失败）。
+4. 接口模式：总控两次被安全审核拦下，不做；是否做由用户自己决定。
+5. 各工作区：`codex工作区\video_bug` 还留着旧的未提交改动（内容已在 `595e997`），开工前丢掉再 pull；`gemini工作区\video_bug` 是 DeepSeek 用的；总控在 `claude工作区\video_bug`。
+6. 测试档案 `codex工作区\小红书验收\user-data`：小红书已登录；抖音要真人过一次滑块。用本机接口建任务时，**中文关键词要按 UTF-8 发送**（Git Bash 里的 curl 会把中文弄成乱码，改用 node 脚本 `claude工作区\诊断` 那种写法）。
+
+## 下一步
+
+- 等用户挑下一项（上面 1、2 最有价值）。

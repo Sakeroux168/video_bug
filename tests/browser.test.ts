@@ -115,6 +115,29 @@ describe('页面加载：ERR_ABORTED 不是失败', () => {
     await expect(b.load(stub, 'https://www.kuaishou.com/')).resolves.toBeUndefined()
   })
 
+  it('Electron 只给 errno=-3、没有 code 时也按导航中止处理', async () => {
+    const err = Object.assign(new Error("(-3) loading 'https://www.douyin.com/search/x'"), { errno: -3 })
+    const b = browserWith(() => Promise.reject(err))
+    await expect(b.load(stub, 'https://www.douyin.com/search/x')).resolves.toBeUndefined()
+  })
+
+  it('小红书主页超时但 DOM 已有作品卡片时继续执行', async () => {
+    vi.useFakeTimers()
+    try {
+      const b = browserWith(() => new Promise<void>(() => {}))
+      const wc = { executeJavaScript: vi.fn(async () => true), stop: vi.fn() }
+      ;(b as unknown as { win: unknown }).win = { loadURL: () => new Promise<void>(() => {}), isDestroyed: () => false, webContents: wc }
+      const xhs = { name: 'xiaohongshu', sessionPartition: 'persist:douyin', rawUrlHints: ['/api/sns/web/'] } as never
+      const pending = b.load(xhs, 'https://www.xiaohongshu.com/user/profile/U1')
+      await vi.advanceTimersByTimeAsync(31000)
+      await expect(pending).resolves.toBeUndefined()
+      expect(wc.executeJavaScript).toHaveBeenCalled()
+      expect(wc.stop).toHaveBeenCalledTimes(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('其它加载错误照常抛出（真打不开还是要判失败）', async () => {
     const err = Object.assign(new Error('ERR_CONNECTION_REFUSED'), { errno: -102, code: 'ERR_CONNECTION_REFUSED' })
     const b = browserWith(() => Promise.reject(err))

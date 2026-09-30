@@ -19,12 +19,49 @@ export interface VideoItem {
 }
 
 /** 平台适配器契约：核心模块只认这个接口，平台差异全部封在里面 */
+export interface ListStub {
+  noteId: string
+  detailToken: string
+  /** 详情入口的实际来源。搜索通常是 pc_search，作者主页是 pc_user。 */
+  detailSource?: string
+  /** 作者主页卡片会给出带临时令牌的完整详情地址；仅在本次任务内存中使用。 */
+  detailUrl?: string
+  title: string
+  authorId: string
+  authorNickname: string
+  coverUrl: string
+  likes: number | null
+  comments: number | null
+}
+
+export interface ListStubResult {
+  stubs: ListStub[]
+  skipped: { image: number; other: number }
+  hasMore?: boolean
+}
+
+export interface NativeSearchFilter {
+  group: string
+  option: string
+}
+
+/**
+ * 快速模式详情取数结果。reason 必须是固定文案或从错误类型推导，
+ * 不得携带响应体片段 / URL 查询串——详情地址带 xsec_token，落日志前一律脱敏。
+ */
+export type FastDetailOutcome =
+  | { kind: 'ok'; item: VideoItem }
+  | { kind: 'login' }   // 被重定向到登录页 → 调度器按 login_required 暂停
+  | { kind: 'verify' }  // 被重定向到验证码页 → 调度器按 stalled_verify 暂停
+  | { kind: 'skip'; reason: string }
+
 export interface PlatformAdapter {
   name: string
   displayName: string
   /** 解析器是否已按真机接口实现。false 表示只能在内置浏览器里打开（扫码登录、抓包），
    *  不能建任务——避免「平台出现在下拉框里、选了却跑不通」的半成品状态。 */
   taskReady: boolean
+  supportedTaskTypes?: readonly TaskType[]
   /** 可由主进程打开的作品页精确主机白名单 */
   sourceHosts: readonly string[]
   /** 登录态分区，如 'persist:douyin' */
@@ -57,5 +94,20 @@ export interface PlatformAdapter {
    *  必须拒绝推荐流、详情等无关响应——用户在浏览器里手点一条视频不能污染正在跑的任务。 */
   matchesTaskResponse(type: TaskType, url: string, json: unknown): boolean
   parseApiJson(url: string, json: unknown): VideoItem[]
+  /** 两段式平台必须同时实现这四个方法。令牌仅在当前任务内存中保存。 */
+  parseListStubs?(url: string, json: unknown): ListStubResult
+  /** 页面原生筛选。它只用于减少无效候选，最终仍由详情字段做精确过滤。 */
+  nativeSearchFilters?(type: TaskType, filters: Filters): NativeSearchFilter[]
+  /** 某些列表（小红书作者主页）把详情令牌只放在卡片链接里，需要从当前 DOM 收集。 */
+  buildListDomScript?(type: TaskType): string | null
+  parseListDomResult?(value: unknown): ListStubResult
+  buildDetailUrl?(stub: ListStub): string
+  /** 详情接口不触发时，从页面已注水状态读取当前笔记；脚本必须核对 noteId，且不得返回令牌。 */
+  buildDetailDomScript?(noteId: string): string | null
+  isDetailResponse?(url: string, json: unknown, noteId?: string): boolean
+  parseDetail?(json: unknown): VideoItem | null
+  /** 快速模式：不在窗口里导航，用登录态 session 拉详情 HTML 后解析注水状态。
+   *  finalUrl 是跟随重定向后的最终地址（登录页/验证码页靠它识别）。 */
+  parseDetailHtml?(finalUrl: string, html: string, noteId: string): FastDetailOutcome
   normalizePlayUrl(rawUrl: string): string
 }

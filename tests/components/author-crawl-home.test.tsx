@@ -41,6 +41,18 @@ function clickCrawl(nickname: string): void {
 
 beforeEach(() => { installFakeApi() })
 
+it('小红书作者主页抓取已接入，入口可用', async () => {
+  vi.mocked(window.api.listAuthors).mockResolvedValue([author({ platform: 'xiaohongshu', nickname: '小红书甲' })])
+  vi.mocked(window.api.listPlatforms).mockResolvedValue([...PLATFORMS,
+    { name: 'xiaohongshu', displayName: '小红书', authorInputPlaceholder: 'x', taskReady: true,
+      supportedTaskTypes: ['keyword', 'author', 'hashtag'] }
+  ] as never)
+  render(<AuthorCollection notify={() => {}} />)
+  fireEvent.click(await screen.findByRole('tab', { name: /小红书/ }))
+  await screen.findByText('小红书甲')
+  expect(screen.getByRole('button', { name: '爬主页' })).toBeEnabled()
+})
+
 describe('爬主页前先问清楚爬多少', () => {
   it('点「爬主页」不立刻建任务，先出确认面板并写明是哪个作者', async () => {
     await open()

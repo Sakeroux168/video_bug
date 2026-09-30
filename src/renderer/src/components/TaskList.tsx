@@ -125,7 +125,7 @@ function formatDate(iso: string | null): string {
   return iso ? iso.slice(0, 10) : '—'
 }
 
-export default function TaskList({ notify }: { notify: (text: string) => void }): React.ReactElement {
+export default function TaskList({ notify, refreshVersion = 0 }: { notify: (text: string) => void; refreshVersion?: number }): React.ReactElement {
   const [tasks, setTasks] = useState<TaskRow[]>([])
   const [videos, setVideos] = useState<Record<number, VideoRow[]>>({})
   const [expanded, setExpanded] = useState<Set<number>>(new Set())
@@ -182,8 +182,9 @@ export default function TaskList({ notify }: { notify: (text: string) => void })
 
   useEffect(() => { refreshRef.current = refresh })
 
+  useEffect(() => { refreshRef.current() }, [refreshVersion])
+
   useEffect(() => {
-    refreshRef.current()
     // R11 Task2：progress 瞬时推送带 reSearchCount → 先更新徽标计数再照常刷新任务行。
     // R17：徽标计数**不进节流**——它只是一次 setState，且用户需要立刻看到重搜次数变化；
     // 真正昂贵的是下面那次全量重拉（listTasks + N 次 getTaskStats + 展开任务的全部视频），

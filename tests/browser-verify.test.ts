@@ -1,10 +1,14 @@
 // @vitest-environment jsdom
 import { describe, it, expect, beforeEach } from 'vitest'
-import { buildVerifyScript } from '../src/main/browser'
+import { buildLoginScript, buildVerifyScript } from '../src/main/browser'
 
 /** 在 jsdom 全局作用域执行检测脚本并取其 IIFE 返回值（new Function 函数体需显式 return） */
 function runVerifyScript(): string | null {
   return new Function(`return ${buildVerifyScript()}`)() as string | null
+}
+
+function runLoginScript(platform: string): string | null {
+  return new Function(`return ${buildLoginScript(platform)}`)() as string | null
 }
 
 /** jsdom 单测 findVerifyIndicator 页面脚本：结构检测（验证弹窗类名）+ 文字匹配（扩展正则）命中逻辑。
@@ -37,5 +41,26 @@ describe('findVerifyIndicator 页面脚本（R11-4/5）', () => {
     document.body.innerHTML = '<div><span>暂时没有更多了</span></div>'
     const r = runVerifyScript()
     expect(r).toBeNull()
+  })
+
+  it.each([
+    ['xiaohongshu', '登录后查看搜索结果'],
+    ['xiaohongshu', '登录即可查看 Ta 的笔记'],
+    ['douyin', '扫码登录']
+  ])('%s 未登录文案独立识别，且不再误报验证码', (platform, message) => {
+    document.body.innerHTML = `<div class="dialog"><span>${message}</span></div>`
+    expect(runLoginScript(platform)).toContain(message)
+    expect(runVerifyScript()).toBeNull()
+  })
+
+  it('抖音登录框里的「验证码登录」选项不算验证码', () => {
+    document.body.innerHTML = '<div class="dialog"><span>扫码登录</span><span>验证码登录</span><span>密码登录</span></div>'
+    expect(runLoginScript('douyin')).toBeTruthy()
+    expect(runVerifyScript()).toBeNull()
+  })
+
+  it('真实验证码即使同时有登录入口也仍按验证码识别', () => {
+    document.body.innerHTML = '<div class="captcha-modal"><span>扫码登录</span><strong>拖动滑块完成验证</strong></div>'
+    expect(runVerifyScript()).toContain('拖动滑块完成验证')
   })
 })

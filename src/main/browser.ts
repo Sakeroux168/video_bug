@@ -1,12 +1,43 @@
 import { BrowserWindow, screen } from 'electron'
 import type { Rectangle } from 'electron'
 import { join } from 'path'
-import type { PlatformAdapter } from './adapters/types'
+import type { ListStubResult, NativeSearchFilter, PlatformAdapter, VideoItem } from './adapters/types'
+import type { TaskType } from '../shared/types'
 import { buildInjectScript } from './injector'
 
 /** R11-4/5：验证码识别正则（导出供测试与页面脚本共用）——R11-5 扩展：机器人验证/完成拼图/点击完成/安全校验/verify/captcha
  *  （真机反馈「机器人验证」等抖音实际文案漏检，重搜烧掉 3 次机会） */
 export const VERIFY_TEXT_PATTERN = /验证码|滑动验证|安全验证|拖动滑块|请完成验证|机器人验证|完成拼图|点击完成|安全校验|verify|captcha/i
+export const LOGIN_TEXT_PATTERN = /登录即可查看\s*Ta\s*的笔记|登录后查看搜索结果|扫码登录|手机号登录|验证码登录|密码登录/i
+
+/** 未登录检测与验证码分开：只认各平台真机出现过的登录提示。 */
+export function buildLoginScript(platform: string): string {
+  const re = platform === 'xiaohongshu'
+    ? /登录即可查看\s*Ta\s*的笔记|登录后查看搜索结果|手机号登录/i
+    : platform === 'douyin'
+      ? /扫码登录|验证码登录|密码登录/i
+      : /$a/
+  return `(() => {
+    const re = ${re.toString()};
+    const inView = el => {
+      const r = el.getBoundingClientRect();
+      return r.width > 0 && r.height > 0 && r.bottom > 0 && r.top < window.innerHeight;
+    };
+    const body = document.body; if (!body) return null;
+    const skip = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT']);
+    const walker = document.createTreeWalker(body, NodeFilter.SHOW_TEXT, {
+      acceptNode: node => {
+        const el = node.parentElement;
+        return el && !skip.has(el.tagName) && inView(el) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+      }
+    });
+    for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+      const t = (node.textContent || '').trim();
+      if (t && re.test(t)) return t.slice(0, 40);
+    }
+    return null;
+  })()`
+}
 
 /** R11-4/5：验证码检测脚本——结构检测（可见的 captcha/verify/modal-mask/dialog 类名弹窗）+ 全 DOM 文字匹配。
  *  结构命中（文案未匹配）也返回「验证弹窗（结构命中）」——漏检比误报严重，宁可多暂停一次让用户确认。
@@ -14,6 +45,9 @@ export const VERIFY_TEXT_PATTERN = /验证码|滑动验证|安全验证|拖动�
 export function buildVerifyScript(re: RegExp = VERIFY_TEXT_PATTERN): string {
   return `(() => {
     const re = ${re.toString()};
+    const loginRe = ${LOGIN_TEXT_PATTERN.toString()};
+    // 登录弹窗里的「验证码登录」等选项含「验证码」三字，先剔除登录文案再判验证码
+    const stripLogin = t => t.replace(new RegExp(loginRe.source, 'gi'), '');
     // 可见 + 视口内：宽高 > 0（排除 display:none/visibility:hidden）且与视口相交
     const inView = el => {
       const r = el.getBoundingClientRect();
@@ -25,7 +59,8 @@ export function buildVerifyScript(re: RegExp = VERIFY_TEXT_PATTERN): string {
       for (const el of document.querySelectorAll(sel)) {
         if (!inView(el)) continue;
         const t = (el.textContent || '').trim();
-        if (t && re.test(t)) return t.slice(0, 30);
+        if (t && re.test(stripLogin(t))) return t.slice(0, 30);
+        if (t && loginRe.test(t)) continue;
         return '验证弹窗（结构命中）';
       }
     } catch (e) {}
@@ -41,7 +76,7 @@ export function buildVerifyScript(re: RegExp = VERIFY_TEXT_PATTERN): string {
     });
     for (let node = walker.nextNode(); node; node = walker.nextNode()) {
       const t = (node.textContent || '').trim();
-      if (t && re.test(t)) return t.slice(0, 30);
+      if (t && re.test(stripLogin(t))) return t.slice(0, 30);
     }
     return null;
   })()`
@@ -237,7 +272,169 @@ export class VideoBrowser {
       // 会中止原始导航并让 loadURL 以 -3 拒绝，而页面通常已经正常打开。
       // 当成失败会把任务白白判死——真机上抖音连着三次记成 network 失败、
       // 「打开快手窗口」三次全抛异常，都是它。
-      if ((err as { code?: string } | null)?.code !== 'ERR_ABORTED') throw err
+      const nav = err as { code?: string | number; errno?: number } | null
+      if (nav?.code === 'ERR_ABORTED' || nav?.errno === -3 || nav?.code === -3) return
+      // 小红书页面会持续挂资源，让 loadURL 到 30 秒仍不结束。先停止尾部资源，再给 Vue
+      // 一小段收尾时间：真机上详情注水会在 stop 后才落进 noteDetailMap。只给该平台
+      // 放行，保持抖音/快手原来的超时语义。
+      if (nav?.code === 'OP_TIMEOUT' && adapter.name === 'xiaohongshu') {
+        this.win.webContents.stop()
+        await new Promise(resolve => setTimeout(resolve, 500))
+        if (await this.hasUsableXiaohongshuPage()) return
+      }
+      throw err
+    }
+  }
+
+  private async hasUsableXiaohongshuPage(): Promise<boolean> {
+    if (!this.win || this.win.isDestroyed()) return false
+    try {
+      return Boolean(await this.win.webContents.executeJavaScript(`(() => {
+        if (document.querySelector('[data-note-id]')) return true;
+        const unref = value => value && typeof value === 'object' && (value.__v_isRef || '_value' in value || 'value' in value)
+          ? (value._value ?? value.value ?? value._rawValue) : value;
+        const s = window.__INITIAL_STATE__ || {};
+        const detailMap = unref(s.note && s.note.noteDetailMap);
+        if (detailMap && Object.keys(detailMap).length > 0) return true;
+        const search = s.search || {};
+        if (Array.isArray(search.feeds) && search.feeds.length > 0) return true;
+        const user = s.user || {};
+        return Array.isArray(user.notes) && user.notes.length > 0;
+      })()`))
+    } catch { return false }
+  }
+
+  /**
+   * 从当前详情页注水状态读取完整条目；适配器脚本负责只接受当前等待的 noteId。
+   * 用 mainFrame.executeJavaScript（WebFrameMain）：它的执行不等页面停止加载——
+   * 小红书详情页常年挂着尾部资源，webContents.executeJavaScript 会一直等到
+   * loadURL 结束才执行，每条详情被拖到 15s 兜底。mainFrame 没有这个等待，
+   * 注水一到位（真机 ~2.5s）就能读到。每次调用都重新取 mainFrame：跨域导航后
+   * 旧 frame 引用会失效。
+   */
+  async extractCurrentDetail(adapter: PlatformAdapter, noteId: string): Promise<VideoItem | null> {
+    if (!this.win || this.win.isDestroyed() || !adapter.buildDetailDomScript || !adapter.parseDetail) return null
+    const script = adapter.buildDetailDomScript(noteId)
+    if (!script) return null
+    try {
+      const raw = await this.win.webContents.mainFrame.executeJavaScript(script)
+      const item = adapter.parseDetail(raw)
+      return item?.awemeId === noteId ? item : null
+    } catch { return null }
+  }
+
+  /**
+   * 快速模式：用平台登录态分区 session 直接拉详情页 HTML（不导航窗口）。
+   * Cookie 由分区自动带上；Referer 与下载同源，减少多余差异。
+   * 失败返回 null，不抛出——调度器按单条跳过处理。
+   * 注意：url 带一次性令牌，任何日志都不得原样写这个地址。
+   */
+  async fetchDetailHtml(adapter: PlatformAdapter, url: string, signal?: AbortSignal): Promise<{ status: number; finalUrl: string; body: string } | null> {
+    try {
+      const { session } = await import('electron')
+      const ses = session.fromPartition(adapter.sessionPartition)
+      const res = await ses.fetch(url, { redirect: 'follow', headers: { Referer: adapter.downloadReferer }, signal })
+      const body = await res.text()
+      return { status: res.status, finalUrl: res.url, body }
+    } catch { return null }
+  }
+
+  /** 详情等待超时或任务暂停时终止在途页面加载。 */
+  stopLoading(): void {
+    if (this.win && !this.win.isDestroyed()) this.win.webContents.stop()
+  }
+
+  /** 从当前页面 DOM 收集列表存根。小红书作者页的详情令牌只存在卡片链接里。 */
+  async collectListStubs(adapter: PlatformAdapter, type: TaskType): Promise<ListStubResult | null> {
+    if (!this.win || !adapter.buildListDomScript || !adapter.parseListDomResult) return null
+    const script = adapter.buildListDomScript(type)
+    if (!script) return null
+    try {
+      const raw = await this.win.webContents.executeJavaScript(script)
+      return adapter.parseListDomResult(raw)
+    } catch { return null }
+  }
+
+  /**
+   * 按“组标题 + 选项文字”应用网页原生筛选。小红书筛选面板靠真实 hover 展开，
+   * 所以用 Chromium DevTools Protocol 派发鼠标事件；不依赖易变的 Vue data-v 哈希或固定下标。
+   */
+  async applyNativeSearchFilters(filters: NativeSearchFilter[]): Promise<{ applied: boolean; noteIds: string[] }> {
+    if (!this.win || filters.length === 0) return { applied: true, noteIds: [] }
+    const wc = this.win.webContents
+    const readNoteIds = async (): Promise<string[]> => {
+      try {
+        const value = await wc.executeJavaScript(`(() => [...document.querySelectorAll('[data-note-id]')]
+          .map(el => (el.getAttribute('data-note-id') || '').trim()).filter(Boolean))()`)
+        return Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : []
+      } catch { return [] }
+    }
+    const visibleRect = async (kind: 'button' | 'panel' | 'option', filter?: NativeSearchFilter): Promise<{ x: number; y: number } | null> => {
+      const script = kind === 'button'
+        ? `(() => {
+            const visible = el => { const r=el.getBoundingClientRect(); const s=getComputedStyle(el); return r.width>0&&r.height>0&&s.display!=='none'&&s.visibility!=='hidden'; };
+            const el=[...document.querySelectorAll('div.filter')].find(x => visible(x) && (x.textContent||'').trim().includes('筛选'));
+            if(!el) return null; el.scrollIntoView({block:'center',inline:'center'}); const r=el.getBoundingClientRect();
+            return {x:r.left+r.width/2,y:r.top+r.height/2};
+          })()`
+        : kind === 'panel'
+          ? `(() => {
+              const visible = el => { const r=el.getBoundingClientRect(); const s=getComputedStyle(el); return r.width>0&&r.height>0&&s.display!=='none'&&s.visibility!=='hidden'; };
+              const el=[...document.querySelectorAll('div.filter-panel')].find(visible); if(!el) return null;
+              const r=el.getBoundingClientRect(); return {x:r.left+r.width/2,y:r.top+Math.min(20,r.height/2)};
+            })()`
+          : `(() => {
+              const GROUP=${JSON.stringify(filter?.group || '')}, OPTION=${JSON.stringify(filter?.option || '')};
+              const visible = el => { const r=el.getBoundingClientRect(); const s=getComputedStyle(el); return r.width>0&&r.height>0&&s.display!=='none'&&s.visibility!=='hidden'; };
+              const panel=[...document.querySelectorAll('div.filter-panel')].find(visible); if(!panel) return null;
+              const group=[...panel.querySelectorAll('div.filters')].find(g => {
+                const label=[...g.children].find(x => x.tagName==='SPAN'); return label && (label.textContent||'').trim()===GROUP;
+              });
+              if(!group) return null;
+              const el=[...group.querySelectorAll('div.tags')].find(x => visible(x) && (x.textContent||'').trim()===OPTION);
+              if(!el) return null; const r=el.getBoundingClientRect(); return {x:r.left+r.width/2,y:r.top+r.height/2};
+            })()`
+      try {
+        const value = await wc.executeJavaScript(script) as { x?: unknown; y?: unknown } | null
+        return value && Number.isFinite(Number(value.x)) && Number.isFinite(Number(value.y))
+          ? { x: Number(value.x), y: Number(value.y) } : null
+      } catch { return null }
+    }
+    const before = (await readNoteIds()).join(',')
+    let attachedHere = false
+    try {
+      if (!wc.debugger.isAttached()) { wc.debugger.attach('1.3'); attachedHere = true }
+      const button = await visibleRect('button')
+      if (!button) return { applied: false, noteIds: await readNoteIds() }
+      await wc.debugger.sendCommand('Input.dispatchMouseEvent', { type: 'mouseMoved', ...button })
+      let panel: { x: number; y: number } | null = null
+      for (let i = 0; i < 30 && !panel; i++) {
+        await new Promise(resolve => setTimeout(resolve, 100))
+        panel = await visibleRect('panel')
+      }
+      if (!panel) return { applied: false, noteIds: await readNoteIds() }
+      await wc.debugger.sendCommand('Input.dispatchMouseEvent', { type: 'mouseMoved', ...panel })
+      for (const filter of filters) {
+        const option = await visibleRect('option', filter)
+        if (!option) return { applied: false, noteIds: await readNoteIds() }
+        await wc.debugger.sendCommand('Input.dispatchMouseEvent', { type: 'mouseMoved', ...option })
+        await wc.debugger.sendCommand('Input.dispatchMouseEvent', { type: 'mousePressed', button: 'left', clickCount: 1, ...option })
+        await wc.debugger.sendCommand('Input.dispatchMouseEvent', { type: 'mouseReleased', button: 'left', clickCount: 1, ...option })
+        await new Promise(resolve => setTimeout(resolve, 250))
+      }
+      // 等结果卡片切换；同一关键词偶尔首批 ID 恰好不变，5 秒后仍按已点击成功返回。
+      for (let i = 0; i < 20; i++) {
+        const ids = await readNoteIds()
+        if (ids.length > 0 && ids.join(',') !== before) return { applied: true, noteIds: ids }
+        await new Promise(resolve => setTimeout(resolve, 250))
+      }
+      return { applied: true, noteIds: await readNoteIds() }
+    } catch {
+      return { applied: false, noteIds: await readNoteIds() }
+    } finally {
+      if (attachedHere && wc.debugger.isAttached()) {
+        try { wc.debugger.detach() } catch { /* window may have navigated */ }
+      }
     }
   }
 
@@ -339,6 +536,15 @@ export class VideoBrowser {
     if (!this.win) return null
     try {
       const r = await this.evalInPage(buildVerifyScript(), '查验证码')
+      return typeof r === 'string' && r.length > 0 ? r : null
+    } catch { return null }
+  }
+
+  /** 未登录提示独立识别，避免把登录弹窗当成验证码。 */
+  async findLoginIndicator(): Promise<string | null> {
+    if (!this.win || !this.current) return null
+    try {
+      const r = await this.win.webContents.executeJavaScript(buildLoginScript(this.current.name))
       return typeof r === 'string' && r.length > 0 ? r : null
     } catch { return null }
   }
