@@ -253,6 +253,54 @@ describe('小红书搜索 → 详情 → 保存', () => {
     t.db.close()
   })
 
+  describe('追更（作者主页 + 起始日期）：连续碰到比起点还旧的作品就收尾', () => {
+    const NEW = Date.UTC(2026, 9, 1) // 2026-10-01
+    const OLD = Date.UTC(2026, 8, 1) // 2026-09-01
+    const timed = (id: string, time: number) => {
+      const d = detail(id) as { data: { items: Array<{ note_card: { time: number } }> } }
+      d.data.items[0].note_card.time = time
+      return d
+    }
+    function authorRange(target: number, notes: Array<[string, number]>) {
+      const t = setup(target)
+      t.db.prepare("UPDATE tasks SET type='author', query='AUTHOR', filters=? WHERE id=?")
+        .run(JSON.stringify({ timeRange: 'custom', startDate: '2026-09-25', duration: 'all', targetCount: target }), t.id)
+      const stubs = notes.map(([id]) => ({
+        noteId: id, detailToken: 'TK', detailSource: 'pc_user',
+        detailUrl: `https://www.xiaohongshu.com/user/profile/AUTHOR/${id}?xsec_token=TK&xsec_source=pc_user`,
+        title: id, authorId: 'AUTHOR', authorNickname: '', coverUrl: '', likes: null, comments: null
+      }))
+      Object.assign(t.browser, { collectListStubs: vi.fn(async () => ({ stubs, skipped: { image: 0, other: 0 } })) })
+      const visited: string[] = []
+      t.browser.load.mockImplementation(async (_a?: unknown, url?: string) => {
+        const m = /\/AUTHOR\/([^?]+)\?/.exec(url ?? '')
+        if (!m) return
+        visited.push(m[1])
+        await t.s.handleRaw(adapter, detailUrl, timed(m[1], notes.find(([id]) => id === m[1])![1]))
+      })
+      return { ...t, visited }
+    }
+
+    it('只有 1 条新的、后面全是旧的 → 连续看到 4 条旧作品就收尾，不再挨个打开剩下的候选', async () => {
+      const t = authorRange(5, [['N1', NEW], ['O1', OLD], ['O2', OLD], ['O3', OLD], ['O4', OLD], ['O5', OLD], ['O6', OLD], ['O7', OLD]])
+      const run = t.s.run(t.id); await vi.advanceTimersByTimeAsync(20000); await run
+      expect(t.rows().map(r => r.aweme_id)).toEqual(['N1'])
+      expect(t.visited).toEqual(['N1', 'O1', 'O2', 'O3', 'O4'])
+      expect(t.state()).toMatchObject({ status: 'done', fetched_count: 1 })
+      t.db.close()
+    })
+
+    it('前 3 条是置顶的旧笔记 → 不能被它们骗得提前收尾，后面的新作品照样抓到', async () => {
+      const t = authorRange(5, [['P1', OLD], ['P2', OLD], ['P3', OLD], ['N1', NEW], ['N2', NEW],
+        ['O1', OLD], ['O2', OLD], ['O3', OLD], ['O4', OLD], ['O5', OLD]])
+      const run = t.s.run(t.id); await vi.advanceTimersByTimeAsync(20000); await run
+      expect(t.rows().map(r => r.aweme_id).sort()).toEqual(['N1', 'N2'])
+      expect(t.visited).toEqual(['P1', 'P2', 'P3', 'N1', 'N2', 'O1', 'O2', 'O3', 'O4'])
+      expect(t.state()).toMatchObject({ status: 'done', fetched_count: 2 })
+      t.db.close()
+    })
+  })
+
   it('作者作品少于目标时，重复 DOM 卡片不刷新停滞计时，已有候选仍会收尾', async () => {
     const t = setup(2)
     t.db.prepare("UPDATE tasks SET type='author', query='AUTHOR' WHERE id=?").run(t.id)

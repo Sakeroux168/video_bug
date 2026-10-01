@@ -62,11 +62,11 @@ describe('爬主页前先问清楚爬多少', () => {
     expect(window.api.createTask).not.toHaveBeenCalled()
   })
 
-  it('默认 200 条、自动下载（保持原行为，只是现在看得见、改得了）', async () => {
+  it('默认 20 条、自动下载（C 组：说明书一直建议先填 20，200 条容易被风控）', async () => {
     await open()
     clickCrawl('快手甲')
 
-    expect((await screen.findByLabelText('目标数量') as HTMLInputElement).value).toBe('200')
+    expect((await screen.findByLabelText('目标数量') as HTMLInputElement).value).toBe('20')
     expect((screen.getByLabelText('自动下载') as HTMLInputElement).checked).toBe(true)
   })
 
@@ -145,7 +145,7 @@ describe('爬主页：可选「只要这段时间发的」（R20）', () => {
     fireEvent.click(screen.getByRole('button', { name: '开始爬取' }))
     await waitFor(() => expect(window.api.createTask).toHaveBeenCalled())
     const arg = vi.mocked(window.api.createTask).mock.calls[0][0]
-    expect(arg.filters).toEqual({ timeRange: 'all', duration: 'all', targetCount: 200 })
+    expect(arg.filters).toEqual({ timeRange: 'all', duration: 'all', targetCount: 20 })
     expect(arg.allowDuplicateAuthor).toBeUndefined()
   })
 
@@ -162,7 +162,7 @@ describe('爬主页：可选「只要这段时间发的」（R20）', () => {
       type: 'author',
       query: '3xA1',
       allowDuplicateAuthor: true,
-      filters: expect.objectContaining({ timeRange: 'custom', startDate: '2026-09-01', endDate: '2026-09-20', targetCount: 200 })
+      filters: expect.objectContaining({ timeRange: 'custom', startDate: '2026-09-01', endDate: '2026-09-20', targetCount: 20 })
     })))
   })
 

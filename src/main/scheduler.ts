@@ -29,6 +29,8 @@ export const DEFAULT_STUCK_MIN = 5
 const STUCK_FLOOR_MS = 2 * 60 * 1000
 /** R20：暂停 / 删除时最多等任务自己停下来的毫秒数；超过就强制停，不让按钮跟着卡住 */
 export const PAUSE_WAIT_MS = 10000
+/** 追更：两段式作者主页连续多少条早于起始日期就收尾（小红书最多置顶 3 条旧笔记，取 4） */
+export const AUTHOR_RANGE_OLDER_STREAK = 4
 
 /** R11：遗留的空轮数停滞判定（保留导出与测试；调度循环已改用秒数制停滞检测，不再依赖空轮数） */
 export function buildStopDecision(fetched: number, target: number, emptyRounds: number): 'continue' | 'reached' | 'stop' {
@@ -590,6 +592,12 @@ export class Scheduler {
     if (stopped()) return 'reached'
     this.phase = 'detail'
     this.deps.onFilterLog?.(`搜索阶段结束：收集 ${this.listStubs.size} 条视频候选，开始逐条获取详情`)
+    // 追更（作者主页 + 起始日期）：主页按发布时间从新到旧排，卡片上又看不到发布时间，只能点开才知道。
+    // 连续碰到 AUTHOR_RANGE_OLDER_STREAK 条比起点还旧的作品，后面就不会再有新的了，直接收尾——
+    // 否则没发新视频的博主也要把几十个候选挨个打开（真机：23 个候选白看了 3 分半）。
+    // 门槛比置顶上限（3 条）多 1：置顶的旧笔记排在最前面，不能被它们骗得提前收工。
+    const rangeStart = this.isAuthorRange() && this.filters?.startDate ? chinaDayStartSec(this.filters.startDate) : null
+    let olderStreak = 0
     for (const stub of this.listStubs.values()) {
       if (this.aborted || this.fetched >= target) break
       const block = await this.detectPageBlock()
@@ -608,6 +616,13 @@ export class Scheduler {
       if (this.loginFound) return 'login'
       if (this.verifyFound) return 'verify'
       if (item && this.filters) await this.applyBatch(adapter, [item], this.filters, this.isAuthorRange())
+      if (rangeStart !== null && item && item.publishTime > 0) {
+        olderStreak = item.publishTime < rangeStart ? olderStreak + 1 : 0
+        if (olderStreak >= AUTHOR_RANGE_OLDER_STREAK) {
+          this.deps.onFilterLog?.(`连续 ${olderStreak} 条都早于 ${this.filters?.startDate}，后面不会再有新作品，抓完收尾（共 ${this.fetched} 条）`)
+          return 'reached'
+        }
+      }
       // 任务之间的间隔照样遵守（scrollIntervalMs），快速模式不额外加压
       if (!this.aborted && this.fetched < target) await this.sleep(this.scrollIntervalMs)
     }
