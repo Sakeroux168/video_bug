@@ -13,6 +13,8 @@ import type { AppSettings } from '../../src/shared/types'
 
 function freshApi(): Api {
   return {
+    exportCsv: vi.fn(async input => ({ ok: true as const, fileName: input.fileName, path: `C:\\Downloads\\${input.fileName}` })),
+    revealExport: vi.fn(async () => ({ ok: true })),
     getLoginStatuses: vi.fn(async () => []),
     ping: vi.fn(() => 'pong'),
     listPlatforms: vi.fn(async () => []),

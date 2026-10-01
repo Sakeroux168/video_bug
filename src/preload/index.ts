@@ -2,6 +2,8 @@ import { contextBridge, ipcRenderer } from 'electron'
 import type { CreateTaskInput, AppSettings, TaskRow, VideoRow, AuthorRow, TaskStats, AsrStatus, AsrProgress, FilesTree, FileDeleteResult, TaskProgressEvent, GlobalStats, RecentDownload, ProcessState } from '../shared/types'
 
 const api = {
+  exportCsv: (input: { csv: string; fileName: string }): Promise<import('../shared/types').CsvExportResult> => ipcRenderer.invoke('csv:export', input),
+  revealExport: (path: string): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke('csv:reveal', path),
   getLoginStatuses: (): Promise<import('../shared/types').PlatformLoginStatus[]> => ipcRenderer.invoke('platforms:login-status'),
   ping: () => ipcRenderer.sendSync('api:ping') as string,
   listPlatforms: (): Promise<Array<{ name: string; displayName: string; authorInputPlaceholder: string; taskReady: boolean; supportedTaskTypes?: readonly ('keyword' | 'author' | 'hashtag')[] }>> => ipcRenderer.invoke('platforms:list'),

@@ -240,3 +240,7 @@ export interface PlatformLoginStatus {
   displayName: string
   status: 'logged_in' | 'logged_out' | 'unknown'
 }
+
+export type CsvExportResult =
+  | { ok: true; fileName: string; path: string }
+  | { ok: false; error: string }

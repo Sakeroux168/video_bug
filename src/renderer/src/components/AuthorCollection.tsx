@@ -7,6 +7,9 @@ import { useTableSelection } from './useTableSelection'
 import { parsePastedAuthors } from './parsePastedAuthors'
 import { parseAuthorsCsv, buildAuthorsCsv, decodeCsvBytes } from './authorsCsv'
 import { checkDateRange, describeDateRange } from './dateRange'
+import { csvFileName } from './videosCsv'
+import { saveCsvFile } from './csvSave'
+import type { Notify } from './Notice'
 
 type ImportResult = { created: number; results: Array<{ line: number; raw: string; ok: boolean; reason?: string }> }
 
@@ -18,7 +21,7 @@ function importPlaceholder(sample: string): string {
     `李四　　　　　　${sample}`
 }
 
-export default function AuthorCollection({ notify }: { notify: (text: string) => void }) {
+export default function AuthorCollection({ notify }: { notify: Notify }) {
   const [authors, setAuthors] = useState<AuthorRow[]>([])
   const [selected, setSelected] = useState<Set<number>>(new Set())
   const [editingId, setEditingId] = useState<number | null>(null)
@@ -235,15 +238,7 @@ export default function AuthorCollection({ notify }: { notify: (text: string) =>
    *  只导当前平台 tab 的作者：分了 tab 还把两个平台导进同一张表就白分了。 */
   function exportCsv(): void {
     const csv = buildAuthorsCsv(visible)
-    // 加 BOM：Excel 不带 BOM 打开 UTF-8 CSV 会把中文显示成乱码
-    const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `作者表-${new Date().toISOString().slice(0, 10)}.csv`
-    a.click()
-    URL.revokeObjectURL(url)
-    notify(`已导出 ${visible.length} 个${activeLabel}作者`)
+    void saveCsvFile(csv, csvFileName('作者表'), visible.length, notify)
   }
 
   async function submitImport(): Promise<void> {

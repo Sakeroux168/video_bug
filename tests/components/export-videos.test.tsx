@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
 import TaskList from '../../src/renderer/src/components/TaskList'
 import FileManager from '../../src/renderer/src/components/FileManager'
+import AuthorCollection from '../../src/renderer/src/components/AuthorCollection'
+import { buildAuthorsCsv } from '../../src/renderer/src/components/authorsCsv'
 import type { TaskRow, VideoRow, TaskStats } from '../../src/shared/types'
 import { installFakeApi } from '../helpers/fake-api'
 
@@ -43,20 +45,16 @@ function makeVideo(id: number, over: Partial<VideoRow> = {}): VideoRow {
   }
 }
 
-/** 捕获点击下载链接时用到的 blob 文本与文件名 */
+/** 捕获交给主进程的文本和文件名，原有导出范围/内容断言保持不变 */
 function captureDownload(): { text: () => Promise<string>; name: () => string } {
-  let blob: Blob | null = null
+  let csv = ''
   let name = ''
-  // jsdom 没有实现 createObjectURL/revokeObjectURL，spyOn 会直接报 does not exist，只能自己装上
-  ;(URL as unknown as { createObjectURL: (b: Blob) => string }).createObjectURL = (b: Blob) => {
-    blob = b
-    return 'blob:fake'
-  }
-  ;(URL as unknown as { revokeObjectURL: (u: string) => void }).revokeObjectURL = () => {}
-  vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) {
-    name = this.download
+  vi.mocked(window.api.exportCsv).mockImplementation(async input => {
+    csv = input.csv
+    name = input.fileName
+    return { ok: true, fileName: name, path: `C:\\Users\\tester\\Downloads\\${name}` }
   })
-  return { text: async () => (blob ? await blob.text() : ''), name: () => name }
+  return { text: async () => csv, name: () => name }
 }
 
 beforeEach(() => {
@@ -64,6 +62,73 @@ beforeEach(() => {
   vi.mocked(window.api.listPlatforms).mockResolvedValue(PLATFORMS as never)
   vi.mocked(window.api.onTaskProgress).mockReturnValue(() => {})
   vi.mocked(window.api.getTaskStats).mockResolvedValue(stats)
+})
+
+describe('导出结果与合并任务', () => {
+  it('三处导出只走 IPC，成功提示真实文件名与定位按钮', async () => {
+    const author = { id: 1, platform: 'douyin', nickname: '中文作者', sec_uid: 'sec', home_url: 'https://www.douyin.com/user/sec', category: '美食', first_seen: '', last_seen: '', video_count: 1, crawled: 0 }
+    vi.mocked(window.api.listTasks).mockResolvedValue([makeTask()])
+    vi.mocked(window.api.listTaskVideos).mockResolvedValue([makeVideo(1)])
+    vi.mocked(window.api.listDownloadedVideos).mockResolvedValue([makeVideo(1)])
+    vi.mocked(window.api.listAuthors).mockResolvedValue([author] as never)
+    vi.mocked(window.api.exportCsv).mockResolvedValue({ ok: true, fileName: '重名后的表 (1).csv', path: 'C:\\Downloads\\重名后的表 (1).csv' })
+    const createElement = vi.spyOn(document, 'createElement')
+    const notify = vi.fn()
+    const components = [<TaskList notify={notify} />, <FileManager notify={notify} />, <AuthorCollection notify={notify} />]
+    for (let i = 0; i < components.length; i++) {
+      const view = render(components[i])
+      if (i === 0) fireEvent.click(await screen.findByRole('button', { name: '展开' }))
+      const btn = await screen.findByRole('button', { name: i === 0 ? /导出表格/ : i === 1 ? '导出全部已下载' : '导出 CSV' })
+      await waitFor(() => expect(btn).toBeEnabled())
+      createElement.mockClear()
+      fireEvent.click(btn)
+      await waitFor(() => expect(window.api.exportCsv).toHaveBeenCalledTimes(i + 1))
+      await waitFor(() => expect(notify).toHaveBeenCalledWith('已导出 1 条 → 重名后的表 (1).csv', expect.objectContaining({ duration: 15000, action: expect.objectContaining({ label: '打开所在文件夹' }) })))
+      const options = notify.mock.calls.at(-1)![1]
+      await options.action.onClick()
+      expect(window.api.revealExport).toHaveBeenLastCalledWith('C:\\Downloads\\重名后的表 (1).csv')
+      if (i === 2) expect(vi.mocked(window.api.exportCsv).mock.calls.at(-1)![0].csv).toBe(buildAuthorsCsv([author] as never))
+      expect(createElement.mock.calls.filter(([tag]) => String(tag) === 'a')).toHaveLength(0)
+      notify.mockClear()
+      view.unmount()
+    }
+    createElement.mockRestore()
+  })
+  it('写文件失败及 IPC 异常有中文提示，不给成功提示或定位按钮', async () => {
+    vi.mocked(window.api.listAuthors).mockResolvedValue([{ id: 1, platform: 'douyin', nickname: '中文作者' }] as never)
+    const notify = vi.fn()
+    render(<AuthorCollection notify={notify} />)
+    const btn = await screen.findByRole('button', { name: '导出 CSV' })
+    await waitFor(() => expect(btn).toBeEnabled())
+    vi.mocked(window.api.exportCsv).mockResolvedValue({ ok: false, error: '下载文件夹空间不足，请腾出空间后重试' })
+    fireEvent.click(btn)
+    await waitFor(() => expect(notify).toHaveBeenCalledWith('下载文件夹空间不足，请腾出空间后重试'))
+    vi.mocked(window.api.exportCsv).mockRejectedValue(new Error('IPC gone'))
+    fireEvent.click(btn)
+    await waitFor(() => expect(notify).toHaveBeenCalledWith(expect.stringMatching(/导出失败.*重试/)))
+    expect(notify.mock.calls.some(([text]) => text.startsWith('已导出'))).toBe(false)
+  })
+  it('未展开任务也能多选合并，原有八列不变，仅末尾追加任务来源', async () => {
+    const cap = captureDownload()
+    vi.mocked(window.api.listTasks).mockResolvedValue([
+      makeTask({ query: '美食,选题' }), makeTask({ id: 2, platform: 'kuaishou', type: 'author', query: 'sec2', author_nickname: '李四' }), makeTask({ id: 3, query: '不选的任务' })
+    ])
+    vi.mocked(window.api.listTaskVideos).mockImplementation(async id => [makeVideo(id, { task_id: id, platform: id === 2 ? 'kuaishou' : 'douyin' })])
+    render(<TaskList notify={() => {}} />)
+    const first = await screen.findByRole('checkbox', { name: '选择任务 1' })
+    expect(screen.getByRole('button', { name: /合并导出选中任务/ })).toBeDisabled()
+    fireEvent.click(first)
+    fireEvent.click(screen.getByRole('checkbox', { name: '选择任务 2' }))
+    expect(screen.getAllByRole('button', { name: '展开' })).toHaveLength(3)
+    fireEvent.click(screen.getByRole('button', { name: '合并导出选中任务(2)' }))
+    await waitFor(() => expect(window.api.exportCsv).toHaveBeenCalledOnce())
+    const csv = await cap.text()
+    expect(csv.split('\r\n')[0]).toBe('平台,作者,标题,作品链接,点赞,评论,时长(秒),本地文件名,任务（平台 / 类型 / 关键词或作者）')
+    expect(csv.split('\r\n')[1]).toBe('抖音,张三,标题1,https://www.douyin.com/video/AW1,42,17,12,标题1.mp4,"抖音 / 关键词 / 美食,选题"')
+    expect(csv.split('\r\n')[2]).toBe('快手,张三,标题2,https://www.douyin.com/video/AW2,42,17,12,标题2.mp4,快手 / 作者 / 李四')
+    expect(csv.split('\r\n')).toHaveLength(3)
+    expect(window.api.listTaskVideos).not.toHaveBeenCalledWith(3)
+  })
 })
 
 describe('任务列表导出表格', () => {
