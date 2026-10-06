@@ -18,7 +18,8 @@ export default function FilterForm({ onSubmit }: { onSubmit: (t: CreateTaskInput
   const [duration, setDuration] = useState<Filters['duration']>('all')
   const [durationMinSec, setDurationMinSec] = useState('')
   const [durationMaxSec, setDurationMaxSec] = useState('')
-  const [target, setTarget] = useState(200)
+  // D4：默认 20 条，和作者页「爬主页」一致（先少抓一点看看效果，要多再改）
+  const [target, setTarget] = useState(20)
   const [aiFilter, setAiFilter] = useState(false)
   const [aiRule, setAiRule] = useState('')
   const [aiOrganize, setAiOrganize] = useState(false)
@@ -26,6 +27,9 @@ export default function FilterForm({ onSubmit }: { onSubmit: (t: CreateTaskInput
   const [detailMode, setDetailMode] = useState<Filters['detailMode']>('safe')
   const [allowDuplicateAuthor, setAllowDuplicateAuthor] = useState<boolean | undefined>(undefined)
   const [err, setErr] = useState('')
+  // D4：和某个输入框有关的错误就近显示在框下面（以前统一挤在卡片最底下，离输入框很远）
+  const [queryErr, setQueryErr] = useState('')
+  const [ruleErr, setRuleErr] = useState('')
   const statuses = useLoginStatuses()
   const [loginPrompt, setLoginPrompt] = useState(false)
   const [submitting, setSubmitting] = useState(false)
@@ -46,12 +50,13 @@ export default function FilterForm({ onSubmit }: { onSubmit: (t: CreateTaskInput
     if (!supportedTypes.includes(type)) setType('keyword')
   }, [platform, platforms, type])
 
-  // 目标数量自由设置 1-1000（默认 200）
+  // 目标数量自由设置 1-1000（默认 20）
   const targetValid = target >= 1 && target <= 1000
   const customRange = type === 'author' && timeRange === 'custom'
   const rangeError = customRange ? checkDateRange(startDate, endDate) : null
   const customMin = Number(durationMinSec)
   const customMax = Number(durationMaxSec)
+  const customDurationTouched = durationMinSec.trim() !== '' || durationMaxSec.trim() !== ''
   const customDurationValid = duration !== 'custom' || (
     durationMinSec.trim() !== '' && durationMaxSec.trim() !== '' &&
     Number.isInteger(customMin) && Number.isInteger(customMax) &&
@@ -60,11 +65,11 @@ export default function FilterForm({ onSubmit }: { onSubmit: (t: CreateTaskInput
 
   async function submit(ignoreLogin = false): Promise<void> {
     if (submitting) return
-    if (!query.trim()) { setErr('请输入关键词/作者/话题'); return }
+    if (!query.trim()) { setQueryErr(`请填写${type === 'keyword' ? '关键词' : type === 'author' ? '作者主页链接或 ID' : '话题'}`); return }
     if (!targetValid) { setErr('目标数量需在 1-1000 之间'); return }
     if (!customDurationValid) { setErr('自定义时长需为正整数，且最长秒数不能小于最短秒数'); return }
     if (rangeError) { setErr(rangeError); return }
-    if (aiFilter && !aiRule.trim()) { setErr('开启先审后下需填写筛选规则'); return }
+    if (aiFilter && !aiRule.trim()) { setRuleErr('请填写筛选规则'); return }
     setErr('')
     setSubmitting(true)
     try {
@@ -98,6 +103,8 @@ export default function FilterForm({ onSubmit }: { onSubmit: (t: CreateTaskInput
   }
   return (
     <Card title="筛选条件">
+      {/* D4：包成表单，在输入框里按回车就能开始抓取；noValidate：校验和报错用我们自己的就近提示 */}
+      <form noValidate onSubmit={e => { e.preventDefault(); void submit() }}>
       <div className="flex flex-wrap items-end gap-4">
         <label htmlFor="filter-platform" className="flex flex-col gap-1 text-xs text-slate-500">
           平台
@@ -120,7 +127,10 @@ export default function FilterForm({ onSubmit }: { onSubmit: (t: CreateTaskInput
         </div>
         <label htmlFor="filter-query" className="flex flex-1 flex-col gap-1 text-xs text-slate-500 min-w-[200px]">
           {type === 'keyword' ? '关键词' : type === 'author' ? '作者主页链接或 ID' : '话题'}
-          <input id="filter-query" className={inputCls} value={query} onChange={e => setQuery(e.target.value)} placeholder={type === 'author' ? authorPlaceholder : '输入内容'} />
+          <input id="filter-query" className={`${inputCls} ${queryErr ? 'border-danger-500 ring-1 ring-danger-200' : ''}`} value={query}
+            aria-invalid={queryErr ? true : undefined} aria-describedby={queryErr ? 'filter-query-err' : undefined}
+            onChange={e => { setQuery(e.target.value); if (queryErr) setQueryErr('') }} placeholder={type === 'author' ? authorPlaceholder : '输入内容'} />
+          {queryErr && <span id="filter-query-err" className="text-danger-600">{queryErr}</span>}
         </label>
         <label htmlFor="filter-timerange" className="flex flex-col gap-1 text-xs text-slate-500">
           时间
@@ -167,14 +177,14 @@ export default function FilterForm({ onSubmit }: { onSubmit: (t: CreateTaskInput
           目标数量
           <input id="filter-target" type="number" className={inputCls} value={target}
             onChange={e => setTarget(Number(e.target.value))} min={1} max={1000} />
-          {!targetValid && <span className="text-red-500">需在 1-1000</span>}
+          {!targetValid && <span className="text-danger-600">需在 1-1000</span>}
         </label>
-        <button className={btnPrimary} onClick={() => void submit()} disabled={submitting || !targetValid || !customDurationValid || !!rangeError}>开始抓取</button>
+        <button type="submit" className={btnPrimary} disabled={submitting || !targetValid || !customDurationValid || !!rangeError}>开始抓取</button>
       </div>
       {loginPrompt && <div className="mt-3 flex flex-wrap items-center gap-3 text-xs text-amber-700" role="alert">
         <span>{platformName}还没登录，登录后再开始抓取。</span>
-        <button className={btnPrimary} onClick={() => void api.openBrowserFor(platform).then(r => { if (!r.ok) setErr(r.error ?? '打开窗口失败') }).catch(() => setErr('打开窗口失败'))}>去登录</button>
-        <button className="text-brand-600 hover:underline" disabled={submitting} onClick={() => void submit(true)}>仍然继续</button>
+        <button type="button" className={btnPrimary} onClick={() => void api.openBrowserFor(platform).then(r => { if (!r.ok) setErr(r.error ?? '打开窗口失败') }).catch(() => setErr('打开窗口失败'))}>去登录</button>
+        <button type="button" className="text-brand-600 hover:underline" disabled={submitting} onClick={() => void submit(true)}>仍然继续</button>
       </div>}
       {platform === 'xiaohongshu' && (
         <>
@@ -194,12 +204,13 @@ export default function FilterForm({ onSubmit }: { onSubmit: (t: CreateTaskInput
         </>
       )}
       {customRange && (
-        <p className={`mt-2 text-xs ${rangeError ? 'text-red-500' : 'text-slate-400'}`}>
+        <p className={`mt-2 text-xs ${rangeError ? 'text-danger-600' : 'text-slate-400'}`}>
           {rangeError ?? `${describeDateRange(startDate, endDate)}（按北京时间，含当天）`}
         </p>
       )}
-      {duration === 'custom' && !customDurationValid && (
-        <p className="mt-2 text-xs text-red-500">自定义时长需为正整数，且最长秒数不能小于最短秒数</p>
+      {/* D4：刚选「自定义」、两个框都还空着时先不报错 */}
+      {duration === 'custom' && !customDurationValid && customDurationTouched && (
+        <p className="mt-2 text-xs text-danger-600">自定义时长需为正整数，且最长秒数不能小于最短秒数</p>
       )}
       <div className="mt-3 flex items-center gap-6 text-sm">
         <label className="flex items-center gap-1">
@@ -207,8 +218,13 @@ export default function FilterForm({ onSubmit }: { onSubmit: (t: CreateTaskInput
           AI 先审后下
         </label>
         {aiFilter && (
-          <input className={`${inputCls} flex-1`} value={aiRule} onChange={e => setAiRule(e.target.value)}
-            placeholder="筛选规则，如：只要美食教程，不要游戏直播" />
+          <span className="flex flex-1 flex-col gap-1">
+            <input className={`${inputCls} ${ruleErr ? 'border-danger-500 ring-1 ring-danger-200' : ''}`} value={aiRule}
+              aria-invalid={ruleErr ? true : undefined}
+              onChange={e => { setAiRule(e.target.value); if (ruleErr) setRuleErr('') }}
+              placeholder="筛选规则，如：只要美食教程，不要游戏直播" />
+            {ruleErr && <span className="text-xs text-danger-600">{ruleErr}</span>}
+          </span>
         )}
         <label className="flex items-center gap-1">
           <input type="checkbox" checked={aiOrganize} onChange={e => setAiOrganize(e.target.checked)} />
@@ -233,7 +249,8 @@ export default function FilterForm({ onSubmit }: { onSubmit: (t: CreateTaskInput
           </label>
         )}
       </div>
-      {err && <p className="mt-2 text-xs text-red-500">{err}</p>}
+      {err && <p className="mt-2 text-xs text-danger-600">{err}</p>}
+      </form>
     </Card>
   )
 }

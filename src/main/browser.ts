@@ -12,6 +12,11 @@ import { buildBlockScript, buildFrameVisibilityScript, buildLoginStatusScript, P
 import type { PlatformLoginStatus } from '../shared/types'
 export { VERIFY_TEXT_PATTERN, LOGIN_TEXT_PATTERN } from './pageSignals'
 
+/** 登录 Cookie 的指纹：内容一变（登录 / 退出 / 过期）缓存的登录状态就作废 */
+function cookieFingerprint(cookies: Array<{ name: string; domain?: string; path?: string; value: string; expirationDate?: number }>): string {
+  return createHash('sha256').update(JSON.stringify(cookies.map(c => [c.name, c.domain, c.path, c.value, c.expirationDate]).sort())).digest('hex')
+}
+
 export function buildLoginScript(platform: string): string { return buildBlockScript(platform, 'login') }
 export function buildVerifyScript(re: RegExp = VERIFY_TEXT_PATTERN, platform = 'douyin'): string {
   return buildBlockScript(platform, 'verify', re)
@@ -502,6 +507,18 @@ export class VideoBrowser {
   async findLoginIndicator(): Promise<string | null> { return this.findBlockIndicator('login') }
 
   /** 登录状态查询不打开/切换窗口，不打断正在抓取的页面。 */
+  /**
+   * D6：任务因为「没登录」暂停时调用——把这个平台记成未登录，状态灯不再显示「未确认」和任务行打架。
+   * 和页面证据一样按 Cookie 指纹缓存：用户登录后 Cookie 变了，记录自动作废。
+   */
+  async noteLoggedOut(adapter: PlatformAdapter): Promise<void> {
+    try {
+      const { session } = await import('electron')
+      const cookies = await session.fromPartition(adapter.sessionPartition).cookies.get({ url: adapter.homeUrl })
+      this.loginEvidence.set(adapter.name, { status: 'logged_out', cookies: cookieFingerprint(cookies) })
+    } catch { /* 查不到 Cookie 就不记 */ }
+  }
+
   async getLoginStatus(adapter: PlatformAdapter): Promise<PlatformLoginStatus> {
     const result: PlatformLoginStatus = { platform: adapter.name, displayName: adapter.displayName, status: 'unknown' }
     let pageStatus: PlatformLoginStatus['status'] = 'unknown'
@@ -524,7 +541,7 @@ export class VideoBrowser {
     try {
       const { session } = await import('electron')
       const cookies = await session.fromPartition(adapter.sessionPartition).cookies.get({ url: adapter.homeUrl })
-      const fingerprint = createHash('sha256').update(JSON.stringify(cookies.map(c => [c.name, c.domain, c.path, c.value, c.expirationDate]).sort())).digest('hex')
+      const fingerprint = cookieFingerprint(cookies)
       // 查询期间切换/销毁窗口，丢掉旧页面结果。仅在 Cookie 未变时复用已核实的页面证据。
       if (this.win === observedWindow && this.current?.name === adapter.name && pageStatus !== 'unknown') {
         this.loginEvidence.set(adapter.name, { status: pageStatus, cookies: fingerprint })

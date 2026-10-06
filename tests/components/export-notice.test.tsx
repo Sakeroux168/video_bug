@@ -21,7 +21,8 @@ it('导出提示有文件名、可点定位按钮，停留 15 秒且避开顶部
   act(() => vi.advanceTimersByTime(12000))
   expect(screen.queryByRole('status')).not.toBeInTheDocument()
 })
-it('普通提示仍在 3 秒后消失，新提示取消上一条的计时器', () => {
+// 需求变更（2026-10-06 界面 D5）：提示分级后，普通「提示」停 4 秒（成功 3 秒、警告 6 秒、错误手动关）
+it('普通提示 4 秒后消失，新提示取消上一条的计时器', () => {
   vi.useFakeTimers()
   function Harness() {
     const { notice, notify } = useNotice()
@@ -29,7 +30,7 @@ it('普通提示仍在 3 秒后消失，新提示取消上一条的计时器', (
   }
   render(<Harness />)
   fireEvent.click(screen.getByText('通知'))
-  act(() => vi.advanceTimersByTime(3000))
+  act(() => vi.advanceTimersByTime(4000))
   expect(screen.queryByRole('status')).not.toBeInTheDocument()
   fireEvent.click(screen.getByText('通知'))
   act(() => vi.advanceTimersByTime(2000))
