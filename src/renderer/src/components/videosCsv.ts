@@ -1,3 +1,4 @@
+import { neutralizeCsvFormula } from '../../../shared/csvSafe'
 import type { VideoRow } from '../../../shared/types'
 
 /**
@@ -60,7 +61,9 @@ export function toVideoExportRows(rows: VideoRow[], platformLabel: (name: string
 
 const HEADER = '平台,作者,标题,作品链接,点赞,评论,时长(秒),本地文件名'
 
-function esc(v: string): string {
+function esc(raw: string): string {
+  // 先防公式注入（Excel 会执行 = + - @ 开头的单元格，抖音标题常以 @ 开头），再按 CSV 规则加引号
+  const v = neutralizeCsvFormula(raw)
   return /[",\r\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v
 }
 

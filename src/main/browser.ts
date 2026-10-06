@@ -6,6 +6,7 @@ import type { ListStubResult, NativeSearchFilter, PlatformAdapter, VideoItem } f
 import type { TaskType } from '../shared/types'
 import { buildInjectScript } from './injector'
 
+import { allowedPermission } from './security'
 import { buildBlockScript, buildFrameVisibilityScript, buildLoginStatusScript, PAGE_SIGNALS, urlIndicator, VERIFY_TEXT_PATTERN } from './pageSignals'
 import type { PlatformLoginStatus } from '../shared/types'
 export { VERIFY_TEXT_PATTERN, LOGIN_TEXT_PATTERN } from './pageSignals'
@@ -144,6 +145,9 @@ export class VideoBrowser {
     }
 
     const wc = win.webContents
+    // 安全检查 A3：平台网页申请摄像头、麦克风、定位、通知等权限一律拒绝（以前没有处理器，默认全部放行），
+    // 只留全屏（看视频）和写剪贴板。处理器挂在这个平台的登录分区上。
+    wc.session?.setPermissionRequestHandler?.((_wc, permission, callback) => callback(allowedPermission(permission)))
     // 关键：隐藏/切后台时不被 Chromium 节流，否则切到管理面板后页面停止发请求，爬取到一页就停
     wc.setBackgroundThrottling(false)
     // 拦截自定义协议（bytedance:// 等）：不走 Windows 协议处理，避免弹微软商店。

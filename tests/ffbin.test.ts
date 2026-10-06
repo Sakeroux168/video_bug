@@ -104,12 +104,20 @@ describe('defaultRoots（打包后优先找包内 ffmpeg）', () => {
 })
 
 describe('resolveBin', () => {
-  it('roots 命中时优先于 PATH', () => {
+  // 需求变更（2026-10-06 安全检查 A5）：以前老约定目录优先于 PATH；盘根目录谁都能建，
+  // 别人放一个同名 ffmpeg.exe 就会被执行，所以改成 PATH 优先、老约定目录兜底（随包的仍最优先，见 security-quick.test.ts）
+  it('PATH 命中时优先于老约定目录', () => {
     const deps = makeDeps(
       ['E:/123/ffmpeg-8.0.1/bin/ffmpeg.exe', 'C:/other/ffmpeg.exe'],
       { 'E:/123': ['ffmpeg-8.0.1'] }
     )
-    expect(resolveBin('ffmpeg', { deps, roots: ['E:/123'], pathEnv: 'C:/other' }))
+    expect(resolveBin('ffmpeg', { deps, bundledRoot: null, roots: ['E:/123'], pathEnv: 'C:/other' }))
+      .toBe('C:/other/ffmpeg.exe')
+  })
+
+  it('PATH 里没有时，老约定目录兜底（开发机仍可用）', () => {
+    const deps = makeDeps(['E:/123/ffmpeg-8.0.1/bin/ffmpeg.exe'], { 'E:/123': ['ffmpeg-8.0.1'] })
+    expect(resolveBin('ffmpeg', { deps, bundledRoot: null, roots: ['E:/123'], pathEnv: 'C:/nope' }))
       .toBe('E:/123/ffmpeg-8.0.1/bin/ffmpeg.exe')
   })
 

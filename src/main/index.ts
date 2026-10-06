@@ -1,4 +1,5 @@
-import { app, BrowserWindow, ipcMain } from 'electron'
+import { app, BrowserWindow, ipcMain, shell } from 'electron'
+import { allowedPermission, isAppUrl } from './security'
 import { join } from 'path'
 import { DatabaseSync } from 'node:sqlite'
 import { initDb } from './db'
@@ -80,6 +81,18 @@ function createWindow(): void {
     webPreferences: { preload: join(__dirname, '../preload/index.js'), contextIsolation: true, nodeIntegration: false }
   })
   installDownloadFallback(win.webContents, () => app.getPath('downloads'))
+  // 安全检查 A3：主界面只该显示自己的页面。外部链接交给系统浏览器，不在本程序里开新窗口、也不跳走。
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https?:/i.test(url) && !isAppUrl(url)) void shell.openExternal(url)
+    return { action: 'deny' }
+  })
+  win.webContents.on('will-navigate', (e, url) => {
+    if (!isAppUrl(url)) {
+      e.preventDefault()
+      if (/^https?:/i.test(url)) void shell.openExternal(url)
+    }
+  })
+  win.webContents.session.setPermissionRequestHandler((_wc, permission, callback) => callback(allowedPermission(permission)))
   // C-1：非 macOS 点×关主窗口必须确定退出。子窗口(抖音视图)的 close 被拦截成 hide，
   // 若不先 dispose，window-all-closed 永不触发、app 不退出、进程挂后台。关窗前先销毁子窗口。
   // createWindow 时 browser 模块变量尚为 null，用闭包引用模块级 browser —— 用户关窗时已赋值；dispose 幂等。
@@ -126,7 +139,22 @@ function push(evt: unknown): void {
   }
 }
 
+// 安全检查 A6：只允许开一个程序（按数据目录区分）。以前双击两次就有两个程序同时写同一个数据库、抢同一个登录档案；
+// 现在第二次打开只把已经开着的窗口调到前面。
+const gotSingleInstanceLock = app.requestSingleInstanceLock()
+if (!gotSingleInstanceLock) {
+  app.quit()
+} else {
+  app.on('second-instance', () => {
+    if (!win || win.isDestroyed()) return
+    if (win.isMinimized()) win.restore()
+    win.show()
+    win.focus()
+  })
+}
+
 app.whenReady().then(() => {
+  if (!gotSingleInstanceLock) return
   const db = new DatabaseSync(join(app.getPath('userData'), 'scraper.db'))
   initDb(db)
 
