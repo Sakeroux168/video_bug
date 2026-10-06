@@ -4,7 +4,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
 import { initDb, createTask, insertVideos, listVideos, listAuthors } from '../src/main/db'
-import { scanFilesTree, deleteFileDir, deleteFileVideo, locateFileDir, locateVideoFile } from '../src/main/fileManager'
+import { scanFilesTree, scanFilesTreeAsync, deleteFileDir, deleteFileVideo, locateFileDir, locateVideoFile } from '../src/main/fileManager'
 import type { FilesDirNode } from '../src/shared/types'
 import type { VideoItem } from '../src/main/adapters/types'
 import type { CreateTaskInput, Filters } from '../src/shared/types'
@@ -431,5 +431,47 @@ describe('deleteFileVideo（删除单个视频 + DB 联动）', () => {
     expect(existsSync(join(tmp, 'v.original.mp4'))).toBe(true)
     expect(existsSync(join(tmp, 'c.jpg'))).toBe(true)
     expect(db.prepare(`SELECT COUNT(*) c FROM videos WHERE ${LIVE}`).get()).toEqual({ c: 1 })
+  })
+})
+
+// 2026-10-06 全面检查「性能」C2：以前在主进程同步扫整个下载目录，2 万个文件时整个软件卡 2 秒
+describe('scanFilesTreeAsync（不卡主进程的扫描）', () => {
+  function bigTree(): string {
+    const d = mkdtempSync(join(tmpdir(), 'fm-async-'))
+    for (const cat of ['美食', '搞笑']) {
+      for (let a = 0; a < 5; a++) {
+        const sub = join(d, cat, `作者${a}`)
+        mkdirSync(sub, { recursive: true })
+        for (let i = 0; i < 40; i++) writeFileSync(join(sub, `v${i}.mp4`), Buffer.alloc(i + 1))
+        writeFileSync(join(sub, 'v0.jpg'), 'cover')
+      }
+    }
+    writeFileSync(join(d, '根目录.mp4'), 'abc')
+    mkdirSync(join(d, '.隐藏'))
+    writeFileSync(join(d, '.video-1.download.part.mp4'), 'x')
+    return d
+  }
+
+  it('结果和同步版完全一样', async () => {
+    const d = bigTree()
+    try {
+      expect(await scanFilesTreeAsync(d)).toEqual(scanFilesTree(d))
+    } finally { rmSync(d, { recursive: true, force: true }) }
+  })
+
+  it('扫描期间别的事情照样能跑（不会一口气占住主进程）', async () => {
+    const d = bigTree()
+    try {
+      let done = false
+      const p = scanFilesTreeAsync(d).then(t => { done = true; return t })
+      await new Promise(r => setImmediate(r))
+      expect(done).toBe(false)
+      expect((await p).root.videoCount).toBe(401)
+    } finally { rmSync(d, { recursive: true, force: true }) }
+  })
+
+  it('下载目录不存在 → 空树，不报错', async () => {
+    const t = await scanFilesTreeAsync(join(tmpdir(), '不存在的目录-' + Date.now()))
+    expect(t.root).toMatchObject({ videoCount: 0, size: 0, dirs: [], files: [] })
   })
 })

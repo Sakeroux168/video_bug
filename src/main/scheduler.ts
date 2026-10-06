@@ -49,6 +49,21 @@ function feedEnded(json: unknown): boolean {
 }
 
 /** R20：等一个 Promise 最多 ms 毫秒；按时完成返回 true，超时返回 false（不抛错，计时器必清） */
+/**
+ * 性能检查 F6：定时器里发起的异步检查，上一次还没返回就跳过这次。
+ * 页面慢的时候（满屏卡片、电脑配置差），每 2 秒一次的检测脚本会越积越多，把爬取页面拖得更慢。
+ * 返回 true 表示这次真的跑了。
+ */
+export function skipIfBusy(fn: () => Promise<unknown>): () => boolean {
+  let busy = false
+  return () => {
+    if (busy) return false
+    busy = true
+    void fn().catch(() => {}).finally(() => { busy = false })
+    return true
+  }
+}
+
 function raceTimeout(p: Promise<unknown>, ms: number): Promise<boolean> {
   let timer: ReturnType<typeof setTimeout> | null = null
   return Promise.race([
@@ -409,14 +424,13 @@ export class Scheduler {
         // R11-3/4：秒级心跳——①验证码识别每 2s 查一次（验证码随时可能弹，不只在停滞时；executeJavaScript
         // 开销可接受）；②停滞检测粒度从"一轮(~15-20s)"降到 1s：滚动中 → 中断在途滚动（~0.5s 返回）让主循环
         // 滚动返回后立即自救；等待中 → 心跳直接触发自救（与主循环同逻辑，rescuing 防重入、与主循环互斥）。
+        const checkBlock = skipIfBusy(() => this.detectPageBlock().then(block => {
+          if (block && !stopped() && this.scrolling) this.deps.browser.abortScroll?.() // 让滚动返回，主循环尽快 break
+        }))
         this.stallHeartbeat = setInterval(() => {
           if (stopped()) return
           this.verifyTick++
-          if (this.verifyTick % 2 === 0 && !this.verifyFound && !this.loginFound) {
-            void this.detectPageBlock().then(block => {
-              if (block && !stopped() && this.scrolling) this.deps.browser.abortScroll?.() // 让滚动返回，主循环尽快 break
-            }).catch(() => {})
-          }
+          if (this.verifyTick % 2 === 0 && !this.verifyFound && !this.loginFound) checkBlock() // 上一次没查完就跳过（F6）
           if (this.rescuing) return
           if (Date.now() - this.lastFetchedAt > stallSec * 1000) {
             if (this.scrolling) this.deps.browser.abortScroll?.()
