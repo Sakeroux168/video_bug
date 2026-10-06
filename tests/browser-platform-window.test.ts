@@ -23,6 +23,7 @@ class FakeWebContents {
   executeJavaScript = vi.fn(async () => undefined)
   send = vi.fn((channel: string) => { this.sent.push(channel) })
   openDevTools = vi.fn()
+  session = { setPermissionRequestHandler: vi.fn() }
 }
 
 class FakeWindow {
@@ -200,6 +201,20 @@ describe('VideoBrowser 按平台切换登录态分区', () => {
     expect(FakeWindow.created[0].destroy).toHaveBeenCalled()
     expect(() => b.setVisible(true)).not.toThrow()
     expect(() => b.abortScroll()).not.toThrow()
+  })
+
+  // 安全检查 A3：平台网页申请摄像头、麦克风、定位、通知等权限一律拒绝（以前没有处理，默认全部放行）
+  it('平台窗口装上权限请求处理：只放行全屏和写剪贴板', async () => {
+    const b = new VideoBrowser({} as never)
+    await b.load(douyin as never, 'https://www.douyin.com/')
+    const handler = FakeWindow.created.at(-1)!.webContents.session.setPermissionRequestHandler.mock.calls[0]?.[0] as
+      ((wc: unknown, permission: string, cb: (ok: boolean) => void) => void) | undefined
+    expect(handler).toBeTypeOf('function')
+    const ask = (p: string): boolean => { let r = true; handler!(null, p, ok => { r = ok }); return r }
+    expect(ask('media')).toBe(false)
+    expect(ask('geolocation')).toBe(false)
+    expect(ask('notifications')).toBe(false)
+    expect(ask('fullscreen')).toBe(true)
   })
 
   it('注入脚本随平台切换：新窗口拿到的是新平台的 URL 兜底特征', async () => {

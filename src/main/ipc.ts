@@ -1,5 +1,6 @@
 import { app, ipcMain, BrowserWindow, dialog, shell, clipboard } from 'electron'
 import type { DatabaseSync } from 'node:sqlite'
+import { statSync } from 'node:fs'
 import { createTask, listTasks, listVideos, listDownloadedVideos, listAuthors, setTaskStatus, setVideoStatus, updateAuthorCategory, deleteAuthors, taskStats, insertAuthorIfAbsent, globalStats, recentDownloads } from './db'
 import { getSettings, saveSettings } from './settings'
 import { deleteVideoRows } from './videoDelete'
@@ -16,6 +17,7 @@ import type { EnsureProgress } from './asr/models'
 import { resolveVideoSourceUrl } from './videoSource'
 import { createTaskChecked } from './taskCreate'
 import { exportFailure, revealExportFile, writeCsvToDownloads } from './csvExport'
+import { isAppUrl } from './security'
 
 export interface IpcDeps {
   db: DatabaseSync
@@ -43,36 +45,45 @@ export interface IpcDeps {
 }
 
 export function registerIpc(deps: IpcDeps): void {
+  // 安全检查 A2：主进程接口只认本软件主界面。平台窗口加载的是外部网页，万一被攻破也不能借这些接口
+  // 读写删文件、打开程序。真实调用一定带 senderFrame；测试里直接传 null 事件不受影响。
+  const handle = (channel: string, listener: (e: Electron.IpcMainInvokeEvent, ...args: any[]) => unknown): void => {
+    ipcMain.handle(channel, (e, ...args) => {
+      const frame = (e as { senderFrame?: { url: string } | null } | null)?.senderFrame
+      if (frame === null || (frame && !isAppUrl(frame.url))) throw new Error('拒绝：只有本软件主界面能调用')
+      return listener(e, ...args)
+    })
+  }
   const { db, scheduler, downloader, browser } = deps
 
-  ipcMain.handle('csv:export', async (_e, input: unknown) => {
+  handle('csv:export', async (_e, input: unknown) => {
     try { return await writeCsvToDownloads(app.getPath('downloads'), input) }
     catch (error) { return { ok: false, error: exportFailure(error) } }
   })
-  ipcMain.handle('csv:reveal', (_e, path: unknown) => {
+  handle('csv:reveal', (_e, path: unknown) => {
     try { return revealExportFile(app.getPath('downloads'), path, p => shell.showItemInFolder(p)) }
     catch { return { ok: false, error: '无法打开下载文件夹，请稍后重试' } }
   })
 
   ipcMain.on('api:ping', (e) => { e.returnValue = 'pong' })
-  ipcMain.handle('platforms:list', () => listAdapters())
-  ipcMain.handle('platforms:login-status', () => Promise.all(listAdapters().map(p => browser.getLoginStatus(getAdapter(p.name)!))))
+  handle('platforms:list', () => listAdapters())
+  handle('platforms:login-status', () => Promise.all(listAdapters().map(p => browser.getLoginStatus(getAdapter(p.name)!))))
 
   // 归一化 + 作者去重 + 入库 + 入队 都在 taskCreate.ts（R18 起和本机 HTTP 口 /job 共用一条路）
-  ipcMain.handle('task:create', (_e, rawInput: Parameters<typeof createTask>[1]) =>
+  handle('task:create', (_e, rawInput: Parameters<typeof createTask>[1]) =>
     createTaskChecked(db, rawInput, deps.enqueueTask))
 
-  ipcMain.handle('task:list', () => listTasks(db))
-  ipcMain.handle('task:video:list', (_e, taskId: number) => listVideos(db, taskId).map(video => ({
+  handle('task:list', () => listTasks(db))
+  handle('task:video:list', (_e, taskId: number) => listVideos(db, taskId).map(video => ({
     ...video,
     source_url: resolveVideoSourceUrl(video.platform, video.aweme_id, video.source_url)
   })))
-  ipcMain.handle('task:stats', (_e, taskId: number) => taskStats(db, taskId))
+  handle('task:stats', (_e, taskId: number) => taskStats(db, taskId))
   // A1：先等 scheduler.pause()（run 完全退出）再置状态，避免渲染层立刻看到 paused 而 run 还在收尾。
   // R20：pause() 最多等 10 秒，等不到就强制停，按钮不会再跟着卡死；
   // 只叫停「正在跑的就是它」的情况——以前不管暂停哪个任务都会把正在跑的那个停掉。
   // 暂停的是还在排队的任务 → 从队列摘掉，不然轮到它时又会被跑起来。
-  ipcMain.handle('task:pause', async (_e, id: number) => {
+  handle('task:pause', async (_e, id: number) => {
     if (scheduler.currentTaskId === id) await scheduler.pause()
     else deps.dequeueTask(id)
     setTaskStatus(db, id, 'paused', 'user')
@@ -80,7 +91,7 @@ export function registerIpc(deps: IpcDeps): void {
   // A1：走 scheduler.resume（内含 run 退出守卫，并发 resume 不会被 running 挡回静默丢弃）。
   // R20：别的任务正在跑时，点「继续」/「开始」不能被静默吞掉（以前 run 发现在忙就直接 return，
   // 按钮点了没反应）——改成放回队列排队，前一个结束后自动接着跑。
-  ipcMain.handle('task:resume', (_e, id: number) => {
+  handle('task:resume', (_e, id: number) => {
     if (scheduler.isRunning && scheduler.currentTaskId !== id) {
       setTaskStatus(db, id, 'pending')
       deps.enqueueTask(id)
@@ -92,7 +103,7 @@ export function registerIpc(deps: IpcDeps): void {
   // 删任务必须把这个任务相关的活全停掉，否则会留下"幽灵任务"：
   // 调度器攥着内存里的 taskId 继续滚页面、继续停滞重搜，最后想标 paused 时那行已经没了，
   // UPDATE 静默失败——用户在界面上什么都看不到，只看见浏览器自己在动（真机踩过）。
-  ipcMain.handle('task:delete', async (_e, id: number) => {
+  handle('task:delete', async (_e, id: number) => {
     if (scheduler.currentTaskId === id) await scheduler.pause() // 正在跑 → 等 run 完全退出
     deps.dequeueTask(id) // 还在排队 → 摘掉，别轮到它时再跑一遍
     // 在途下载也要掐断，否则文件继续往磁盘写、对应的数据库行却已经删了 → 孤儿文件
@@ -105,7 +116,7 @@ export function registerIpc(deps: IpcDeps): void {
     deps.kickQueue()
   })
 
-  ipcMain.handle('video:retry', (_e, ids: number[]) => {
+  handle('video:retry', (_e, ids: number[]) => {
     for (const id of ids) {
       setVideoStatus(db, id, 'pending', { error: null })
       downloader.enqueue(id)
@@ -115,42 +126,42 @@ export function registerIpc(deps: IpcDeps): void {
 
   // Task3：程序内删除视频（③）——编排在 videoDelete.ts（先 cancel 在途/排队项防孤儿文件 →
   // 路径安全则删本地文件 → 删 DB 行 → 作者 video_count 重算）；单条失败返回错误但不中断整批。
-  ipcMain.handle('video:delete', (_e, ids: number[]) =>
+  handle('video:delete', (_e, ids: number[]) =>
     deleteVideoRows({ db, downloader, downloadDir: getSettings().downloadDir }, ids)
   )
 
   // 全局下载控制：暂停（在途任务跑完，不再拉新）/ 恢复 / 查询暂停状态
-  ipcMain.handle('download:pause', () => { downloader.pause(); return true })
-  ipcMain.handle('download:resume', () => { downloader.resume(); return true })
-  ipcMain.handle('download:state', () => ({ paused: downloader.isPaused() }))
+  handle('download:pause', () => { downloader.pause(); return true })
+  handle('download:resume', () => { downloader.resume(); return true })
+  handle('download:state', () => ({ paused: downloader.isPaused() }))
 
   // 手动下载（collected/cancelled/failed → pending 并入队）与取消（在途 abort / 排队移出）
-  ipcMain.handle('video:download', (_e, ids: number[]) => { downloader.download(ids); return true })
-  ipcMain.handle('video:cancel', (_e, ids: number[]) => { downloader.cancel(ids); return true })
+  handle('video:download', (_e, ids: number[]) => { downloader.download(ids); return true })
+  handle('video:cancel', (_e, ids: number[]) => { downloader.cancel(ids); return true })
   // 单条暂停/继续（paused 状态：在途中断、排队出队；继续 = paused → pending 重新入队）
-  ipcMain.handle('video:pause', (_e, ids: number[]) => { downloader.pauseVideo(ids); return true })
-  ipcMain.handle('video:resume', (_e, ids: number[]) => { downloader.resumeVideo(ids); return true })
+  handle('video:pause', (_e, ids: number[]) => { downloader.pauseVideo(ids); return true })
+  handle('video:resume', (_e, ids: number[]) => { downloader.resumeVideo(ids); return true })
 
-  ipcMain.handle('authors:list', () => listAuthors(db))
-  ipcMain.handle('authors:updateCategory', (_e, id: number, category: string) => {
+  handle('authors:list', () => listAuthors(db))
+  handle('authors:updateCategory', (_e, id: number, category: string) => {
     updateAuthorCategory(db, id, category)
     return true
   })
-  ipcMain.handle('authors:delete', (_e, ids: number[]) => { deleteAuthors(db, ids); return true })
+  handle('authors:delete', (_e, ids: number[]) => { deleteAuthors(db, ids); return true })
 
   // 批量导入作者（粘贴主页 URL / 裸 sec_uid 列表）：只登记不刷新已有数据（insertAuthorIfAbsent）。
   // 渲染层已过滤空行/纯空白，这里仍对 nickname 兜底校验；reason 词表逐字返回，供渲染层逐行展示。
   // 走主进程写剪贴板：打包后页面是 file:// 协议，navigator.clipboard 在部分环境下不可用，
   // 而 Electron 的 clipboard 模块无这个顾虑。
   // 概览页：两条聚合查询代替原来的 1 + N 次调用
-  ipcMain.handle('stats:global', () => globalStats(db))
-  ipcMain.handle('stats:recent', (_e, limit?: number) => recentDownloads(db, limit ?? 8))
+  handle('stats:global', () => globalStats(db))
+  handle('stats:recent', (_e, limit?: number) => recentDownloads(db, limit ?? 8))
   // 「导出全部已下载」用：跨任务取 done 的视频（含作者昵称）
-  ipcMain.handle('videos:downloaded', () => listDownloadedVideos(db))
+  handle('videos:downloaded', () => listDownloadedVideos(db))
 
-  ipcMain.handle('clipboard:write', (_e, text: string) => { clipboard.writeText(String(text ?? '')) })
+  handle('clipboard:write', (_e, text: string) => { clipboard.writeText(String(text ?? '')) })
 
-  ipcMain.handle('video:source:open', async (_e, id: number) => {
+  handle('video:source:open', async (_e, id: number) => {
     const row = db.prepare('SELECT platform, aweme_id, source_url FROM videos WHERE id=?').get(id) as
       { platform: string; aweme_id: string; source_url: string | null } | undefined
     if (!row) return { ok: false, error: '视频记录不存在' }
@@ -166,7 +177,7 @@ export function registerIpc(deps: IpcDeps): void {
 
   // platform 由调用方给出（导入面板的平台下拉）。默认 douyin 保持老调用方行为不变。
   // 不能继续写死抖音：粘快手链接会得到「未识别到抖音主页链接」，用户完全看不出问题在哪。
-  ipcMain.handle('authors:import', (_e, items: Array<{ nickname: string; url: string }>, platform = 'douyin') => {
+  handle('authors:import', (_e, items: Array<{ nickname: string; url: string }>, platform = 'douyin') => {
     const adapter = getAdapter(platform)
     let created = 0
     const seen = new Set<string>()
@@ -213,8 +224,8 @@ export function registerIpc(deps: IpcDeps): void {
     return { created, results }
   })
 
-  ipcMain.handle('settings:get', () => getSettings())
-  ipcMain.handle('settings:save', (_e, s: Parameters<typeof saveSettings>[0]) => {
+  handle('settings:get', () => getSettings())
+  handle('settings:save', (_e, s: Parameters<typeof saveSettings>[0]) => {
     saveSettings(s)
     // I3: 保存后立即重建 Analyzer，下载参数热更新，无需重启程序
     deps.reloadAnalyzer()
@@ -224,7 +235,7 @@ export function registerIpc(deps: IpcDeps): void {
   })
 
   // Task14：手动整理单个作者 → 归档其已下载视频到 {品类}/{作者}；organizeAll 类似但批量
-  ipcMain.handle('authors:organize', async (_e, authorId: number) => {
+  handle('authors:organize', async (_e, authorId: number) => {
     const org = deps.getOrganizer()
     if (!org) return { ok: false, error: '整理器未就绪' }
     // 未启用任何层级不是失败，是配置状态；照直说，别返回一个会被渲染成"整理 0 个"的空结果
@@ -234,7 +245,7 @@ export function registerIpc(deps: IpcDeps): void {
       return { ok: true, moved: r.moved, category: r.category, state: r.state }
     } catch (err) { return { ok: false, error: String(err) } }
   })
-  ipcMain.handle('organize:all', async () => {
+  handle('organize:all', async () => {
     const org = deps.getOrganizer()
     if (!org) return { ok: false, error: '整理器未就绪' }
     if (!org.isEnabled()) return { ok: true, count: 0, skipped: true }
@@ -245,8 +256,8 @@ export function registerIpc(deps: IpcDeps): void {
   })
 
   // Task14：ASR 模型状态查询 + 下载（进度经 evt:asr:progress 透传，设置面板画进度条）
-  ipcMain.handle('asr:status', () => modelsStatus())
-  ipcMain.handle('asr:download', async () => {
+  handle('asr:status', () => modelsStatus())
+  handle('asr:download', async () => {
     try {
       const r = await ensureModels({
         onProgress: (p: EnsureProgress) => {
@@ -257,7 +268,7 @@ export function registerIpc(deps: IpcDeps): void {
     } catch (err) { return { ok: false, error: String(err) } }
   })
 
-  ipcMain.handle('ai:test', async () => {
+  handle('ai:test', async () => {
     const s = getSettings()
     if (!s.aiApiKey || !s.aiBaseUrl) return { ok: false, error: '未配置 API Key' }
     const a = new Analyzer(s)
@@ -267,7 +278,7 @@ export function registerIpc(deps: IpcDeps): void {
 
   // 按平台打开内置浏览器。此前只有 browser:show（显示"当前那个窗口"），
   // 用户没有任何办法主动切到快手——而扫码登录只能在各自平台的窗口里做。
-  ipcMain.handle('browser:open', async (_e, platform: string) => {
+  handle('browser:open', async (_e, platform: string) => {
     const adapter = getAdapter(platform)
     if (!adapter) return { ok: false, error: `不支持的平台：${platform}` }
     // 切平台会销毁重建窗口（分区只能建窗口时定死）。任务正在用这个窗口，切了就等于打断它。
@@ -283,48 +294,53 @@ export function registerIpc(deps: IpcDeps): void {
     deps.setBrowserVisible(true)
     return { ok: true }
   })
-  ipcMain.handle('browser:show', () => deps.setBrowserVisible(true))
-  ipcMain.handle('browser:hide', () => deps.setBrowserVisible(false))
-  ipcMain.handle('browser:devtools', () => browser.openDevTools())
+  handle('browser:show', () => deps.setBrowserVisible(true))
+  handle('browser:hide', () => deps.setBrowserVisible(false))
+  handle('browser:devtools', () => browser.openDevTools())
 
   // 文件管理——扫描下载目录成通用目录树（任意归档层级组合、根目录平铺视频都可见）
   // + 按相对段落删除任意层级的文件夹 / 单个视频（逐段校验 + 路径防护 + DB 联动）。
   // downloadDir 每次取最新（设置可能已热更），扫描纯函数在主进程 fileManager.ts 中可单测
-  ipcMain.handle('files:tree', () => scanFilesTree(getSettings().downloadDir))
-  ipcMain.handle('files:deleteDir', (_e, segments: string[]) =>
+  handle('files:tree', () => scanFilesTree(getSettings().downloadDir))
+  handle('files:deleteDir', (_e, segments: string[]) =>
     deleteFileDir({ db, downloadDir: getSettings().downloadDir }, segments)
   )
-  ipcMain.handle('files:deleteFile', (_e, segments: string[]) =>
+  handle('files:deleteFile', (_e, segments: string[]) =>
     deleteFileVideo({ db, downloadDir: getSettings().downloadDir, downloader }, segments)
   )
   // 定位文件夹 / 视频文件（资源管理器选中）：路径防护 + 存在才调 shell，其余返回错误提示
-  ipcMain.handle('files:locate', (_e, dirPath: string) => {
+  handle('files:locate', (_e, dirPath: string) => {
     const r = locateFileDir(getSettings().downloadDir, dirPath)
     if (r.ok) shell.showItemInFolder(dirPath)
     return r
   })
-  ipcMain.handle('files:locateFile', (_e, filePath: string) => {
+  handle('files:locateFile', (_e, filePath: string) => {
     const r = locateVideoFile(getSettings().downloadDir, filePath)
     if (r.ok) shell.showItemInFolder(filePath)
     return r
   })
 
   // 视频处理（统一分辨率批处理）：start 返回能否开始的原因；暂停/继续/停止只发指令，结果经 evt:process:state 推回
-  ipcMain.handle('process:state', () => deps.processor.getState())
-  ipcMain.handle('process:start', (_e, dir: string) => deps.processor.start(String(dir ?? '')))
-  ipcMain.handle('process:pause', () => { deps.processor.pause() })
-  ipcMain.handle('process:resume', () => { deps.processor.resume() })
-  ipcMain.handle('process:stop', () => { deps.processor.stop() })
+  handle('process:state', () => deps.processor.getState())
+  handle('process:start', (_e, dir: string) => deps.processor.start(String(dir ?? '')))
+  handle('process:pause', () => { deps.processor.pause() })
+  handle('process:resume', () => { deps.processor.resume() })
+  handle('process:stop', () => { deps.processor.stop() })
 
   // 选择目录（#1 下载目录；视频处理页复用，只换标题）
-  ipcMain.handle('dialog:pickDir', async (_e, title?: string) => {
+  handle('dialog:pickDir', async (_e, title?: string) => {
     const { canceled, filePaths } = await dialog.showOpenDialog(deps.getWindow(), {
       title: title || '选择下载目录', properties: ['openDirectory', 'createDirectory']
     })
     return canceled || filePaths.length === 0 ? null : filePaths[0]
   })
   // 在系统文件管理器中打开某个目录（#8）
-  ipcMain.handle('dialog:openDir', (_e, p: string) => { void shell.openPath(p) })
+  // 只打开真实存在的文件夹：shell.openPath 对 .exe 等文件是直接运行（安全检查 A2）
+  handle('dialog:openDir', (_e, p: unknown) => {
+    if (typeof p !== 'string' || !p) return
+    try { if (!statSync(p).isDirectory()) return } catch { return }
+    void shell.openPath(p)
+  })
   // 定位已下载的视频文件（在资源管理器中选中该文件）
-  ipcMain.handle('video:locate', (_e, p: string) => { if (p) shell.showItemInFolder(p) })
+  handle('video:locate', (_e, p: string) => { if (p) shell.showItemInFolder(p) })
 }

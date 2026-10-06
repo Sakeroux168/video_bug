@@ -4,6 +4,7 @@ import type { IncomingMessage, Server, ServerResponse } from 'http'
 import type { DatabaseSync } from 'node:sqlite'
 import { globalStats, listTasks, taskStats } from './db'
 import { createTaskChecked } from './taskCreate'
+import { checkBridgeRequest, isNetworkPath } from './security'
 import { chinaToday, isValidChinaDate } from './extractor'
 import type { CreateTaskInput, Filters } from '../shared/types'
 
@@ -88,6 +89,8 @@ export function jobFromBody(body: JobBody): CreateTaskInput | string {
   if (body.outputDir !== undefined && body.outputDir !== null && body.outputDir !== '') {
     const dir = typeof body.outputDir === 'string' ? body.outputDir.trim() : ''
     if (!dir || !isAbsolute(dir)) return 'outputDir 要写完整路径（比如 Z:\\AAA\\达人\\暂存）'
+    // \\主机\共享 这种网络路径：往里建目录会让 Windows 把登录哈希发给对方。映射成盘符的网络盘（Z:）照常可用
+    if (isNetworkPath(dir)) return 'outputDir 不能是 \\\\主机\\共享 这种网络路径，请先映射成盘符（比如 Z:）再用'
     input.outputDir = dir
   }
   return input
@@ -116,6 +119,9 @@ function readBody(req: IncomingMessage): Promise<string> {
 export function handleRequest(deps: BridgeDeps, req: IncomingMessage, res: ServerResponse): void {
   const url = new URL(req.url ?? '/', 'http://127.0.0.1')
   const path = url.pathname.replace(/\/+$/, '') || '/'
+  // 只认本机程序发来的请求：挡掉网页跨站请求和 DNS 重绑定（见 security.ts）
+  const denied = checkBridgeRequest(req.method, req.headers, req.socket.localPort ?? deps.port)
+  if (denied) { send(res, 403, { error: denied }); return }
   void (async () => {
     try {
       if (req.method === 'GET' && path === '/status') {

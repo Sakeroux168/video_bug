@@ -81,16 +81,26 @@ export function findInPathEnv(
 
 export interface ResolveOpts {
   deps?: FfBinDeps
+  /** 随包目录（打包后的 resourcesPath）；不传就用 process.resourcesPath */
+  bundledRoot?: string | null
+  /** 老约定目录（<盘>:/123）；不传就用 DEFAULT_ROOTS */
   roots?: string[]
   pathEnv?: string
 }
 
-/** 完整查找：先 roots 后 PATH，找不到返回 null（调用方各自兜底放行） */
+/**
+ * 完整查找：随包 → PATH → 老约定目录，找不到返回 null（调用方各自兜底放行）。
+ * 安全检查（2026-10-06）：以前先扫 C:/123、D:/123 等目录——普通用户也能在盘根建文件夹，
+ * 别人放一个同名 ffmpeg.exe 就会被执行。现在 PATH 优先，老约定目录只在 PATH 里没有时才兜底（开发机仍可用）。
+ */
 export function resolveBin(name: string, opts: ResolveOpts = {}): string | null {
   const deps = opts.deps ?? realDeps
-  const roots = opts.roots ?? defaultRoots()
+  const bundled = opts.bundledRoot === undefined ? process.resourcesPath : opts.bundledRoot
+  const roots = opts.roots ?? DEFAULT_ROOTS
   const pathEnv = opts.pathEnv ?? process.env.PATH
-  return findInRoots(name, roots, deps) ?? findInPathEnv(name, pathEnv, deps.exists)
+  return (bundled ? findInRoots(name, [bundled], deps) : null)
+    ?? findInPathEnv(name, pathEnv, deps.exists)
+    ?? findInRoots(name, roots, deps)
 }
 
 // 结果缓存：一次会话内路径不变，避免每次下载/转写都扫盘

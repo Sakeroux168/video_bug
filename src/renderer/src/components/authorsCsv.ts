@@ -3,6 +3,8 @@
 // 用户诉求：手上有现成的作者表，只要里面有「作者名」和「主页链接」两列就该能导进来，
 // **不管其他列是什么东西**。所以不能要求固定列序、固定表头，得自己认列。
 
+import { neutralizeCsvFormula } from '../../../shared/csvSafe'
+
 /** 一行一行地切 CSV：引号内的逗号、换行、两连双引号转义都要正确处理（Excel 导出的标准形态） */
 function parseCsvRows(text: string): string[][] {
   const rows: string[][] = []
@@ -81,7 +83,9 @@ export function parseAuthorsCsv(text: string): Array<{ nickname: string; url: st
 }
 
 /** CSV 字段转义：含逗号/引号/换行时必须整体加引号，内部引号翻倍 */
-function esc(v: string): string {
+function esc(raw: string): string {
+  // 先防公式注入（Excel 会执行 = + - @ 开头的单元格），再按 CSV 规则加引号
+  const v = neutralizeCsvFormula(raw)
   return /[",\r\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v
 }
 

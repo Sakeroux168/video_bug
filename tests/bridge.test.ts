@@ -95,8 +95,12 @@ describe('bridge', () => {
     const short = await post('/job', { query: 'https://v.douyin.com/abc' })
     expect(short.status).toBe(200)
     expect(short.json.skipped).toBe(true)
-    const bad = await fetch(base + '/job', { method: 'POST', body: '{not json' })
+    // 声明是 JSON 但内容坏了 → 400
+    const bad = await fetch(base + '/job', { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{not json' })
     expect(bad.status).toBe(400)
+    // 2026-10-06 安全检查 A1：不声明 JSON（fetch 默认 text/plain，网页表单也是这样）在来源检查就被拒 → 403
+    const plain = await fetch(base + '/job', { method: 'POST', body: '{not json' })
+    expect(plain.status).toBe(403)
     expect((await fetch(base + '/nothing')).status).toBe(404)
     expect((await fetch(base + '/job/999')).status).toBe(404)
   })
