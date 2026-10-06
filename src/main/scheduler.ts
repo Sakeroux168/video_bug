@@ -4,7 +4,7 @@ import type { AppSettings, TaskRow, TaskStatus, Filters } from '../shared/types'
 import { ERROR, clampStuckTimeoutMin } from '../shared/types'
 import { filterVideos, dedupeVideos, extractCategory, chinaDayStartSec, chinaDayEndSec } from './extractor'
 import { isRiskSignal } from './errors'
-import { upsertAuthor, listAuthors, setAuthorVerify } from './db'
+import { upsertAuthor, listAuthors, setAuthorVerify, refreshSeenVideo } from './db'
 import { looseNicknameMatch } from './nicknameMatch'
 import type { Analyzer } from './analyzer'
 import type { Downloader } from './downloader'
@@ -1122,7 +1122,7 @@ export class Scheduler {
           this.pendingVideoIds.push(vid)
           this.deps.downloader.enqueue(vid)
         }
-      }
+      } else refreshSeenVideo(db, adapter.name, item) // 已在库里：更新点赞，没下好的换新地址
     }
     // R11-2：爬满 → 中断在途滚动（复用暂停信号：滚动脚本下个检查点即退，~550ms 内停；
     // 滚动未在跑时 send 无害——下次脚本开头会清标志），循环轮末立即进 reached，不再白等整轮

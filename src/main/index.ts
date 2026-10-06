@@ -22,6 +22,7 @@ import { status as asrStatus, pathFor } from './asr/models'
 import { findFfmpeg } from './asr/media'
 import { startBridge, DEFAULT_BRIDGE_PORT } from './bridge'
 import { TaskQueue } from './taskQueue'
+import { onBeforeQuit } from './shutdown'
 import type { Server } from 'http'
 import type { VideoRow } from '../shared/types'
 
@@ -283,6 +284,8 @@ app.whenReady().then(() => {
   const running = db.prepare("SELECT id FROM tasks WHERE status='running'").all() as Array<{ id: number }>
   for (const t of running) db.prepare("UPDATE tasks SET status='paused', error='interrupted' WHERE id=?").run(t.id)
   recoverPendingVideos(db, id => downloader!.enqueue(id))
+  // 清掉上次退出时留下的半截文件（分段残片等）；正在下的会自动跳过
+  void downloader.sweepOrphanParts().then(n => { if (n > 0) console.log(`[启动] 清理了 ${n} 个下载残留文件`) })
   // R11-3：遗留 pending 任务重新入队——内存 FIFO 重启即空，不恢复则旧任务永远没人启动（卡「等待」）
   enqueuePendingTasks(db, enqueueTask)
   downloader.start()
@@ -338,7 +341,7 @@ ipcMain.on('platform:raw', async (_e, msg) => {
 })
 ipcMain.handle('debug:rawLog', () => rawLog.slice(-60))
 
-// 退出前销毁浏览器子窗口：否则 close→hide 拦截让 quit 被 preventDefault 中止、window-all-closed 也因隐藏子窗口永不触发
-app.on('before-quit', () => { browser?.dispose(); bridge?.close(); bridge = null })
+// 退出前：停视频处理（ffmpeg）、销毁浏览器子窗口、关本机接口（见 shutdown.ts）
+app.on('before-quit', () => { onBeforeQuit({ processor, browser, bridge }); bridge = null })
 
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit() })
