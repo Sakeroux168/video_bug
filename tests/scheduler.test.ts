@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { DatabaseSync } from 'node:sqlite'
 import { buildStopDecision, Scheduler } from '../src/main/scheduler'
-import { initDb, createTask, listAuthors, insertAuthorIfAbsent, upsertAuthor, insertVideos } from '../src/main/db'
+import { initDb, createTask, listAuthors, insertAuthorIfAbsent, upsertAuthor, insertVideos, setAuthorVerify } from '../src/main/db'
 import { douyinAdapter } from '../src/main/adapters/douyin'
 import type { PlatformAdapter } from '../src/main/adapters/types'
 import type { CreateTaskInput } from '../src/shared/types'
@@ -2038,5 +2038,115 @@ describe('R20 复查：卡住判定分钟数夹到 2-60', () => {
     expect(s.isRunning).toBe(true)
     await vi.advanceTimersByTimeAsync(30000)
     expect(s.isRunning).toBe(false)
+  })
+})
+
+// 2026-10-06 全面检查「数据安全」第二组：爬取提前收工 / 串任务
+describe('B4 AI 筛选还没判完时任务被暂停 → 不往库里乱写', () => {
+  it('判完时任务已经结束：视频不以 task_id=0 入库，也不发 taskId=0 的进度事件', async () => {
+    const db = newDb()
+    const taskId = createTask(db, { ...input, aiFilterEnabled: true })
+    const browser = new FakeBrowser()
+    browser.blockNextLoad()
+    let gate!: () => void
+    const gateP = new Promise<void>(r => { gate = r })
+    const analyzer = {
+      judgeFilter: vi.fn(async () => { await gateP; return { pass: true } })
+    } as unknown as import('../src/main/analyzer').Analyzer
+    const events: Array<{ type: string; taskId?: number }> = []
+    const s = new Scheduler({
+      db, browser, analyzer, downloader: new FakeDownloader(),
+      emit: e => events.push(e as { type: string; taskId?: number }),
+      getScrollParams: () => ({ scrollSpeed: 'slow' as const, scrollPageWaitMs: 8000, scrollIntervalMs: 1 }),
+      getStallThresholdSec: () => 0.01
+    })
+    const pRun = s.run(taskId)
+    await new Promise(r => setTimeout(r, 10))
+    const raw = {
+      aweme_list: Array.from({ length: 2 }, (_, i) => ({
+        aweme_id: `734${String(i + 1).padStart(16, '0')}`, desc: `标题${i + 1}`, create_time: 1710000000,
+        author: { sec_uid: `SEC_AI${i}`, nickname: `作者${i}` },
+        video: { play_addr: { url_list: [`https://cdn.test/ai${i}.mp4`] } }, statistics: { digg_count: 1 }, duration: 8000
+      }))
+    }
+    const pRaw = s.handleRaw(douyinAdapter, rawUrl, raw)
+    await new Promise(r => setTimeout(r, 10)) // 第 1 条卡在 AI 判定
+    const pPause = s.pause()
+    browser.releaseLoad()
+    await Promise.all([pRun, pPause]) // 任务已经完全停下（调度器 taskId 已清零）
+    const before = events.length
+    gate()
+    await pRaw
+    expect(db.prepare('SELECT COUNT(*) n FROM videos WHERE task_id = 0').get()).toEqual({ n: 0 })
+    expect(events.slice(before).filter(e => e.type === 'task:progress')).toEqual([])
+  }, 10000)
+})
+
+describe('#7 被接管的旧 run 不再动新任务的状态', () => {
+  it('两段式列表循环：stopped() 为真（哪怕 aborted 被新任务重置成 false）就不再查到底、不改 listEnded', async () => {
+    const db = newDb()
+    const browser = new FakeBrowser()
+    browser.bottomText = '暂时没有更多了'
+    const bottomSpy = vi.spyOn(browser, 'findBottomText')
+    const { s } = setup(db, new FakeDownloader(), browser)
+    const anyS = s as any
+    anyS.aborted = false
+    anyS.lastFetchedAt = Date.now()
+    const r = await anyS.runListDetails(douyinAdapter, 10, () => true)
+    expect(r).toBe('reached')
+    expect(bottomSpy).not.toHaveBeenCalled()
+    expect(anyS.listEnded).toBe(false)
+  })
+
+  it('详情循环遍历的是开始时的候选快照：途中加进来的（新任务的）候选不会被旧 run 打开', async () => {
+    const db = newDb()
+    const { s } = setup(db, new FakeDownloader(), new FakeBrowser())
+    const anyS = s as any
+    anyS.listEnded = true
+    anyS.listStubs.set('OLD1', { noteId: 'OLD1' })
+    const opened: string[] = []
+    anyS.resolveDetail = async (_a: unknown, stub: { noteId: string }) => {
+      opened.push(stub.noteId)
+      anyS.listStubs.set('NEW1', { noteId: 'NEW1' }) // 模拟新任务往同一个 Map 里加候选
+      return null
+    }
+    await anyS.runListDetails(douyinAdapter, 10, () => false)
+    expect(opened).toEqual(['OLD1'])
+  })
+})
+
+describe('#9 校验没通过的导入作者，下次再爬还要校验', () => {
+  function seedFailed(db: DatabaseSync, nickname: string) {
+    const a = insertAuthorIfAbsent(db, { platform: 'douyin', secUid: 'SEC_F', nickname, homeUrl: 'https://www.douyin.com/user/SEC_F' })
+    setAuthorVerify(db, a.id, 'failed', '上次对不上')
+    const taskId = createTask(db, { ...input, type: 'author', query: 'SEC_F' })
+    return { authorId: a.id, taskId }
+  }
+  const state = (db: DatabaseSync, id: number) =>
+    (db.prepare('SELECT verify_state FROM authors WHERE id = ?').get(id) as { verify_state: string }).verify_state
+
+  it('上次失败、这次还是对不上 → 照样拦下', async () => {
+    const db = newDb()
+    const browser = new FakeBrowser()
+    browser.authorNickname = '王五'
+    const { authorId, taskId } = seedFailed(db, '张三')
+    const { s } = setup(db, new FakeDownloader(), browser)
+    await s.run(taskId)
+    expect(browser.readAuthorNicknameCalls).toBe(1)
+    expect(state(db, authorId)).toBe('failed')
+    expect(db.prepare('SELECT status, error FROM tasks WHERE id = ?').get(taskId)).toEqual({ status: 'paused', error: 'author_mismatch' })
+  })
+
+  it('上次失败（比如页面没打开）、这次对上了 → 标成通过，正常爬', async () => {
+    const db = newDb()
+    const browser = new FakeBrowser()
+    browser.authorNickname = '张三'
+    const { authorId, taskId } = seedFailed(db, '张三')
+    const { s } = setup(db, new FakeDownloader(), browser)
+    const p = s.run(taskId)
+    await new Promise(r => setTimeout(r, 30))
+    await s.pause()
+    await p
+    expect(state(db, authorId)).toBe('ok')
   })
 })

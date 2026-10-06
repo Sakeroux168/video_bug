@@ -4,7 +4,7 @@ import type { AppSettings, TaskRow, TaskStatus, Filters } from '../shared/types'
 import { ERROR, clampStuckTimeoutMin } from '../shared/types'
 import { filterVideos, dedupeVideos, extractCategory, chinaDayStartSec, chinaDayEndSec } from './extractor'
 import { isRiskSignal } from './errors'
-import { upsertAuthor, listAuthors, setAuthorVerify, refreshSeenVideo } from './db'
+import { upsertAuthor, setAuthorVerify, refreshSeenVideo } from './db'
 import { looseNicknameMatch } from './nicknameMatch'
 import type { Analyzer } from './analyzer'
 import type { Downloader } from './downloader'
@@ -27,6 +27,8 @@ export const WATCHDOG_TICK_MS = 5000
 export const DEFAULT_STUCK_MIN = 5
 /** R20：卡住判定的下限毫秒——一轮正常滚动最长 60s、页面加载最长 30s，低于 2 分钟会误伤正常任务 */
 const STUCK_FLOOR_MS = 2 * 60 * 1000
+/** #7：小红书网页原生筛选（hover 展开面板再点选项）最多等多久 */
+const NATIVE_FILTER_TIMEOUT_MS = 45 * 1000
 /** R20：暂停 / 删除时最多等任务自己停下来的毫秒数；超过就强制停，不让按钮跟着卡住 */
 export const PAUSE_WAIT_MS = 10000
 /** 追更：两段式作者主页连续多少条早于起始日期就收尾（小红书最多置顶 3 条旧笔记，取 4） */
@@ -365,14 +367,14 @@ export class Scheduler {
 
       // R16：导入作者的「名称强绑链接」校验。
       // 搭这次页面加载的车——不额外开页、不增加任何风控。
-      // 只查 verify_state='pending' 的（导入进来的）；抓取自动收录的作者数据来自真实接口，不必校验。
+      // 只查导入进来的（verify_state 为 pending，或上次没通过的 failed）；抓取自动收录的作者数据来自真实接口，不必校验。
       if (task.type === 'author') {
         const stop = await this.verifyImportedAuthor(taskId, adapter.parseAuthorInput(task.query) ?? task.query, gen)
         if (stop) return
       }
 
       if (adapter.parseListStubs) {
-        await this.prepareTwoStageList(adapter, task.type)
+        await this.prepareTwoStageList(adapter, task.type, stopped)
         if (stopped()) return
       }
 
@@ -571,19 +573,20 @@ export class Scheduler {
     const enough = (): boolean => this.fetched + this.listStubs.size >= candidateTarget
     const stallMs = Math.max(this.deps.getStallThresholdSec() * 1000,
       this.scrollIntervalMs + this.scrollWaitMs + 12000)
-    while (!this.aborted && !enough() && !this.listEnded) {
+    // #7：循环里一律看 stopped()（含 runGen）——被看门狗接管后新任务会把 aborted 重置成 false，只看它会让旧 run 动新任务的页面和状态
+    while (!stopped() && !enough() && !this.listEnded) {
       const block = await this.detectPageBlock()
       if (block) return block
-      if (this.aborted) break
+      if (stopped()) break
       if (await this.deps.browser.findBottomText()) { this.listEnded = true; break }
-      if (this.aborted) break
+      if (stopped()) break
       if (Date.now() - this.lastFetchedAt > stallMs) {
         // 已收集的候选仍要解析；无候选时暂停，不能把无响应误报完成。
         if (this.listStubs.size === 0) return 'stalled'
         break
       }
       await this.sleep(this.scrollIntervalMs + Math.random() * SCROLL_WAIT_JITTER_MS)
-      if (this.aborted || enough() || this.listEnded) break
+      if (stopped() || enough() || this.listEnded) break
       await this.deps.browser.scrollToBottom({ waitMs: this.scrollWaitMs })
       if (stopped()) break
       this.touch() // R20：滚完一轮 = 循环还活着
@@ -598,11 +601,12 @@ export class Scheduler {
     // 门槛比置顶上限（3 条）多 1：置顶的旧笔记排在最前面，不能被它们骗得提前收工。
     const rangeStart = this.isAuthorRange() && this.filters?.startDate ? chinaDayStartSec(this.filters.startDate) : null
     let olderStreak = 0
-    for (const stub of this.listStubs.values()) {
-      if (this.aborted || this.fetched >= target) break
+    // #7：遍历开始时的快照——Map 迭代器会读到之后新加的条目，旧 run 不能拿新任务的候选去开详情
+    for (const stub of [...this.listStubs.values()]) {
+      if (stopped() || this.fetched >= target) break
       const block = await this.detectPageBlock()
       if (block) return block
-      if (this.aborted) break
+      if (stopped()) break
       // 快速模式：详情不在窗口里导航，用登录态 session 直接拉 HTML 解析注水状态。
       // 仅当 filters.detailMode='fast' 且适配器与浏览器都支持时启用；稳妥仍是默认。
       const useFast = this.filters?.detailMode === 'fast'
@@ -624,23 +628,32 @@ export class Scheduler {
         }
       }
       // 任务之间的间隔照样遵守（scrollIntervalMs），快速模式不额外加压
-      if (!this.aborted && this.fetched < target) await this.sleep(this.scrollIntervalMs)
+      if (!stopped() && this.fetched < target) await this.sleep(this.scrollIntervalMs)
     }
-    if (!this.aborted && this.fetched < target) {
+    if (!stopped() && this.fetched < target) {
       this.deps.emit({ type: 'task:notice', text: `本批视频候选处理完毕，实际收集 ${this.fetched}/${target} 条；部分候选可能不符合筛选条件或详情不可用` })
     }
     return 'reached'
   }
 
   /** 页面原生筛选只减少无效候选；详情阶段仍会按真实时间戳与时长做最终精确过滤。 */
-  private async prepareTwoStageList(adapter: PlatformAdapter, type: TaskRow['type']): Promise<void> {
+  private async prepareTwoStageList(adapter: PlatformAdapter, type: TaskRow['type'], stopped: () => boolean = () => this.aborted): Promise<void> {
     const filters = this.filters
     if (!filters) return
     const native = adapter.nativeSearchFilters?.(type, filters) ?? []
-    if (native.length > 0 && this.deps.browser.applyNativeSearchFilters) {
+    const apply = this.deps.browser.applyNativeSearchFilters
+    if (native.length > 0 && apply) {
       const before = new Map(this.listStubs)
       this.listStubs.clear()
-      const result = await this.deps.browser.applyNativeSearchFilters(native)
+      // #7：页面卡死时不让任务永远挂在这里；超时按「没应用上」处理，回退为详情阶段精确筛选
+      let timer: ReturnType<typeof setTimeout> | null = null
+      const result = await Promise.race([
+        apply.call(this.deps.browser, native),
+        new Promise<{ applied: boolean; noteIds: string[] }>(resolve => {
+          timer = setTimeout(() => resolve({ applied: false, noteIds: [] }), NATIVE_FILTER_TIMEOUT_MS)
+        })
+      ]).finally(() => { if (timer !== null) clearTimeout(timer) })
+      if (stopped()) return // 等待期间已被暂停或接管：listStubs 可能已属于新任务，不能再动
       if (!result.applied) {
         this.listStubs.clear()
         for (const [id, stub] of before) this.listStubs.set(id, stub)
@@ -653,6 +666,7 @@ export class Scheduler {
         this.deps.onFilterLog?.(`已应用网页原生筛选：${native.map(x => `${x.group}=${x.option}`).join('、')}`)
       }
     }
+    if (stopped()) return
     await this.collectDomListStubs(adapter)
   }
 
@@ -819,17 +833,20 @@ export class Scheduler {
   /**
    * R16：校验「导入进来的作者」名称是否与主页对得上。返回 true 表示已中止本次 run。
    *
-   * 只对 verify_state='pending' 的作者做——抓取时自动收录的作者数据来自真实接口，无需校验。
+   * 只对导入的作者做（pending，以及上次没通过的 failed——#9 以前只拦一次）——抓取时自动收录的作者数据来自真实接口，无需校验。
    * 取不到昵称同样判失败：宁可少入不可入错（用户明确要求「不批准就要说为什么」）。
    * 匹配用宽松规则（去空白/emoji/标点后互相包含），严格相等在真实昵称面前会大量误拒。
    */
   private async verifyImportedAuthor(taskId: number, secUid: string, gen: number): Promise<boolean> {
-    const author = listAuthors(this.deps.db).find(a => a.sec_uid === secUid)
+    // 只查这一行（以前 listAuthors 全表算一遍，作者多了会卡主进程）
+    const author = this.deps.db.prepare('SELECT id, nickname, verify_state FROM authors WHERE sec_uid = ? LIMIT 1').get(secUid) as
+      { id: number; nickname: string; verify_state: string | null } | undefined
     // 找不到作者行（导入后、真正开爬前被手动删掉）也直接放行——**这是有意为之**：
     // 校验的对象是「导入时声称的名字」，行都删了就没有这个声称了，没什么可比对。
     // 此时继续爬取、由 upsertAuthor 按真实接口数据重新登记作者（verify_state=null）才是对的，
     // 拦下来反而错。测试工程师曾把它当缺陷报上来，此处写明以免重复被误判。
-    if (!author || author.verify_state !== 'pending') return false
+    // #9：上次没通过（failed）的也要再校验——以前只拦一次，用户点「继续」或批量爬时错的人照样被抓
+    if (!author || (author.verify_state !== 'pending' && author.verify_state !== 'failed')) return false
 
     const real = await this.deps.browser.readAuthorNickname()
     if (gen !== this.runGen) return true // R20：读昵称期间被看门狗接管 → 不再写任何东西
@@ -1019,6 +1036,11 @@ export class Scheduler {
   /** 一批接口数据：过滤、去重、入库（原 handleRaw 主体） */
   private async applyBatch(adapter: PlatformAdapter, items: ReturnType<PlatformAdapter['parseApiJson']>, filters: Filters, authorRange: boolean): Promise<{ items: number; kept: number }> {
     const db = this.deps.db
+    // B4：AI 判定每条最多等 60 秒。等完时任务可能已经暂停结束（taskId 清零）或换成下一个任务，
+    // 这时再写库会以 task_id=0 入库、或记到新任务名下，还会发出假的进度事件——记下进来时的任务，每次 await 后对一下
+    const gen = this.runGen
+    const ownTaskId = this.taskId
+    const stale = (): boolean => gen !== this.runGen || this.taskId !== ownTaskId
     // R18：作者主页是按时间倒序的——这一批全比日期段起点老，说明已经翻过日期段，后面只会更老 → 抓完
     // R20：起点按北京时间当天 00:00 算（以前按 UTC，差 8 小时）
     const startTs = authorRange && filters.startDate ? chinaDayStartSec(filters.startDate) : null
@@ -1083,6 +1105,7 @@ export class Scheduler {
         try {
           const text = `${item.title}\n作者:${item.authorNickname}\n时长:${item.durationSec}s`
           const v = await this.deps.analyzer.judgeFilter(text, filters.aiFilterRule ?? '', `${item.awemeId}:filter`)
+          if (stale()) return { items: items.length, kept: 0 }
           if (!v.pass) {
             const insertedId = db.prepare(
               "INSERT OR IGNORE INTO videos (platform,task_id,aweme_id,title,play_addr,source_url,cover_url,video_width,video_height,duration,publish_time,stats,status,ai_verdict,fetched_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'filtered','filtered',?)"
@@ -1098,6 +1121,7 @@ export class Scheduler {
             continue
           }
         } catch { /* AI 失败降级：视为通过 */ }
+        if (stale()) return { items: items.length, kept: 0 }
       }
       // #4 关键词任务：品类直接用搜索词（如搜"农村搞笑"→品类"农村搞笑"）；其它类型用视频第一个 #话题
       const category = this.task?.type === 'keyword' && this.task.query

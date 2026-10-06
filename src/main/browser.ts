@@ -1,3 +1,4 @@
+import { BOTTOM_HINT_SOURCE, BOTTOM_HINT_FLAGS } from './bottomHint'
 import { BrowserWindow, screen } from 'electron'
 import type { Rectangle } from 'electron'
 import { join } from 'path'
@@ -288,7 +289,8 @@ export class VideoBrowser {
     const script = adapter.buildListDomScript(type)
     if (!script) return null
     try {
-      const raw = await this.win.webContents.executeJavaScript(script)
+      // #7：套超时（evalInPage），页面卡死时不让调度器的列表循环永远挂着
+      const raw = await this.evalInPage(script, '读列表卡片')
       return adapter.parseListDomResult(raw)
     } catch { return null }
   }
@@ -644,11 +646,12 @@ export class VideoBrowser {
    *  与"X 秒无新视频"先到先触发：命中说明搜索已到底，应触发重搜自救（忽略重搜冷却立即重搜）。
    *  可见性 + 视口校验：抖音把提示常驻 DOM 但隐藏（display:none/visibility:hidden，rect 宽高 0），
    *  且未滚到底时提示在视口外——隐藏/视口外文本不算命中，避免「还没到底就触发重搜」。
-   *  快速路径：先查真实元素 div.nU717OFZ（含同样校验，命中直接返回），再走文字正则扫描。 */
+   *  快速路径：先查真实元素 div.nU717OFZ（含同样校验，命中直接返回），再走文字正则扫描。
+   *  B3：整段文字必须就是一句到底提示（规则见 bottomHint.ts），卡片（链接）里的文字不看——以前标题带「到底」就误判翻完了。 */
   async findBottomText(): Promise<string | null> {
     if (!this.win) return null
     const script = `(() => {
-      const re = /没有更多|到底|暂时没有/i;
+      const re = new RegExp(${JSON.stringify(BOTTOM_HINT_SOURCE)}, ${JSON.stringify(BOTTOM_HINT_FLAGS)});
       // 可见 + 视口内：宽高 > 0（排除 display:none/visibility:hidden）且与视口相交（排除滚到底前就存在的隐藏提示）
       const inView = el => {
         const r = el.getBoundingClientRect();
@@ -668,7 +671,7 @@ export class VideoBrowser {
       const walker = document.createTreeWalker(body, NodeFilter.SHOW_TEXT, {
         acceptNode: (node) => {
           const el = node.parentElement;
-          return el && !skip.has(el.tagName) && inView(el) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+          return el && !skip.has(el.tagName) && !el.closest('a') && inView(el) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
         }
       });
       for (let node = walker.nextNode(); node; node = walker.nextNode()) {
