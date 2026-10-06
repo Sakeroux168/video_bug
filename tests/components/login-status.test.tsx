@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { render, screen, fireEvent, waitFor } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react'
 import { installFakeApi } from '../helpers/fake-api'
 import Overview from '../../src/renderer/src/components/Overview'
 import FilterForm from '../../src/renderer/src/components/FilterForm'
@@ -47,7 +47,7 @@ describe('登录状态与暂停原因', () => {
     render(<Overview onGoto={() => {}} />)
     expect(await screen.findByText('抖音：已登录')).toBeInTheDocument()
     expect(screen.getByText('快手：未登录')).toBeInTheDocument()
-    expect(screen.getByText('小红书：未知')).toBeInTheDocument()
+    expect(screen.getByText('小红书：未确认')).toBeInTheDocument() // 需求变更（界面 D6）：「未知」改说「未确认」
   })
 
   it('未登录先提示，可去登录，也可明确选择仍然继续', async () => {
@@ -60,7 +60,8 @@ describe('登录状态与暂停原因', () => {
     fireEvent.click(screen.getByText('开始抓取'))
     expect(await screen.findByText('快手还没登录，登录后再开始抓取。')).toBeInTheDocument()
     expect(submit).not.toHaveBeenCalled()
-    fireEvent.click(screen.getByText('去登录'))
+    // 状态灯旁边也有「去登录」（界面 D6），这里点提示条里的那个
+    fireEvent.click(within(screen.getByRole('alert')).getByText('去登录'))
     expect(window.api.openBrowserFor).toHaveBeenCalledWith('kuaishou')
     fireEvent.click(screen.getByText('仍然继续'))
     await waitFor(() => expect(submit).toHaveBeenCalledTimes(1))

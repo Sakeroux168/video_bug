@@ -15,6 +15,7 @@ import { installDownloadFallback } from './csvExport'
 import { enqueuePendingTasks, recoverPendingVideos } from './recovery'
 import { getSettings } from './settings'
 import { douyinAdapter, drainDurationDiags } from './adapters/douyin'
+import { getAdapter } from './adapters'
 import { classifyAuthor } from './ai/organizer-ai'
 import { transcribeFor } from './asr/asr'
 import type { Transcript } from './asr/asr'
@@ -37,6 +38,8 @@ let taskRunning = false
 let bridge: Server | null = null
 let browserShown = false
 let forceBrowserFull = false
+/** push() 里查任务所属平台用（库在 whenReady 里才打开） */
+let dbRef: DatabaseSync | null = null
 
 /** 根据任务状态与用户所在标签决定抖音窗口显示方式：
  *  任务运行中 / 验证暂停 → 显示独立抖音窗口（不盖管理面板，可拖走）；
@@ -126,6 +129,12 @@ function push(evt: unknown): void {
     }
     if (t.type === 'task:paused') {
       taskRunning = false
+      if (t.reason === 'login_required') {
+        // D6：状态灯跟着变成「未登录」（以前任务写没登录、状态灯还写未知）
+        const row = dbRef?.prepare('SELECT platform FROM tasks WHERE id = ?').get((evt as { taskId?: number }).taskId ?? 0) as { platform?: string } | undefined
+        const adapter = row?.platform ? getAdapter(row.platform) : undefined
+        if (adapter) void browser?.noteLoggedOut(adapter)
+      }
       if (t.reason === 'stalled_verify' || t.reason === 'login_required') {
         // 登录/验证暂停均显示当前平台窗口。验证码沿用队列按住规则，登录沿用现有队列规则。
         forceBrowserFull = true
@@ -159,6 +168,7 @@ app.whenReady().then(() => {
   const db = new DatabaseSync(join(app.getPath('userData'), 'scraper.db'))
   tuneDb(db) // WAL + NORMAL：写库快几十倍（性能检查 F2）
   initDb(db)
+  dbRef = db
 
   createWindow()
 

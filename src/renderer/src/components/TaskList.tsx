@@ -23,7 +23,7 @@ const STATUS_CLASS: Record<string, string> = {
   pending: 'text-slate-500',
   downloading: 'text-sky-600',
   done: 'text-emerald-600',
-  failed: 'text-red-500',
+  failed: 'text-danger-600',
   filtered: 'text-slate-400',
   collected: 'text-amber-600',
   cancelled: 'text-slate-400',
@@ -489,7 +489,7 @@ export default function TaskList({ notify, refreshVersion = 0 }: { notify: Notif
                         <span className="text-xs text-slate-400">—</span>
                       )}
                     </td>
-                    <td data-testid={`task-status-${t.id}`} className={`truncate py-2 pr-3 text-xs ${t.status === 'failed' ? 'text-red-500' : t.status === 'running' ? 'text-sky-600' : t.status === 'paused' && t.error && PAUSE_BADGE[t.error] ? 'text-amber-600' : 'text-slate-500'}`}>
+                    <td data-testid={`task-status-${t.id}`} className={`truncate py-2 pr-3 text-xs ${t.status === 'failed' ? 'text-danger-600' : t.status === 'running' ? 'text-sky-600' : t.status === 'paused' && t.error && PAUSE_BADGE[t.error] ? 'text-amber-600' : 'text-slate-500'}`}>
                       {/* R20：看门狗判卡住的任务单独说清楚，别只显示一个「已暂停」让人以为是自己点的；完整原因见下面整行 */}
                       {statusBadge(t)}
                     </td>
@@ -505,7 +505,7 @@ export default function TaskList({ notify, refreshVersion = 0 }: { notify: Notif
                         {t.status === 'paused' && (
                           <button className="text-slate-400 hover:text-slate-600" onClick={() => { void api.resumeTask(t.id).then(refresh) }}>继续</button>
                         )}
-                        <button className="text-red-400 hover:text-red-500" onClick={() => deleteTask(t)}>删除</button>
+                        <button className="text-danger-600 hover:text-danger-700" onClick={() => deleteTask(t)}>删除</button>
                         <button className="text-brand-500 hover:underline" onClick={() => void toggleExpand(t.id)}>{isOpen ? '收起' : '展开'}</button>
                       </div>
                     </td>
@@ -821,7 +821,7 @@ function TaskVideoTable({
                   <td className={`py-1 pr-2 ${STATUS_CLASS[v.status] ?? 'text-slate-500'}`}>
                     <span className="whitespace-nowrap">{STATUS_LABEL[v.status] ?? v.status}</span>
                     {v.status === 'failed' && (
-                      <span className="ml-1 text-[10px] leading-tight text-red-400/90">·{describeError(v.error)}</span>
+                      <span className="ml-1 text-[10px] leading-tight text-danger-600/90">·{describeError(v.error)}</span>
                     )}
                   </td>
                   <td className="whitespace-nowrap py-1 pl-2">
@@ -848,7 +848,7 @@ function TaskVideoTable({
                         <RowBtn label="打开原视频" action="source" onClick={() => { void openSourceVideo(v) }} />
                         <RowBtn label="复制链接" action="copy-source" onClick={() => { void copySourceUrl(v) }} />
                         <RowBtn label="复制作者名" action="copy-author" onClick={() => { void copyAuthorName(v) }} />
-                        <button data-action="delete" className="text-red-400 hover:text-red-500" onClick={() => onDeleteVideos([v.id])}>删除</button>
+                        <button data-action="delete" className="text-danger-600 hover:text-danger-700" onClick={() => onDeleteVideos([v.id])}>删除</button>
                       </div>
                     )}
                   </td>

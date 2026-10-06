@@ -383,7 +383,7 @@ export default function AuthorCollection({ notify }: { notify: Notify }) {
       <div className="mb-2 flex items-center gap-3 text-xs">
         {visible.length > 0 && (
           <button
-            className={`rounded-md px-2 py-1 ${selected.size ? 'bg-red-50 text-red-500 hover:bg-red-100' : 'text-slate-300'}`}
+            className={`rounded-md px-2 py-1 ${selected.size ? 'bg-danger-50 text-danger-600 hover:bg-danger-100' : 'text-slate-300'}`}
             disabled={selected.size === 0}
             onClick={() => void deleteSelected()}
           >
@@ -595,7 +595,7 @@ export default function AuthorCollection({ notify }: { notify: Notify }) {
             <div className="mt-2 text-xs text-slate-600">
               <div>成功导入 {importResult.created} 个</div>
               {importResult.results.some(r => !r.ok) && (
-                <ul className="mt-1 space-y-0.5 text-red-500">
+                <ul className="mt-1 space-y-0.5 text-danger-600">
                   {importResult.results.filter(r => !r.ok).map(r => (
                     <li key={r.line}>
                       第 {r.line} 行「{r.raw}」：{r.reason}
@@ -665,7 +665,7 @@ export default function AuthorCollection({ notify }: { notify: Notify }) {
                       <span className="ml-1.5 rounded bg-amber-50 px-1 py-0.5 text-[10px] text-amber-600" title="导入的作者尚未核实，首次「爬主页」时会自动校验">待校验</span>
                     )}
                     {a.verify_state === 'failed' && (
-                      <span className="ml-1.5 rounded bg-red-50 px-1 py-0.5 text-[10px] text-red-600" title={a.verify_error ?? ''}>校验失败</span>
+                      <span className="ml-1.5 rounded bg-danger-50 px-1 py-0.5 text-[10px] text-danger-600" title={a.verify_error ?? ''}>校验失败</span>
                     )}
                   </td>
                   <td className="max-w-[240px] py-2 pr-2">
@@ -675,7 +675,7 @@ export default function AuthorCollection({ notify }: { notify: Notify }) {
                     {/* 拒绝爬取的原因常驻在链接下方。不能只靠 toast：
                         它 3 秒就消失，用户根本来不及看完一句带两个名字的对比说明。 */}
                     {a.verify_error && (
-                      <div className="mt-0.5 whitespace-normal text-[10px] leading-snug text-red-500">{a.verify_error}</div>
+                      <div className="mt-0.5 whitespace-normal text-[10px] leading-snug text-danger-600">{a.verify_error}</div>
                     )}
                   </td>
                   <td className="py-2 pr-2">
@@ -707,7 +707,7 @@ export default function AuthorCollection({ notify }: { notify: Notify }) {
                         title={!authorCrawlSupported(a.platform) ? '此平台暂未支持作者主页抓取' : undefined}
                         onClick={() => openCrawlPanel(a)}>爬主页</button>
                       <button className="rounded px-2 py-1 text-xs text-emerald-600 hover:bg-emerald-50" onClick={() => void organizeOne(a)}>整理</button>
-                      <button className="rounded px-2 py-1 text-xs text-red-400 hover:bg-red-50" onClick={() => void deleteOne(a.id)}>删除</button>
+                      <button className="rounded px-2 py-1 text-xs text-danger-600 hover:bg-danger-50" onClick={() => void deleteOne(a.id)}>删除</button>
                     </div>
                   </td>
                 </tr>

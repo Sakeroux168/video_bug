@@ -125,11 +125,11 @@ export default function HelpPanel(): React.ReactElement {
         <SectionTitle index="4">注意事项</SectionTitle>
         <div className="space-y-3 text-xs leading-5 text-slate-500">
           <p>
-            <span className="font-medium text-red-500">别开多个程序窗口。</span>
+            <span className="font-medium text-danger-600">别开多个程序窗口。</span>
             同一台机器只能跑一个，多开会互相抢数据库，导致数据错乱。
           </p>
           <div>
-            <p><span className="font-medium text-red-500">别爬太猛。</span>
+            <p><span className="font-medium text-danger-600">别爬太猛。</span>
               目标数量一次填几千、或者好几个人同时用同一个账号大量爬，会明显提高抖音风控
               （验证码、限流甚至封号）的概率。建议：
             </p>

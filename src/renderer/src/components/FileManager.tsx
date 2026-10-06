@@ -185,7 +185,7 @@ export default function FileManager({ notify }: { notify: Notify }) {
   const cwdLabel = cwd.join(' / ')
 
   const hintCls = 'rounded-md px-2 py-1 text-xs'
-  const delBtnCls = (n: number) => `${hintCls} ${n ? 'bg-red-50 text-red-500 hover:bg-red-100' : 'text-slate-300'}`
+  const delBtnCls = (n: number) => `${hintCls} ${n ? 'bg-danger-50 text-danger-600 hover:bg-danger-100' : 'text-slate-300'}`
   const exportBtnCls = (n: number) => `${hintCls} ${n ? 'text-slate-600 hover:bg-slate-100' : 'text-slate-300'}`
 
   return (
@@ -263,7 +263,7 @@ export default function FileManager({ notify }: { notify: Notify }) {
                     {entry.kind === 'dir' && (
                       <button className="rounded px-2 py-1 text-xs text-slate-600 hover:bg-slate-100" onClick={() => void exportUnder([...cwd, entry.name], `文件夹「${entry.name}」`)}>导出</button>
                     )}
-                    <button className="rounded px-2 py-1 text-xs text-red-400 hover:bg-red-50" onClick={() => void deleteEntries([entry])}>删除</button>
+                    <button className="rounded px-2 py-1 text-xs text-danger-600 hover:bg-danger-50" onClick={() => void deleteEntries([entry])}>删除</button>
                   </td>
                 </tr>
               ))}
