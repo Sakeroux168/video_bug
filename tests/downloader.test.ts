@@ -405,14 +405,16 @@ describe('Downloader', () => {
     expect(row.retry_count).toBe(3)
   })
 
-  it('地址过期（超过 TTL）→ failed + 错误码 address_expired，不再发起下载', async () => {
+  // 需求变更（2026-10-06 全面检查 B2）：以前超过 TTL 就不发请求直接判过期，排队 / 暂停 / 重启都会让视频永远下不了；
+  // 现在先试着下，平台拒绝（403/404/410）且地址超过 TTL 才判过期（更多用例见 download-safety.test.ts）
+  it('地址超过 TTL 且平台拒绝 → failed + 错误码 address_expired，清掉残留半截文件', async () => {
     const taskId = createTask(db, input)
     insertVideos(db, [item()], taskId, 'douyin')
     const [v] = listVideos(db, taskId)
     db.prepare('UPDATE videos SET fetched_at=? WHERE id=?').run(new Date(Date.now() - 31 * 60 * 1000).toISOString(), v.id)
     const orphanPart = join(dir, `.video-${v.id}.download.part.mp4`)
     writeFileSync(orphanPart, Buffer.alloc(2048)) // 模拟崩溃发生在写完文件、登记断点之前
-    const fetchImpl = (async () => { throw new Error('不应发起下载请求') }) as typeof fetch
+    const fetchImpl = (async () => new Response('expired', { status: 403 })) as typeof fetch
     const dl = new Downloader(db, { downloadDir: dir, downloadConcurrency: 3, scrollIntervalMs: 2000, addressTtlMin: 30 }, fetchImpl)
     dl.enqueue(v.id)
     dl.start()

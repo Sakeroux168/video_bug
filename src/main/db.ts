@@ -276,6 +276,29 @@ export function listAuthors(db: DatabaseSync, platform?: string): AuthorRow[] {
   return (platform ? stmt.all(platform) : stmt.all()) as unknown as AuthorRow[]
 }
 
+/**
+ * 库里已有的视频又被抓到（INSERT OR IGNORE 没插进去）时调用：
+ *  - 点赞 / 评论数每次都更新（只更新这次拿到的字段，拿不到的不清空）
+ *  - 还没下好的（不是 done / downloading）换上新的下载地址和抓取时间——旧地址可能已失效，
+ *    以前重新爬会被去重跳过，失败的视频永远拿不到新地址
+ *  - 这次没拿到地址（如小红书列表页只有卡片）就不动地址
+ */
+export function refreshSeenVideo(db: DatabaseSync, platform: string, item: VideoItem): void {
+  const patch: Record<string, number> = {}
+  if (typeof item.likes === 'number') patch.likes = item.likes
+  if (typeof item.comments === 'number') patch.comments = item.comments
+  if (Object.keys(patch).length > 0) {
+    db.prepare('UPDATE videos SET stats = json_patch(stats, ?) WHERE platform = ? AND aweme_id = ? AND json_valid(stats)')
+      .run(JSON.stringify(patch), platform, item.awemeId)
+  }
+  if (item.playUrl) {
+    db.prepare(
+      `UPDATE videos SET play_addr = ?, cover_url = COALESCE(?, cover_url), fetched_at = ?
+       WHERE platform = ? AND aweme_id = ? AND status NOT IN ('done', 'downloading')`
+    ).run(item.playUrl, item.coverUrl || null, new Date().toISOString(), platform, item.awemeId)
+  }
+}
+
 export function insertVideos(db: DatabaseSync, items: VideoItem[], taskId: number, platform: string): number {
   let inserted = 0
   const now = new Date().toISOString()
@@ -295,7 +318,7 @@ export function insertVideos(db: DatabaseSync, items: VideoItem[], taskId: numbe
     if (info.changes > 0) {
       inserted++
       if (!created) bumpAuthorStmt.run(authorId)
-    }
+    } else refreshSeenVideo(db, platform, it)
   }
   return inserted
 }

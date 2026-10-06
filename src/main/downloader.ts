@@ -1,8 +1,9 @@
 import type { DatabaseSync } from 'node:sqlite'
-import { createReadStream, createWriteStream, existsSync, mkdirSync, renameSync, rmSync, statSync } from 'fs'
+import { createReadStream, createWriteStream, existsSync, mkdirSync, readdirSync, renameSync, rmSync, statSync } from 'fs'
+import { readdir, rm } from 'fs/promises'
 import { pipeline } from 'stream/promises'
 import { Readable, Transform } from 'stream'
-import { join } from 'path'
+import { basename, extname, join } from 'path'
 import { execFile } from 'child_process'
 import { findBin } from './ffbin'
 import type { AppSettings, VideoRow, VideoStatus } from '../shared/types'
@@ -37,6 +38,10 @@ export const DOWNLOAD_IDLE_TIMEOUT_MS = 60000
 export const FFPROBE_TIMEOUT_MS = 30000
 /** R20：封面整体最多下多久（封面是附属品，超时就不要封面，视频照常完成） */
 const COVER_TIMEOUT_MS = 60000
+/** 视频与封面共用一个主体名；.original.mp4 仍占位：旧版转码流程留下的原片可能与新下载同名主体，不能撞上 */
+const STEM_EXTENSIONS = ['.mp4', '.original.mp4', '.jpg', '.jpeg', '.png', '.webp']
+/** Windows 文件名不分大小写，占位键统一小写 */
+function stemKey(dir: string, stem: string): string { return join(dir, stem).toLowerCase() }
 /** 每段最多尝试 3 次（首次 + 2 次重试）；不做无限重试。 */
 export const SEGMENT_MAX_ATTEMPTS = 3
 
@@ -107,6 +112,8 @@ export class Downloader {
   private idleTimeoutMs: number
   /** 会话级分段断点；只承诺同一次程序运行内暂停后继续，不跨重启。 */
   private segmentSessions = new Map<number, SegmentSession>()
+  /** 正在下载、还没落盘的文件名（目录+主体名，小写）。同名视频同时下载时靠它避开彼此，否则后存的覆盖先存的 */
+  private reservedStems = new Set<string>()
 
   constructor(
     private db: DatabaseSync,
@@ -233,6 +240,55 @@ export class Downloader {
   }
 
   private emit(e: DlEvent): void { for (const l of this.listeners) l(e) }
+
+  /**
+   * 清掉下载目录里没人要的半截文件（启动时调一次）：
+   *  - 分段残片 `.video-N.download.part.mp4.segment-K.part`：分段断点只在内存里，重启后一定没用
+   *  - `.video-N.download.part.mp4`：数据库没登记成断点的
+   *  - `xxx.cover.part`：没在下载的
+   * 正在下载的那几条一律不碰。返回删掉的个数。
+   */
+  async sweepOrphanParts(): Promise<number> {
+    const dir = this.settings.downloadDir
+    let names: string[]
+    try { names = await readdir(dir) } catch { return 0 }
+    const busy = (id: number): boolean => Boolean(this.fetching[id]) || this.aborters.has(id) || this.segmentSessions.has(id)
+    const checkpoints = new Set((this.db.prepare("SELECT local_path FROM videos WHERE local_path LIKE '%.download.part.mp4'")
+      .all() as Array<{ local_path: string }>).map(r => r.local_path.toLowerCase()))
+    let removed = 0
+    for (const name of names) {
+      const full = join(dir, name)
+      const seg = /^\.video-(\d+)\.download\.part\.mp4\.segment-\d+\.part$/.exec(name)
+      const part = /^\.video-(\d+)\.download\.part\.mp4$/.exec(name)
+      const cover = /^(.+)\.cover\.part$/.exec(name)
+      let junk = false
+      if (seg) junk = !busy(Number(seg[1]))
+      else if (part) junk = !busy(Number(part[1])) && !checkpoints.has(full.toLowerCase())
+      else if (cover) junk = !this.reservedStems.has(stemKey(dir, cover[1]))
+      if (!junk) continue
+      try { await rm(full, { force: true }); removed++ } catch { /* 被占用就下次再说 */ }
+    }
+    return removed
+  }
+
+  /** 这条视频上次（重启前）留下的分段残片；内存里还有它的分段断点时不能删 */
+  private removeStaleSegments(id: number, dir: string, sourcePart: string): void {
+    if (this.segmentSessions.has(id)) return
+    const prefix = `${basename(sourcePart)}.segment-`
+    let names: string[]
+    try { names = readdirSync(dir) } catch { return }
+    for (const name of names) {
+      if (name.startsWith(prefix)) try { rmSync(join(dir, name), { force: true }) } catch { /* ignore */ }
+    }
+  }
+
+  /** 选一个盘上没有、也没被其他在途下载占着的主体名，并立即占住 */
+  private reserveStem(dir: string, name: string): { stem: string; key: string } {
+    const stem = ensureUniqueStem(dir, name, STEM_EXTENSIONS, c => this.reservedStems.has(stemKey(dir, c)))
+    const key = stemKey(dir, stem)
+    this.reservedStems.add(key)
+    return { stem, key }
+  }
 
   /** 老测试/旧调用没有这个新键时维持原单连接；真实 settings.json 会由 settings.ts 补默认 3。 */
   private segmentCount(): number {
@@ -511,6 +567,7 @@ export class Downloader {
     const aborter = new AbortController()
     this.aborters.set(id, aborter)
     const cleanupPaths: string[] = []
+    const reservedKeys: string[] = []
     let sourceValidated = false
     let sourcePart: string | null = null
     // 当前下载固定一个目录，设置热更新只影响下一条，避免封面与视频分离或覆盖旧封面。
@@ -525,12 +582,16 @@ export class Downloader {
       if (jobDir) mkdirSync(jobDir, { recursive: true })
       // 文件名只用标题（剥掉 #话题）；下到达人暂存的也一样，文件名就是发到百家号的标题
       const name = safeFilename(row.title, author?.nickname ?? 'unknown', row.aweme_id)
-      // .original.mp4 仍占位：旧版转码流程留下的原片可能与新下载同名主体，不能撞上
-      const stem = ensureUniqueStem(downloadDir, name, ['.mp4', '.original.mp4', '.jpg', '.jpeg', '.png', '.webp'])
-      const target = join(downloadDir, `${stem}.mp4`)
+      // B1：选名后立即占住，另一条同名视频同时下载时会选 _1，不会两条写同一个文件
+      const reserved = this.reserveStem(downloadDir, name)
+      reservedKeys.push(reserved.key)
+      let stem = reserved.stem
+      let target = join(downloadDir, `${stem}.mp4`)
       sourcePart = join(downloadDir, `.video-${id}.download.part.mp4`)
-      cleanupPaths.push(target, sourcePart)
+      // 成品 target 不进清理列表：它在最后一步才由本条改名生成，失败/取消时盘上若有同名文件一定是别人的
+      cleanupPaths.push(sourcePart)
       if (row.local_path !== sourcePart) rmSync(sourcePart, { force: true })
+      this.removeStaleSegments(id, downloadDir, sourcePart)
 
       // 封面阶段暂停/重启后，数据库会指向已验证的源文件断点。恢复时先复验，合格则跳过网络请求。
       if (row.local_path === sourcePart && existsSync(sourcePart)) {
@@ -545,15 +606,8 @@ export class Downloader {
         }
       }
 
-      // 只有没有可复用断点时才检查 CDN 地址 TTL；本地源文件已经完整时无需依赖旧地址。
-      if (!sourceValidated) {
-        const policy = new AddressPolicy(this.settings.addressTtlMin)
-        if (policy.isExpired(row.fetched_at)) {
-          this.db.prepare("UPDATE videos SET status='failed', error=? WHERE id=?").run(ERROR.ADDRESS_EXPIRED, id)
-          this.emit({ type: 'video:status', id, status: 'failed', error: ERROR.ADDRESS_EXPIRED })
-          return
-        }
-      }
+      // B2：地址旧了不再直接判过期（排队 / 暂停 / 重启都会超过 30 分钟，小红书地址实际能用好几天），
+      // 先试着下；平台拒绝时再结合抓取时间判断是不是过期（见下方 catch）。
 
       this.db.prepare("UPDATE videos SET status = 'downloading' WHERE id = ?").run(id)
       this.emit({ type: 'video:status', id, status: 'downloading' })
@@ -603,7 +657,7 @@ export class Downloader {
       const coverPart = join(downloadDir, `${stem}.cover.part`)
       cleanupPaths.push(coverPart)
       // R19：下到达人暂存的不要封面（暂存里只放视频）
-      const coverPath = row.cover_url && !jobDir
+      const coverResult = row.cover_url && !jobDir
         ? await downloadCover({
             url: row.cover_url,
             dir: downloadDir,
@@ -617,12 +671,26 @@ export class Downloader {
             return null
           })
         : null
+      let coverPath = coverResult
       if (coverPath) cleanupPaths.push(coverPath)
       else if (row.cover_url && !jobDir) console.warn(`[downloader] 封面下载失败，视频继续完成: id=${id}`)
       if (aborter.signal.aborted) throw new Error('AbortError')
 
       // 原视频直下：已验证的源文件原子改名为成品，尺寸/编码沿用平台元数据，下载器不主动改动。
       // original_path / normalization_error 留空——这两列只服务旧版转码流程的历史数据与「视频处理」页。
+      // B1：改名前再看一眼——下载期间别的程序可能放了同名文件，Windows 上 rename 会静默覆盖它
+      if (existsSync(target)) {
+        const fresh = this.reserveStem(downloadDir, name)
+        reservedKeys.push(fresh.key)
+        stem = fresh.stem
+        target = join(downloadDir, `${stem}.mp4`)
+        if (coverPath) {
+          const movedCover = join(downloadDir, `${stem}${extname(coverPath)}`)
+          renameSync(coverPath, movedCover)
+          coverPath = movedCover
+          cleanupPaths.push(coverPath)
+        }
+      }
       renameSync(sourcePart, target)
 
       const size = statSync(target).size
@@ -673,7 +741,10 @@ export class Downloader {
         return
       }
       const retry = row.retry_count + 1
-      const code = classifyDownloadError(err)
+      let code = classifyDownloadError(err)
+      // B2：平台拒绝（403/404/410）且地址已超过设置的时效 → 多半是链接过期，重新爬一次就能拿到新地址
+      if (/^http_(403|404|410)$/.test(err instanceof Error ? err.message : '')
+        && new AddressPolicy(this.settings.addressTtlMin).isExpired(row.fetched_at)) code = ERROR.ADDRESS_EXPIRED
       this.clearSegmentSession(id)
       for (const path of cleanupPaths) try { rmSync(path, { force: true }) } catch { /* ignore */ }
       // 网络类错误自动重试2次（利用 retry_count）；磁盘(ENOENT/EPERM/ENOSPC)/风控等非网络错误直接失败
@@ -687,6 +758,7 @@ export class Downloader {
       }
       this.emit({ type: 'video:status', id, status: 'failed', error: code })
     } finally {
+      for (const key of reservedKeys) this.reservedStems.delete(key)
       this.aborters.delete(id)
       this.abortReasons.delete(id) // 兜底清理：若下载在 abort 前已完成（catch 未走），不留陈旧快照
       delete this.fetching[id]
