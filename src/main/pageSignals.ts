@@ -74,13 +74,14 @@ export function buildBlockScript(platform: string, kind: 'verify' | 'login', tex
     }
     if (!document.body) return null;
     const skip = new Set(['SCRIPT', 'STYLE', 'NOSCRIPT']);
+    // 性能检查 F6：先匹配文字，命中了才判断看不看得见（inView 每次都要往上逐层 getComputedStyle，满屏卡片时很贵）
     const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, { acceptNode: node => {
       const el = node.parentElement;
-      return el && !skip.has(el.tagName) && inView(el) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
+      return el && !skip.has(el.tagName) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
     }});
     for (let node = walker.nextNode(); node; node = walker.nextNode()) {
       const t = (node.textContent || '').trim();
-      if (t && re.test(${kind === 'verify' ? 'stripLogin(t)' : 't'})) return t.slice(0, 40);
+      if (t && re.test(${kind === 'verify' ? 'stripLogin(t)' : 't'}) && inView(node.parentElement)) return t.slice(0, 40);
     }
     return null;
   })()`
@@ -103,7 +104,7 @@ export function buildLoginStatusScript(platform: string): string {
     }
     const re = ${re};
     for (const el of document.querySelectorAll('button, a, [role="button"], span, p')) {
-      if (inView(el) && re.test((el.textContent || '').trim())) return 'logged_out';
+      if (re.test((el.textContent || '').trim()) && inView(el)) return 'logged_out'; // 先比文字再算可见性（F6）
     }
     return 'unknown';
   })()`

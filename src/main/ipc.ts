@@ -4,7 +4,7 @@ import { existsSync, statSync } from 'node:fs'
 import { createTask, listTasks, listVideos, listDeletedVideos, restoreVideos, allTaskStats, listDownloadedVideos, listAuthors, setTaskStatus, setVideoStatus, updateAuthorCategory, deleteAuthors, taskStats, insertAuthorIfAbsent, globalStats, recentDownloads } from './db'
 import { getSettings, saveSettings } from './settings'
 import { deleteVideoRows } from './videoDelete'
-import { scanFilesTree, deleteFileDir, deleteFileVideo, locateFileDir, locateVideoFile } from './fileManager'
+import { scanFilesTreeAsync, deleteFileDir, deleteFileVideo, locateFileDir, locateVideoFile } from './fileManager'
 import { listAdapters, getAdapter } from './adapters'
 import type { Scheduler } from './scheduler'
 import type { Downloader } from './downloader'
@@ -327,7 +327,7 @@ export function registerIpc(deps: IpcDeps): void {
   // 文件管理——扫描下载目录成通用目录树（任意归档层级组合、根目录平铺视频都可见）
   // + 按相对段落删除任意层级的文件夹 / 单个视频（逐段校验 + 路径防护 + DB 联动）。
   // downloadDir 每次取最新（设置可能已热更），扫描纯函数在主进程 fileManager.ts 中可单测
-  handle('files:tree', () => scanFilesTree(getSettings().downloadDir))
+  handle('files:tree', () => scanFilesTreeAsync(getSettings().downloadDir)) // 异步扫，不卡主进程（性能检查 C2）
   handle('files:deleteDir', (_e, segments: string[]) =>
     deleteFileDir({ db, downloadDir: getSettings().downloadDir, trash }, segments)
   )

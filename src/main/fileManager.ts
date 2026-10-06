@@ -1,7 +1,7 @@
 import type { DatabaseSync } from 'node:sqlite'
 import type { Dirent } from 'fs'
 import { readdirSync, statSync } from 'fs'
-import { rm, unlink } from 'fs/promises'
+import { readdir, rm, stat, unlink } from 'fs/promises'
 import { join } from 'path'
 import { deleteVideosByPathPrefix, recomputeAuthorCounts } from './db'
 import { isPathInside } from './pathSafety'
@@ -69,6 +69,63 @@ function scanDir(dir: string, name: string): FilesDirNode {
   node.dirs.sort(byName)
   node.files.sort(byName)
   return node
+}
+
+/** 同时最多读多少个文件的大小（异步扫描用；太多会占满 libuv 线程池，拖慢下载写盘） */
+const STAT_CONCURRENCY = 16
+
+/** 和 scanDir 规则完全一样的异步版：全程走 fs.promises，扫描期间主进程照常处理下载、IPC 和计时器 */
+async function scanDirAsync(dir: string, name: string, statLimit: <T>(fn: () => Promise<T>) => Promise<T>): Promise<FilesDirNode> {
+  const node: FilesDirNode = { name, videoCount: 0, size: 0, dirs: [], files: [] }
+  let entries: Dirent[]
+  try { entries = await readdir(dir, { withFileTypes: true }) } catch { return node }
+  const subdirs: Array<Promise<FilesDirNode>> = []
+  const files: Array<Promise<FilesVideoFile>> = []
+  for (const e of entries) {
+    if (isIgnoredName(e.name)) continue
+    const p = join(dir, e.name)
+    if (e.isDirectory()) subdirs.push(scanDirAsync(p, e.name, statLimit))
+    else if (e.isFile() && isCountedVideo(e.name)) {
+      // 文件在统计瞬间被删（竞态）→ 按 0 字节计，不中断整次扫描
+      files.push(statLimit(() => stat(p).then(s => s.size, () => 0)).then(size => ({ name: e.name, size })))
+    }
+  }
+  for (const sub of await Promise.all(subdirs)) {
+    node.dirs.push(sub)
+    node.videoCount += sub.videoCount
+    node.size += sub.size
+  }
+  for (const file of await Promise.all(files)) {
+    node.files.push(file)
+    node.videoCount++
+    node.size += file.size
+  }
+  node.dirs.sort(byName)
+  node.files.sort(byName)
+  return node
+}
+
+/** 简单的并发上限：同一时间最多跑 limit 个 */
+function concurrencyLimit(limit: number): <T>(fn: () => Promise<T>) => Promise<T> {
+  let active = 0
+  const waiting: Array<() => void> = []
+  return async <T>(fn: () => Promise<T>): Promise<T> => {
+    if (active >= limit) await new Promise<void>(resolve => waiting.push(resolve))
+    active++
+    try { return await fn() } finally {
+      active--
+      waiting.shift()?.()
+    }
+  }
+}
+
+/**
+ * 文件管理页 / 概览「扫描」用的异步版（ipc files:tree）。2026-10-06 性能检查 C2：
+ * 同步版在 2 万个文件时一次卡住主进程 2 秒（下载、界面、任务调度全停）。结果与 scanFilesTree 完全相同。
+ */
+export async function scanFilesTreeAsync(downloadDir: string): Promise<FilesTree> {
+  const root = await scanDirAsync(downloadDir, '', concurrencyLimit(STAT_CONCURRENCY))
+  return { root, totalSize: root.size, downloadDir }
 }
 
 /**
