@@ -262,14 +262,14 @@ export default function TaskList({ notify, refreshVersion = 0 }: { notify: Notif
     setSelected(new Set())
   }
 
-  // Task3：程序内删除视频（③）——confirm 二次确认后删本地文件+DB 记录。
+  // Task3：程序内删除视频（③）——confirm 二次确认后文件进回收站、记录标成已删除（B5：留作不再下载的记号）。
   // 部分失败（ok:false 但 deleted>0，如个别文件删不掉）：已删的照常刷新并提示条数，避免行残留假象；
   // 全部失败（deleted=0）才只报错误。
   function handleDeleteVideos(ids: number[]): void {
     if (ids.length === 0) return
     const msg = ids.length > 1
-      ? `确定删除选中的 ${ids.length} 个视频？将同时删除本地文件`
-      : '确定删除该视频？将同时删除本地文件'
+      ? `确定删除选中的 ${ids.length} 个视频？本地文件会放进回收站，以后追更、重搜也不会再下载它们`
+      : '确定删除该视频？本地文件会放进回收站，以后追更、重搜也不会再下载它'
     if (!window.confirm(msg)) return
     void api.deleteVideos(ids)
       .then(r => {

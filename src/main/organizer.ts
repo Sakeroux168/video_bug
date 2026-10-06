@@ -116,8 +116,23 @@ export class Organizer {
     return this.hasAnyLevel()
   }
 
+  /** #8：整理同一时间只跑一个（以前两轮能同时整理同一个作者：重复花 AI/ASR 费用，还会误报失败） */
+  private chain: Promise<unknown> = Promise.resolve()
+  /** 已经排着、还没开始的那一轮 organizePending；再来的请求直接合并进去 */
+  private queuedPending: Promise<number> | null = null
+
+  private serial<T>(fn: () => Promise<T>): Promise<T> {
+    const run = this.chain.then(fn, fn)
+    this.chain = run.catch(() => undefined)
+    return run
+  }
+
   /** 归档单个作者的 done 视频：品类解析失败归「未分类」但不算归档失败；仅"移动文件失败"记 failed */
-  async organizeAuthor(authorId: number): Promise<OrganizeResult> {
+  organizeAuthor(authorId: number): Promise<OrganizeResult> {
+    return this.serial(() => this.organizeAuthorNow(authorId))
+  }
+
+  private async organizeAuthorNow(authorId: number): Promise<OrganizeResult> {
     const db = this.deps.db
     const author = db.prepare('SELECT * FROM authors WHERE id = ?').get(authorId) as AuthorRow | undefined
     if (!author) return { moved: 0, category: '未分类', state: 'failed' }
@@ -233,26 +248,40 @@ export class Organizer {
     }
 
     const state = failedMoves > 0 ? 'failed' : 'done'
-    setAuthorOrganizeState(db, authorId, state)
+    // #8：整理期间这个作者又下完了新视频（下载完成时已标 pending），不能被这里写成 done 盖掉——
+    // 否则新视频永远留在根目录（organizePending 只认 pending，「整理全部」又跳过 done）
+    const snapshot = new Set(videos.map(v => v.id))
+    const arrived = listAuthorVideos(db, authorId, 'done').some(v => !snapshot.has(v.id) && this.needsOrganize(v))
+    setAuthorOrganizeState(db, authorId, arrived ? 'pending' : state)
     this.deps.onProgress?.({ authorId, authorName: author.nickname, moved, category, state })
     return { moved, category, state }
   }
 
   /** 处理所有 organize_state='pending' 的作者，返回处理的作者数 */
-  async organizePending(): Promise<number> {
-    const rows = this.deps.db.prepare("SELECT id FROM authors WHERE organize_state = 'pending'").all() as unknown as Array<{ id: number }>
-    for (const r of rows) await this.organizeAuthor(r.id)
-    return rows.length
+  organizePending(): Promise<number> {
+    if (this.queuedPending) return this.queuedPending
+    const run = this.serial(async () => {
+      this.queuedPending = null // 开始跑了：之后再来的请求要另排一轮，才能看到这轮期间新标的 pending
+      const rows = this.deps.db.prepare("SELECT id FROM authors WHERE organize_state = 'pending'").all() as unknown as Array<{ id: number }>
+      for (const r of rows) await this.organizeAuthorNow(r.id)
+      return rows.length
+    })
+    this.queuedPending = run
+    return run
   }
 
   /** 处理所有有 done 视频且未归档（organize_state 非 'done'）的作者，返回处理的作者数 */
-  async organizeAll(): Promise<number> {
+  organizeAll(): Promise<number> {
+    return this.serial(() => this.organizeAllNow())
+  }
+
+  private async organizeAllNow(): Promise<number> {
     const rows = this.deps.db.prepare(
       `SELECT DISTINCT a.id FROM authors a
        JOIN videos v ON v.author_id = a.id AND v.status = 'done'
        WHERE a.organize_state IS NULL OR a.organize_state != 'done'`
     ).all() as unknown as Array<{ id: number }>
-    for (const r of rows) await this.organizeAuthor(r.id)
+    for (const r of rows) await this.organizeAuthorNow(r.id)
     return rows.length
   }
 }

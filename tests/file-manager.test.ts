@@ -16,6 +16,10 @@ import type { CreateTaskInput, Filters } from '../src/shared/types'
 // 要么把「横屏」「一分钟内」当成品类/作者。这里的树不再给任何一层贴语义标签：
 // 目录就是目录，视频就是视频，几层就是几层。
 
+
+// 需求变更（2026-10-06 全面检查 B5）：删除改成软删除——行留着标成 deleted（记号：不再下载），
+// 所以「还剩哪些行」只数没删的
+const LIVE = "status != 'deleted'"
 let db: DatabaseSync
 let tmp: string
 
@@ -260,7 +264,7 @@ describe('deleteFileDir（递归删除任意层级目录 + DB 联动）', () => 
     const r = await deleteFileDir({ db, downloadDir: tmp }, ['美食'])
     expect(r).toEqual({ ok: true, deleted: 3, filesRemoved: true })
     expect(existsSync(join(tmp, '美食'))).toBe(false)
-    expect(db.prepare('SELECT COUNT(*) c FROM videos').get()).toEqual({ c: 0 })
+    expect(db.prepare(`SELECT COUNT(*) c FROM videos WHERE ${LIVE}`).get()).toEqual({ c: 0 })
     expect(listAuthors(db).every(a => a.video_count === 0)).toBe(true)
   })
 
@@ -298,7 +302,7 @@ describe('deleteFileDir（递归删除任意层级目录 + DB 联动）', () => 
     expect(r).toEqual({ ok: true, deleted: 1, filesRemoved: true })
     expect(existsSync(inner)).toBe(false)
     expect(existsSync(join(outer, 'v2.mp4'))).toBe(true)
-    expect((db.prepare('SELECT aweme_id FROM videos').all() as Array<{ aweme_id: string }>).map(r => r.aweme_id)).toEqual(['AW2'])
+    expect((db.prepare(`SELECT aweme_id FROM videos WHERE ${LIVE}`).all() as Array<{ aweme_id: string }>).map(r => r.aweme_id)).toEqual(['AW2'])
   })
 
   it('仅方向层级：删「横屏」目录不会把它当品类，也不碰根目录平铺视频', async () => {
@@ -310,7 +314,7 @@ describe('deleteFileDir（递归删除任意层级目录 + DB 联动）', () => 
     const r = await deleteFileDir({ db, downloadDir: tmp }, ['横屏'])
     expect(r).toEqual({ ok: true, deleted: 1, filesRemoved: true })
     expect(existsSync(join(tmp, 'root.mp4'))).toBe(true)
-    expect((db.prepare('SELECT aweme_id FROM videos').all() as Array<{ aweme_id: string }>).map(r => r.aweme_id)).toEqual(['AW2'])
+    expect((db.prepare(`SELECT aweme_id FROM videos WHERE ${LIVE}`).all() as Array<{ aweme_id: string }>).map(r => r.aweme_id)).toEqual(['AW2'])
   })
 
   it('LIKE 转义：目录名含 % 或 _ 时不误删其它目录的行', async () => {
@@ -325,8 +329,8 @@ describe('deleteFileDir（递归删除任意层级目录 + DB 联动）', () => 
 
     expect(await deleteFileDir({ db, downloadDir: tmp }, ['50%折扣'])).toMatchObject({ ok: true, deleted: 1 })
     expect(await deleteFileDir({ db, downloadDir: tmp }, ['美食_A'])).toMatchObject({ ok: true, deleted: 1 })
-    expect(db.prepare('SELECT COUNT(*) c FROM videos').get()).toEqual({ c: 2 })
-    const left = db.prepare('SELECT aweme_id FROM videos ORDER BY aweme_id').all() as Array<{ aweme_id: string }>
+    expect(db.prepare(`SELECT COUNT(*) c FROM videos WHERE ${LIVE}`).get()).toEqual({ c: 2 })
+    const left = db.prepare(`SELECT aweme_id FROM videos WHERE ${LIVE} ORDER BY aweme_id`).all() as Array<{ aweme_id: string }>
     expect(left.map(r => r.aweme_id).sort()).toEqual(['AW2', 'AW4'])
   })
 
@@ -339,7 +343,7 @@ describe('deleteFileDir（递归删除任意层级目录 + DB 联动）', () => 
     const r = await deleteFileDir({ db, downloadDir: tmp }, ['美食'])
     expect(r).toMatchObject({ ok: true, deleted: 1 })
     expect(existsSync(join(tmp, '美食家'))).toBe(true)
-    const left = db.prepare('SELECT aweme_id FROM videos').all() as Array<{ aweme_id: string }>
+    const left = db.prepare(`SELECT aweme_id FROM videos WHERE ${LIVE}`).all() as Array<{ aweme_id: string }>
     expect(left.map(x => x.aweme_id)).toEqual(['AW2'])
     const byName = Object.fromEntries(listAuthors(db).map(a => [a.nickname, a.video_count]))
     expect(byName['作者AW1']).toBe(0)
@@ -356,14 +360,14 @@ describe('deleteFileDir（递归删除任意层级目录 + DB 联动）', () => 
       expect(r.ok, JSON.stringify(segments)).toBe(false)
     }
     expect(existsSync(join(tmp, '正常', 'v.mp4'))).toBe(true)
-    expect(db.prepare('SELECT COUNT(*) c FROM videos').get()).toEqual({ c: 1 })
+    expect(db.prepare(`SELECT COUNT(*) c FROM videos WHERE ${LIVE}`).get()).toEqual({ c: 1 })
   })
 
   it('目标目录不存在：rm force 忽略，仍联动清库', async () => {
     addVideo('AW1', join(tmp, '已删', 'v.mp4'))
     const r = await deleteFileDir({ db, downloadDir: tmp }, ['已删'])
     expect(r).toEqual({ ok: true, deleted: 1, filesRemoved: true })
-    expect(db.prepare('SELECT COUNT(*) c FROM videos').get()).toEqual({ c: 0 })
+    expect(db.prepare(`SELECT COUNT(*) c FROM videos WHERE ${LIVE}`).get()).toEqual({ c: 0 })
   })
 })
 
@@ -384,7 +388,7 @@ describe('deleteFileVideo（删除单个视频 + DB 联动）', () => {
     expect(existsSync(video)).toBe(false)
     expect(existsSync(cover)).toBe(false)
     expect(existsSync(join(tmp, 'v2.mp4'))).toBe(true)
-    const left = db.prepare('SELECT aweme_id FROM videos').all() as Array<{ aweme_id: string }>
+    const left = db.prepare(`SELECT aweme_id FROM videos WHERE ${LIVE}`).all() as Array<{ aweme_id: string }>
     expect(left.map(x => x.aweme_id)).toEqual(['AW2'])
     const byName = Object.fromEntries(listAuthors(db).map(a => [a.nickname, a.video_count]))
     expect(byName['作者AW1']).toBe(0)
@@ -401,7 +405,7 @@ describe('deleteFileVideo（删除单个视频 + DB 联动）', () => {
     expect(r).toEqual({ ok: true, deleted: 1, filesRemoved: true })
     expect(existsSync(video)).toBe(false)
     expect(existsSync(sibling)).toBe(true)
-    expect(db.prepare('SELECT COUNT(*) c FROM videos').get()).toEqual({ c: 1 })
+    expect(db.prepare(`SELECT COUNT(*) c FROM videos WHERE ${LIVE}`).get()).toEqual({ c: 1 })
   })
 
   it('磁盘上有文件但库里没有记录（手动拷进来的）：只删文件，deleted=0', async () => {
@@ -426,6 +430,6 @@ describe('deleteFileVideo（删除单个视频 + DB 联动）', () => {
     expect(existsSync(join(tmp, 'v.mp4'))).toBe(true)
     expect(existsSync(join(tmp, 'v.original.mp4'))).toBe(true)
     expect(existsSync(join(tmp, 'c.jpg'))).toBe(true)
-    expect(db.prepare('SELECT COUNT(*) c FROM videos').get()).toEqual({ c: 1 })
+    expect(db.prepare(`SELECT COUNT(*) c FROM videos WHERE ${LIVE}`).get()).toEqual({ c: 1 })
   })
 })

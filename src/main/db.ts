@@ -217,7 +217,7 @@ export function globalStats(db: DatabaseSync): GlobalStats {
     for (const r of rows) { out[r.status] = r.c; total += r.c }
     return { ...out, total } as Record<string, number> & { total: number }
   }
-  const videos = db.prepare('SELECT status, COUNT(*) c FROM videos GROUP BY status').all() as unknown as Array<{ status: string; c: number }>
+  const videos = db.prepare("SELECT status, COUNT(*) c FROM videos WHERE status != 'deleted' GROUP BY status").all() as unknown as Array<{ status: string; c: number }>
   const tasks = db.prepare('SELECT status, COUNT(*) c FROM tasks GROUP BY status').all() as unknown as Array<{ status: string; c: number }>
   const fill = (o: Record<string, number> & { total: number }, keys: string[]): never => {
     for (const k of keys) if (o[k] === undefined) o[k] = 0
@@ -251,7 +251,7 @@ export function updateAuthorCategory(db: DatabaseSync, id: number, category: str
   db.prepare('UPDATE authors SET category = ? WHERE id = ?').run(category, id)
 }
 
-/** 删除作者及其关联视频（#3：不要的作者整组清理） */
+/** 删除作者及其关联视频（#3：不要的作者整组清理）。调用方要先取消这些视频的下载（ipc authors:delete）；文件不动 */
 export function deleteAuthors(db: DatabaseSync, ids: number[]): void {
   if (!ids.length) return
   const ph = ids.map(() => '?').join(',')
@@ -294,7 +294,7 @@ export function refreshSeenVideo(db: DatabaseSync, platform: string, item: Video
   if (item.playUrl) {
     db.prepare(
       `UPDATE videos SET play_addr = ?, cover_url = COALESCE(?, cover_url), fetched_at = ?
-       WHERE platform = ? AND aweme_id = ? AND status NOT IN ('done', 'downloading')`
+       WHERE platform = ? AND aweme_id = ? AND status NOT IN ('done', 'downloading', 'deleted')`
     ).run(item.playUrl, item.coverUrl || null, new Date().toISOString(), platform, item.awemeId)
   }
 }
@@ -323,11 +323,17 @@ export function insertVideos(db: DatabaseSync, items: VideoItem[], taskId: numbe
   return inserted
 }
 
-/** 按 id 删除视频行（Task 3 程序内删除），返回删除条数 */
+/** 软删除时清掉的列：文件已经没了，路径留着只会误导 */
+const SOFT_DELETE_SET = "status = 'deleted', local_path = NULL, cover_path = NULL, original_path = NULL, error = NULL"
+
+/**
+ * 按 id 删除视频（B5 软删除）：行留着、标成 deleted，返回条数。
+ * 以前直接删行：追更起点（最新发布时间）往回退、重搜时去重名单里也没了它，删掉的视频会被重新下回来。
+ */
 export function deleteVideos(db: DatabaseSync, ids: number[]): { deleted: number } {
   if (!ids.length) return { deleted: 0 }
   const ph = ids.map(() => '?').join(',')
-  const info = db.prepare(`DELETE FROM videos WHERE id IN (${ph})`).run(...(ids as unknown as SQLInputValue[]))
+  const info = db.prepare(`UPDATE videos SET ${SOFT_DELETE_SET} WHERE id IN (${ph}) AND status != 'deleted'`).run(...(ids as unknown as SQLInputValue[]))
   return { deleted: Number(info.changes) }
 }
 
@@ -345,7 +351,7 @@ export function deleteVideosByPathPrefix(db: DatabaseSync, prefix: string): { de
   const like = `${escapeLike(prefix + sep)}%`
   const rows = db.prepare(`SELECT author_id FROM videos WHERE local_path LIKE ? ESCAPE '\\'`)
     .all(like) as unknown as Array<{ author_id: number | null }>
-  const info = db.prepare(`DELETE FROM videos WHERE local_path LIKE ? ESCAPE '\\'`).run(like)
+  const info = db.prepare(`UPDATE videos SET ${SOFT_DELETE_SET} WHERE local_path LIKE ? ESCAPE '\\'`).run(like) // B5 软删除
   return { deleted: Number(info.changes), authorIds: rows.map(r => r.author_id).filter((x): x is number => x != null) }
 }
 
@@ -355,7 +361,7 @@ export function recomputeAuthorCounts(db: DatabaseSync, authorIds: number[]): vo
   if (!unique.length) return
   const ph = unique.map(() => '?').join(',')
   db.prepare(
-    `UPDATE authors SET video_count = (SELECT COUNT(*) FROM videos WHERE author_id = authors.id) WHERE id IN (${ph})`
+    `UPDATE authors SET video_count = (SELECT COUNT(*) FROM videos WHERE author_id = authors.id AND status != 'deleted') WHERE id IN (${ph})`
   ).run(...(unique as unknown as SQLInputValue[]))
 }
 
@@ -363,7 +369,7 @@ export function listVideos(db: DatabaseSync, taskId: number): VideoRow[] {
   return db.prepare(
     `SELECT v.*, a.nickname AS author_nickname
      FROM videos v LEFT JOIN authors a ON a.id = v.author_id
-     WHERE v.task_id = ? ORDER BY v.id`
+     WHERE v.task_id = ? AND v.status != 'deleted' ORDER BY v.id`
   ).all(taskId) as unknown as VideoRow[]
 }
 
@@ -384,7 +390,7 @@ export interface TaskStats {
 
 /** 一个任务的视频按状态计数（供"下载 X/Y"进度展示） */
 export function taskStats(db: DatabaseSync, taskId: number): TaskStats {
-  const rows = db.prepare('SELECT status, COUNT(*) c FROM videos WHERE task_id=? GROUP BY status').all(taskId) as unknown as Array<{ status: string; c: number }>
+  const rows = db.prepare("SELECT status, COUNT(*) c FROM videos WHERE task_id=? AND status != 'deleted' GROUP BY status").all(taskId) as unknown as Array<{ status: string; c: number }>
   const s: TaskStats = { total: 0, done: 0, failed: 0, downloading: 0, pending: 0, filtered: 0, collected: 0, cancelled: 0, paused: 0 }
   for (const r of rows) {
     s.total += r.c
@@ -407,7 +413,7 @@ export function listPendingVideos(db: DatabaseSync): VideoRow[] {
 /** 按作者查视频，status 可过滤（默认全部） */
 export function listAuthorVideos(db: DatabaseSync, authorId: number, status?: VideoStatus): VideoRow[] {
   if (status) return db.prepare('SELECT * FROM videos WHERE author_id = ? AND status = ? ORDER BY id').all(authorId, status) as unknown as VideoRow[]
-  return db.prepare('SELECT * FROM videos WHERE author_id = ? ORDER BY id').all(authorId) as unknown as VideoRow[]
+  return db.prepare("SELECT * FROM videos WHERE author_id = ? AND status != 'deleted' ORDER BY id").all(authorId) as unknown as VideoRow[]
 }
 
 /** 设置作者归档状态；state 传 null 表示清空 */

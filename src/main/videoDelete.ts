@@ -1,6 +1,6 @@
 import type { DatabaseSync } from 'node:sqlite'
 import { unlink } from 'fs/promises'
-import { recomputeAuthorCounts } from './db'
+import { deleteVideos, recomputeAuthorCounts } from './db'
 import { isPathInside } from './pathSafety'
 
 export interface VideoDeleteDeps {
@@ -9,6 +9,8 @@ export interface VideoDeleteDeps {
   downloader: { cancel(ids: number[]): void }
   /** 下载目录：local_path 必须位于其内才允许删文件（路径穿越防护） */
   downloadDir: string
+  /** 把文件放进回收站（主进程传 shell.trashItem）；不传就直接删（单测用） */
+  trash?: (path: string) => Promise<void>
 }
 
 /**
@@ -16,7 +18,7 @@ export interface VideoDeleteDeps {
  * 1. 先 downloader.cancel(ids) —— 在途/排队项取消（abort 删半成品、出队、清 fetching），
  *    否则删行后 runOne 继续写盘会留无记录孤儿 mp4；
  * 2. 逐条查视频、封面与可选原片路径，全部安全才逐一 unlink（ENOENT 忽略，其它错误收集并保留 DB 行）；
- * 3. 删 DB 行，收集受影响 author_id；
+ * 3. 行标成 deleted（B5 软删除，留作「不再下载」的记号），收集受影响 author_id；
  * 4. recomputeAuthorCounts 同步作者视频数。
  * 返回 { ok, deleted, error? }：任何异常 → { ok:false, error }。
  */
@@ -27,6 +29,7 @@ export async function deleteVideoRows(
   let deleted = 0 // 放 try 外，异常兜底也能报告已删条数（部分进度）
   try {
     const { db, downloader, downloadDir } = deps
+    const remove = deps.trash ?? unlink
     if (!ids.length) return { ok: true, deleted: 0 }
     downloader.cancel(ids)
     const authorIds: number[] = []
@@ -45,7 +48,7 @@ export async function deleteVideoRows(
       let failed = false
       for (const path of paths) {
         try {
-          await unlink(path)
+          await remove(path)
         } catch (err) {
           // ENOENT：文件已被移走/删除，忽略继续删 DB 行；其它错误：报错并保留 DB 行（文件未删，可重试）
           if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
@@ -56,8 +59,7 @@ export async function deleteVideoRows(
         }
       }
       if (failed) continue
-      db.prepare('DELETE FROM videos WHERE id = ?').run(id)
-      deleted++
+      deleted += deleteVideos(db, [id]).deleted
     }
     recomputeAuthorCounts(db, authorIds)
     if (errors.length) return { ok: false, error: errors.join('；'), deleted }

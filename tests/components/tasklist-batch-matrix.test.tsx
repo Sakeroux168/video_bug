@@ -217,7 +217,7 @@ describe('批量操作矩阵（全选/indeterminate + 批量按钮 + 行内按�
     fireEvent.click(screen.getByText('重试选中失败(1)'))
     expect(window.api.retryVideos).toHaveBeenCalledWith([4])
     fireEvent.click(screen.getByText('删除选中(7)'))
-    expect(window.confirm).toHaveBeenCalledWith('确定删除选中的 7 个视频？将同时删除本地文件')
+    expect(window.confirm).toHaveBeenCalledWith('确定删除选中的 7 个视频？本地文件会放进回收站，以后追更、重搜也不会再下载它们') // 文案随 B5 软删除 + 回收站更新
     expect(window.api.deleteVideos).toHaveBeenCalledWith([1, 2, 3, 4, 5, 6, 7])
   })
 
