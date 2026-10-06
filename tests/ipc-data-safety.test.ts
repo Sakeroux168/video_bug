@@ -46,7 +46,8 @@ function setup() {
       const left = (db.prepare(`SELECT COUNT(*) c FROM videos WHERE id IN (${ids.map(() => '?').join(',')})`).get(...ids) as { c: number }).c
       calls.push(`cancel:${ids.join(',')}:行还在${left}`)
     }),
-    enqueue: vi.fn((id: number) => calls.push(`enqueue:${id}`))
+    enqueue: vi.fn((id: number) => calls.push(`enqueue:${id}`)),
+    download: vi.fn((ids: number[]) => calls.push(`download:${ids.join(',')}`))
   }
   registerIpc({
     db, scheduler: { currentTaskId: 0, isRunning: false, pause: vi.fn(), resume: vi.fn(), run: vi.fn() } as never,
@@ -94,6 +95,17 @@ describe('B5 已删除的视频', () => {
     setVideoStatus(db, a.id, 'deleted')
     await call('task:delete', taskId)
     expect(db.prepare('SELECT aweme_id, status FROM videos').all()).toEqual([{ aweme_id: 'A', status: 'deleted' }])
+  })
+
+  it('恢复下载：只恢复已删除的，并交给下载器重新下载', async () => {
+    const { db, calls, call } = setup()
+    const taskId = createTask(db, input)
+    insertVideos(db, [item('A'), item('B')], taskId, 'douyin')
+    const [a, b] = listVideos(db, taskId)
+    setVideoStatus(db, a.id, 'deleted')
+    expect(await call('video:restore', [a.id, b.id])).toEqual({ restored: 1 })
+    expect(calls).toEqual([`download:${a.id}`])
+    expect(await call('task:video:listDeleted', taskId)).toEqual([])
   })
 
   it('文件早被手动删了 → 不去回收站找，照样把记录标成已删除', async () => {

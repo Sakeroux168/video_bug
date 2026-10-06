@@ -1,7 +1,7 @@
 import { app, ipcMain, BrowserWindow, dialog, shell, clipboard } from 'electron'
 import type { DatabaseSync } from 'node:sqlite'
 import { existsSync, statSync } from 'node:fs'
-import { createTask, listTasks, listVideos, listDownloadedVideos, listAuthors, setTaskStatus, setVideoStatus, updateAuthorCategory, deleteAuthors, taskStats, insertAuthorIfAbsent, globalStats, recentDownloads } from './db'
+import { createTask, listTasks, listVideos, listDeletedVideos, restoreVideos, listDownloadedVideos, listAuthors, setTaskStatus, setVideoStatus, updateAuthorCategory, deleteAuthors, taskStats, insertAuthorIfAbsent, globalStats, recentDownloads } from './db'
 import { getSettings, saveSettings } from './settings'
 import { deleteVideoRows } from './videoDelete'
 import { scanFilesTree, deleteFileDir, deleteFileVideo, locateFileDir, locateVideoFile } from './fileManager'
@@ -81,6 +81,7 @@ export function registerIpc(deps: IpcDeps): void {
     ...video,
     source_url: resolveVideoSourceUrl(video.platform, video.aweme_id, video.source_url)
   })))
+  handle('task:video:listDeleted', (_e, taskId: number) => listDeletedVideos(db, taskId))
   handle('task:stats', (_e, taskId: number) => taskStats(db, taskId))
   // A1：先等 scheduler.pause()（run 完全退出）再置状态，避免渲染层立刻看到 paused 而 run 还在收尾。
   // R20：pause() 最多等 10 秒，等不到就强制停，按钮不会再跟着卡死；
@@ -136,6 +137,13 @@ export function registerIpc(deps: IpcDeps): void {
   handle('video:delete', (_e, ids: number[]) =>
     deleteVideoRows({ db, downloader, downloadDir: getSettings().downloadDir, trash }, ids)
   )
+
+  // B5：删掉的视频后悔了 → 标回待下载，交给下载器重新下（地址过期的会提示，重新爬一次就能拿到新地址）
+  handle('video:restore', (_e, ids: number[]) => {
+    const restored = restoreVideos(db, Array.isArray(ids) ? ids : [])
+    if (restored.length > 0) downloader.download(restored)
+    return { restored: restored.length }
+  })
 
   // 全局下载控制：暂停（在途任务跑完，不再拉新）/ 恢复 / 查询暂停状态
   handle('download:pause', () => { downloader.pause(); return true })

@@ -50,6 +50,8 @@ export interface TaskRow {
 export interface TaskStats {
   total: number; done: number; failed: number; downloading: number; pending: number; filtered: number
   collected: number; cancelled: number; paused: number
+  /** 已删除的条数（不算进 total）；界面靠它显示「已删除(N)」入口 */
+  deleted?: number
 }
 
 /** 任务进度瞬时推送（main → 渲染层 evt:task:progress；R11 Task1 起带 reSearchCount，Task2 用于界面显示「已重搜 N 次」） */

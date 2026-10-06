@@ -3,7 +3,7 @@ import { DatabaseSync } from 'node:sqlite'
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
-import { initDb, createTask, insertVideos, listVideos, listAuthors, taskStats, globalStats, refreshSeenVideo, setVideoStatus } from '../src/main/db'
+import { initDb, createTask, insertVideos, listVideos, listAuthors, taskStats, globalStats, refreshSeenVideo, setVideoStatus, listDeletedVideos, restoreVideos } from '../src/main/db'
 import { deleteVideoRows } from '../src/main/videoDelete'
 import { deleteFileDir } from '../src/main/fileManager'
 import { Downloader } from '../src/main/downloader'
@@ -105,6 +105,25 @@ describe('B5 删掉的视频做个记号，不再被追更 / 重搜下回来', (
     expect(r).toMatchObject({ ok: true, deleted: 1 })
     expect(trash).toHaveBeenCalledWith(sub)
     expect(db.prepare('SELECT status, local_path FROM videos WHERE id = ?').get(v.id)).toEqual({ status: 'deleted', local_path: null })
+  })
+})
+
+describe('B5 后悔了：已删除的视频可以恢复下载', () => {
+  it('任务统计里单独数出已删除的条数；能列出这个任务删掉的视频', async () => {
+    const { taskId, rows } = twoDone()
+    await deleteVideoRows({ db, downloader: { cancel: () => {} }, downloadDir: dir }, [rows[0].id])
+    expect(taskStats(db, taskId).deleted).toBe(1)
+    expect(listDeletedVideos(db, taskId).map(v => v.aweme_id)).toEqual(['A'])
+  })
+
+  it('恢复：已删除 → 待下载，作者视频数加回来；没删的不受影响', async () => {
+    const { taskId, rows } = twoDone()
+    await deleteVideoRows({ db, downloader: { cancel: () => {} }, downloadDir: dir }, [rows[0].id])
+    expect(restoreVideos(db, [rows[0].id, rows[1].id])).toEqual([rows[0].id])
+    expect(db.prepare('SELECT status FROM videos WHERE id = ?').get(rows[0].id)).toEqual({ status: 'collected' })
+    expect(db.prepare('SELECT status FROM videos WHERE id = ?').get(rows[1].id)).toEqual({ status: 'done' })
+    expect(listVideos(db, taskId).length).toBe(2)
+    expect(listAuthors(db)[0].video_count).toBe(2)
   })
 })
 

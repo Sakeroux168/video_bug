@@ -373,6 +373,32 @@ export function listVideos(db: DatabaseSync, taskId: number): VideoRow[] {
   ).all(taskId) as unknown as VideoRow[]
 }
 
+/** 这个任务里已删除的视频（「已删除(N)」面板用） */
+export function listDeletedVideos(db: DatabaseSync, taskId: number): VideoRow[] {
+  return db.prepare(
+    `SELECT v.*, a.nickname AS author_nickname
+     FROM videos v LEFT JOIN authors a ON a.id = v.author_id
+     WHERE v.task_id = ? AND v.status = 'deleted' ORDER BY v.id`
+  ).all(taskId) as unknown as VideoRow[]
+}
+
+/** 恢复已删除的视频：标回「待下载」，返回真正恢复了的 id（不是已删除的不动）。调用方再交给下载器 */
+export function restoreVideos(db: DatabaseSync, ids: number[]): number[] {
+  const restored: number[] = []
+  const authorIds: number[] = []
+  const get = db.prepare("SELECT author_id FROM videos WHERE id = ? AND status = 'deleted'")
+  const set = db.prepare("UPDATE videos SET status = 'collected', error = NULL, retry_count = 0 WHERE id = ?")
+  for (const id of ids) {
+    const row = get.get(id) as { author_id: number | null } | undefined
+    if (!row) continue
+    set.run(id)
+    restored.push(id)
+    if (row.author_id != null) authorIds.push(row.author_id)
+  }
+  recomputeAuthorCounts(db, authorIds)
+  return restored
+}
+
 /** 跨任务列出所有已下载完成的视频，供「导出全部已下载」用。
  *  只取 done：collected/pending/failed 的行在磁盘上没有文件，混进导出表会误导人。 */
 export function listDownloadedVideos(db: DatabaseSync): VideoRow[] {
@@ -385,14 +411,15 @@ export function listDownloadedVideos(db: DatabaseSync): VideoRow[] {
 
 export interface TaskStats {
   total: number; done: number; failed: number; downloading: number; pending: number; filtered: number
-  collected: number; cancelled: number; paused: number
+  collected: number; cancelled: number; paused: number; deleted?: number
 }
 
 /** 一个任务的视频按状态计数（供"下载 X/Y"进度展示） */
 export function taskStats(db: DatabaseSync, taskId: number): TaskStats {
-  const rows = db.prepare("SELECT status, COUNT(*) c FROM videos WHERE task_id=? AND status != 'deleted' GROUP BY status").all(taskId) as unknown as Array<{ status: string; c: number }>
-  const s: TaskStats = { total: 0, done: 0, failed: 0, downloading: 0, pending: 0, filtered: 0, collected: 0, cancelled: 0, paused: 0 }
+  const rows = db.prepare('SELECT status, COUNT(*) c FROM videos WHERE task_id=? GROUP BY status').all(taskId) as unknown as Array<{ status: string; c: number }>
+  const s: TaskStats = { total: 0, done: 0, failed: 0, downloading: 0, pending: 0, filtered: 0, collected: 0, cancelled: 0, paused: 0, deleted: 0 }
   for (const r of rows) {
+    if (r.status === 'deleted') { s.deleted = r.c; continue } // 已删除的单独数，不算进 total
     s.total += r.c
     if (r.status === 'done') s.done = r.c
     else if (r.status === 'failed') s.failed = r.c
