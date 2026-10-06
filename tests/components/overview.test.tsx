@@ -69,3 +69,14 @@ describe('概览页', () => {
     await waitFor(() => expect(container.textContent).toContain('AI'))
   })
 })
+
+// 2026-10-06 全面检查「性能」F1：作者几千个时 listAuthors 很重，概览只要三个数字
+describe('概览页的作者数字', () => {
+  it('用 globalStats 里算好的作者数，不再拉整张作者表', async () => {
+    vi.mocked(window.api.getGlobalStats).mockResolvedValue(gstats({ authors: { total: 4321, pendingVerify: 7, uncategorized: 99 } }) as never)
+    const { container } = render(<Overview onGoto={() => {}} />)
+    await waitFor(() => expect(container.textContent).toContain('4321'))
+    expect(container.textContent).toContain('99')
+    expect(window.api.listAuthors).not.toHaveBeenCalled()
+  })
+})

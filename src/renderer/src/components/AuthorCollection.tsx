@@ -105,7 +105,8 @@ export default function AuthorCollection({ notify }: { notify: Notify }) {
   useEffect(() => {
     return api.onTaskProgress(e => {
       const t = e as unknown as { type?: string; status?: string }
-      if (t?.type === 'task:paused' || t?.status === 'done' || t?.status === 'paused') {
+      // 只认任务级事件：下载器每下完一条视频也发 status=done（type 是 video:status），以前每条都整表重拉（性能检查 F1④）
+      if (t?.type === 'task:paused' || t?.type === 'task:done' || (t?.type === 'task:progress' && (t.status === 'done' || t.status === 'paused'))) {
         void api.listAuthors().then(setAuthors)
       }
     })

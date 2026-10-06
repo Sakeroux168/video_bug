@@ -69,6 +69,10 @@ CREATE TABLE IF NOT EXISTS videos (
 );
 CREATE INDEX IF NOT EXISTS idx_videos_status ON videos(status);
 CREATE INDEX IF NOT EXISTS idx_videos_task ON videos(task_id);
+-- 2026-10-06 性能检查 F4/F5：任务列表按任务数各状态、概览「最近完成」、按文件路径找视频（文件管理删除 / 视频处理回写）
+CREATE INDEX IF NOT EXISTS idx_videos_task_status ON videos(task_id, status);
+CREATE INDEX IF NOT EXISTS idx_videos_status_downloaded ON videos(status, downloaded_at);
+CREATE INDEX IF NOT EXISTS idx_videos_local_path ON videos(local_path);
 -- 作者列表按作者取最新视频时间（追更起点），没有它每个作者都要扫一遍 videos 全表：1 万条视频卡主进程十几秒
 CREATE INDEX IF NOT EXISTS idx_videos_author ON videos(author_id, publish_time);
 CREATE TABLE IF NOT EXISTS transcripts (
@@ -80,6 +84,37 @@ CREATE TABLE IF NOT EXISTS transcripts (
   created_at TEXT
 );
 `
+
+/**
+ * 打开真实库文件后调一次（2026-10-06 性能检查 F2）：
+ * 默认的 DELETE 日志 + FULL 同步每次写都要等一次落盘（实测 2～4 毫秒一条），而且全在主进程上；
+ * WAL + NORMAL 单条只要零点几毫秒，断电最多丢最后一次提交，不会损坏库。busy_timeout 防偶发的「库被锁」。
+ */
+export function tuneDb(db: DatabaseSync): void {
+  db.exec('PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL; PRAGMA busy_timeout = 3000;')
+}
+
+const txDepth = new WeakMap<DatabaseSync, number>()
+/** 把一串写操作合成一次提交（快几十倍）；出错整批回滚。嵌套调用时只有最外层真正开 / 提交事务。不能跨 await 用 */
+export function inTransaction<T>(db: DatabaseSync, fn: () => T): T {
+  const depth = txDepth.get(db) ?? 0
+  if (depth > 0) {
+    txDepth.set(db, depth + 1)
+    try { return fn() } finally { txDepth.set(db, depth) }
+  }
+  db.exec('BEGIN')
+  txDepth.set(db, 1)
+  try {
+    const out = fn()
+    db.exec('COMMIT')
+    return out
+  } catch (err) {
+    try { db.exec('ROLLBACK') } catch { /* 已经回滚了 */ }
+    throw err
+  } finally {
+    txDepth.set(db, 0)
+  }
+}
 
 export function initDb(db: DatabaseSync): void {
   db.exec(SCHEMA)
@@ -225,7 +260,12 @@ export function globalStats(db: DatabaseSync): GlobalStats {
   }
   const v = roll(videos); fill(v, ['pending', 'downloading', 'done', 'failed', 'filtered', 'collected', 'cancelled', 'paused'])
   const t = roll(tasks); fill(t, ['pending', 'running', 'done', 'paused', 'failed'])
-  return { videos: v as GlobalStats['videos'], tasks: t as GlobalStats['tasks'] }
+  // 概览页只要这三个数；以前把整张作者表（每个作者还带两个子查询）拉过去再数
+  const a = db.prepare(`SELECT COUNT(*) total,
+      COALESCE(SUM(verify_state = 'pending'), 0) pendingVerify,
+      COALESCE(SUM(category IS NULL OR category = ''), 0) uncategorized
+    FROM authors`).get() as { total: number; pendingVerify: number; uncategorized: number }
+  return { videos: v as GlobalStats['videos'], tasks: t as GlobalStats['tasks'], authors: { total: a.total, pendingVerify: a.pendingVerify, uncategorized: a.uncategorized } }
 }
 
 /**
@@ -255,8 +295,10 @@ export function updateAuthorCategory(db: DatabaseSync, id: number, category: str
 export function deleteAuthors(db: DatabaseSync, ids: number[]): void {
   if (!ids.length) return
   const ph = ids.map(() => '?').join(',')
-  db.prepare(`DELETE FROM videos WHERE author_id IN (${ph})`).run(...(ids as unknown as SQLInputValue[]))
-  db.prepare(`DELETE FROM authors WHERE id IN (${ph})`).run(...(ids as unknown as SQLInputValue[]))
+  inTransaction(db, () => {
+    db.prepare(`DELETE FROM videos WHERE author_id IN (${ph})`).run(...(ids as unknown as SQLInputValue[]))
+    db.prepare(`DELETE FROM authors WHERE id IN (${ph})`).run(...(ids as unknown as SQLInputValue[]))
+  })
 }
 
 /**
@@ -308,19 +350,21 @@ export function insertVideos(db: DatabaseSync, items: VideoItem[], taskId: numbe
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   )
   const bumpAuthorStmt = db.prepare('UPDATE authors SET video_count = video_count + 1 WHERE id = ?')
-  for (const it of items) {
-    const { id: authorId, created } = upsertAuthor(db, it, platform)
-    const info = stmt.run(
-      platform, taskId, it.awemeId, it.title, authorId, it.playUrl,
-      it.sourceUrl || null, it.coverUrl || null, it.width || 0, it.height || 0, it.durationSec,
-      new Date(it.publishTime * 1000).toISOString(), JSON.stringify({ likes: it.likes, comments: it.comments }), now
-    )
-    if (info.changes > 0) {
-      inserted++
-      if (!created) bumpAuthorStmt.run(authorId)
-    } else refreshSeenVideo(db, platform, it)
-  }
-  return inserted
+  return inTransaction(db, () => {
+    for (const it of items) {
+      const { id: authorId, created } = upsertAuthor(db, it, platform)
+      const info = stmt.run(
+        platform, taskId, it.awemeId, it.title, authorId, it.playUrl,
+        it.sourceUrl || null, it.coverUrl || null, it.width || 0, it.height || 0, it.durationSec,
+        new Date(it.publishTime * 1000).toISOString(), JSON.stringify({ likes: it.likes, comments: it.comments }), now
+      )
+      if (info.changes > 0) {
+        inserted++
+        if (!created) bumpAuthorStmt.run(authorId)
+      } else refreshSeenVideo(db, platform, it)
+    }
+    return inserted
+  })
 }
 
 /** 软删除时清掉的列：文件已经没了，路径留着只会误导 */
@@ -431,6 +475,24 @@ export function taskStats(db: DatabaseSync, taskId: number): TaskStats {
     else if (r.status === 'paused') s.paused = r.c
   }
   return s
+}
+
+/** 一次查出多个任务的统计（任务列表用；以前每个任务一次 IPC + 一次查询），结果与逐个 taskStats 相同 */
+export function allTaskStats(db: DatabaseSync, taskIds: number[]): Record<number, TaskStats> {
+  const out: Record<number, TaskStats> = {}
+  const ids = taskIds.filter(id => Number.isInteger(id))
+  for (const id of ids) out[id] = { total: 0, done: 0, failed: 0, downloading: 0, pending: 0, filtered: 0, collected: 0, cancelled: 0, paused: 0, deleted: 0 }
+  if (ids.length === 0) return out
+  const rows = db.prepare(`SELECT task_id, status, COUNT(*) c FROM videos WHERE task_id IN (${ids.map(() => '?').join(',')}) GROUP BY task_id, status`)
+    .all(...(ids as unknown as SQLInputValue[])) as unknown as Array<{ task_id: number; status: string; c: number }>
+  for (const r of rows) {
+    const s = out[r.task_id]
+    if (!s) continue
+    if (r.status === 'deleted') { s.deleted = r.c; continue }
+    s.total += r.c
+    if (r.status in s) (s as unknown as Record<string, number>)[r.status] = r.c
+  }
+  return out
 }
 
 export function listPendingVideos(db: DatabaseSync): VideoRow[] {

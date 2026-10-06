@@ -166,6 +166,24 @@ describe('AuthorCollection 批量导入作者', () => {
     await screen.findByText(/对不上/)
   })
 
+  // 2026-10-06 全面检查「性能」F1④：每下载完一条视频都会发 status=done 的事件，以前作者页开着就整表重拉一次
+  it('视频下载完成的事件不重拉作者表；任务完成才重拉', async () => {
+    let fire: ((e: unknown) => void) | null = null
+    vi.mocked(window.api.onTaskProgress).mockImplementation((cb: (e: never) => void) => {
+      fire = cb as (e: unknown) => void
+      return () => {}
+    })
+    vi.mocked(window.api.listAuthors).mockResolvedValue([makeAuthor()] as never)
+    render(<AuthorCollection notify={() => {}} />)
+    await screen.findByText('张三')
+    const before = vi.mocked(window.api.listAuthors).mock.calls.length
+    for (let i = 0; i < 20; i++) fire!({ type: 'video:status', id: i, status: 'done' })
+    await new Promise(r => setTimeout(r, 50))
+    expect(vi.mocked(window.api.listAuthors).mock.calls.length).toBe(before)
+    fire!({ type: 'task:done', taskId: 1, fetched: 3 })
+    await waitFor(() => expect(vi.mocked(window.api.listAuthors).mock.calls.length).toBe(before + 1))
+  })
+
   it('失败原因显示在主页链接下方（常驻，不是一闪而过的 toast）', async () => {
     vi.mocked(window.api.listAuthors).mockResolvedValue([
       makeAuthor({ verify_state: 'failed', verify_error: '主页没取到作者昵称' })

@@ -99,14 +99,15 @@ export class Organizer {
    *  用视频状态佐证，不因 organize_state='done' 永久挡死 —— 分批下载时上一批归档后作者为 done，
    *  新下载完成的视频仍会把它再次置 pending 供归档。 */
   markAuthorPending(authorId: number): void {
-    const hasFlatDone = listAuthorVideos(this.deps.db, authorId, 'done').some(v => this.needsOrganize(v))
     if (!this.hasAnyLevel()) {
       // 全关：平铺文件永远满足 isFlat，标 pending 会让归档器反复空转。
       // 但也不能留成 done —— 用户之后重新开启层级点「整理全部」时会被跳过，文件永远平铺在根目录。
       // 置回 null 两头都对：organizePending 只认 pending（不空转），organizeAll 认 null（能补归档）。
-      if (hasFlatDone) setAuthorOrganizeState(this.deps.db, authorId, null)
+      // 性能检查 F10：全关是新装默认，以前每下完一条都先把这个作者的全部视频查一遍；这里不查，直接清状态（已是 null 就不写）
+      this.deps.db.prepare('UPDATE authors SET organize_state = NULL WHERE id = ? AND organize_state IS NOT NULL').run(authorId)
       return
     }
+    const hasFlatDone = listAuthorVideos(this.deps.db, authorId, 'done').some(v => this.needsOrganize(v))
     if (hasFlatDone) setAuthorOrganizeState(this.deps.db, authorId, 'pending')
   }
 

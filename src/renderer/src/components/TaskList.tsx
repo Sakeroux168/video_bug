@@ -156,11 +156,7 @@ export default function TaskList({ notify, refreshVersion = 0 }: { notify: Notif
     void api.getDownloadState().then(s => setDownloadPaused(s.paused))
     void api.listTasks().then(ts => {
       setTasks(ts)
-      void Promise.all(ts.map(t => api.getTaskStats(t.id))).then(all => {
-        const m: Record<number, TaskStats> = {}
-        ts.forEach((t, i) => { m[t.id] = all[i] })
-        setStats(m)
-      })
+      void api.getTaskStatsMany(ts.map(t => t.id)).then(setStats)
       // 刷新时同步拉取已展开任务的视频（进度事件会让状态变化，需重新拉最新）
       const expandedTasks = ts.filter(t => expanded.has(t.id))
       if (expandedTasks.length > 0) {

@@ -4,7 +4,7 @@ import LoginStatusLights from './LoginStatus'
 import { Card, btn } from './ui'
 import { Icon, type IconName } from './icons'
 import { useCoalescedRefresh } from './useCoalescedRefresh'
-import type { GlobalStats, RecentDownload, TaskRow, AuthorRow, FilesTree, AsrStatus, AppSettings } from '../../../shared/types'
+import type { GlobalStats, RecentDownload, TaskRow, FilesTree, AsrStatus, AppSettings } from '../../../shared/types'
 
 /**
  * 概览页 —— 默认落地页。
@@ -86,7 +86,6 @@ export default function Overview({ onGoto }: { onGoto: (tab: string) => void }):
   const [g, setG] = useState<GlobalStats | null>(null)
   const [tasks, setTasks] = useState<TaskRow[]>([])
   const [recent, setRecent] = useState<RecentDownload[]>([])
-  const [authors, setAuthors] = useState<AuthorRow[]>([])
   const [asr, setAsr] = useState<AsrStatus | null>(null)
   const [settings, setSettings] = useState<AppSettings | null>(null)
   const [dl, setDl] = useState<{ paused: boolean } | null>(null)
@@ -106,7 +105,6 @@ export default function Overview({ onGoto }: { onGoto: (tab: string) => void }):
   useEffect(() => {
     pull()
     // 第 2 档：挂载一次
-    void api.listAuthors().then(setAuthors)
     void api.getAsrStatus().then(setAsr)
     void api.getSettings().then(setSettings)
     return api.onTaskProgress(() => refresh())
@@ -124,8 +122,9 @@ export default function Overview({ onGoto }: { onGoto: (tab: string) => void }):
   }
 
   const running = tasks.filter(t => t.status === 'running' || t.status === 'pending')
-  const pendingVerify = authors.filter(a => a.verify_state === 'pending').length
-  const uncategorized = authors.filter(a => !a.category).length
+  // 作者数字由主进程算好（性能检查 F1：以前把整张作者表拉过来数，作者几千个时很慢）
+  const pendingVerify = g?.authors?.pendingVerify ?? 0
+  const uncategorized = g?.authors?.uncategorized ?? 0
 
   return (
     <div className="space-y-4">
@@ -152,7 +151,7 @@ export default function Overview({ onGoto }: { onGoto: (tab: string) => void }):
         </StatCard>
 
         <StatCard icon="authors" title="作者" onGoto={() => onGoto('authors')}>
-          <Stat label="总数" value={authors.length} />
+          <Stat label="总数" value={g?.authors?.total ?? 0} />
           <Stat label="待校验" value={pendingVerify} tone="amber" />
           <Stat label="未分类" value={uncategorized} />
         </StatCard>
