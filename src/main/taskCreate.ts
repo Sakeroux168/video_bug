@@ -48,6 +48,14 @@ export function createTaskChecked(db: DatabaseSync, rawInput: CreateTaskInput, e
       return { id: null, skipped: true, reason }
     }
     input = { ...input, query: secUid }
+    // 同一个作者已经在排队 / 正在爬，再建一个只会重复抓（批量爬时尤其容易连点两次）。
+    // 历史行的 query 可能是完整链接，比对前也归一化。
+    const active = db.prepare("SELECT query, status FROM tasks WHERE type='author' AND platform=? AND status IN ('pending','running')")
+      .all(input.platform) as Array<{ query: string; status: string }>
+    const same = active.find(r => (adapter?.parseAuthorInput(r.query) ?? r.query) === secUid)
+    if (same) {
+      return { id: null, skipped: true, reason: same.status === 'running' ? '这个作者正在爬，等它结束再来' : '这个作者已经在排队了' }
+    }
   }
   if (input.type === 'author' && !(input.allowDuplicateAuthor ?? getSettings().allowDuplicateAuthor)) {
     const adapter = getAdapter(input.platform)

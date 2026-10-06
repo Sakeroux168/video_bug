@@ -93,14 +93,17 @@ describe('task:create 作者去重', () => {
     expect(listTasks(db)).toHaveLength(1) // 没有新增任务
   })
 
-  it('同 query 但未 done（pending）→ 不算已爬过，正常创建', async () => {
+  // 需求变更（2026-10-06，体验测试 老陈复测 🟠「批量不查重」）：同一个作者已经在排队，
+  // 再建一个只会重复抓，改为跳过并说明原因。「已爬过」仍只看 done（见上下两条），这里只多拦排队中 / 正在跑的。
+  // 重启时排队中的任务会被重新入队，不存在「一直排着、又建不了新的」的死角。
+  it('同 query 但还在排队（pending）→ 不算已爬过，但也不重复建，提示已经在排队', async () => {
     const { db, enqueued, create } = setup()
     createTask(db, input({ type: 'author', query: AUTHOR_URL })) // 默认 pending
 
     const r = await create(input({ type: 'author', query: AUTHOR_URL }))
-    expect(r.skipped).toBe(false)
-    expect(r.id).toBeTypeOf('number')
-    expect(enqueued).toEqual([r.id])
+    expect(r.skipped).toBe(true)
+    expect(r.reason).toMatch(/已经在排队/)
+    expect(enqueued).toEqual([])
   })
 
   it('同 query 已 done 但任务级 allowDuplicateAuthor=true → 覆盖去重，正常创建', async () => {

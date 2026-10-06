@@ -69,6 +69,8 @@ CREATE TABLE IF NOT EXISTS videos (
 );
 CREATE INDEX IF NOT EXISTS idx_videos_status ON videos(status);
 CREATE INDEX IF NOT EXISTS idx_videos_task ON videos(task_id);
+-- 作者列表按作者取最新视频时间（追更起点），没有它每个作者都要扫一遍 videos 全表：1 万条视频卡主进程十几秒
+CREATE INDEX IF NOT EXISTS idx_videos_author ON videos(author_id, publish_time);
 CREATE TABLE IF NOT EXISTS transcripts (
   content_hash TEXT PRIMARY KEY,
   text TEXT NOT NULL DEFAULT '',
@@ -257,9 +259,21 @@ export function deleteAuthors(db: DatabaseSync, ids: number[]): void {
   db.prepare(`DELETE FROM authors WHERE id IN (${ph})`).run(...(ids as unknown as SQLInputValue[]))
 }
 
+/**
+ * 作者列表。顺带算出追更要用的两列（不改表结构）：
+ * - latest_video_at：库里该作者最新一条视频的发布时间，「只抓新视频」从这一天起抓；
+ * - last_crawled_at：该作者「爬主页」任务最近一次完成的时间。历史任务的 query 可能存的是完整主页链接，用包含匹配兜住。
+ * 按加入顺序（id）稳定排列：以前按视频数排，爬完一个人顺序就变，用户按原位置去点会点错行。
+ */
 export function listAuthors(db: DatabaseSync, platform?: string): AuthorRow[] {
-  if (platform) return db.prepare('SELECT * FROM authors WHERE platform = ? ORDER BY video_count DESC').all(platform) as unknown as AuthorRow[]
-  return db.prepare('SELECT * FROM authors ORDER BY video_count DESC').all() as unknown as AuthorRow[]
+  const sql = `SELECT a.*,
+      (SELECT MAX(v.publish_time) FROM videos v WHERE v.author_id = a.id) AS latest_video_at,
+      (SELECT MAX(t.finished_at) FROM tasks t
+        WHERE t.type = 'author' AND t.status = 'done' AND t.platform = a.platform
+          AND (t.query = a.sec_uid OR instr(t.query, a.sec_uid) > 0)) AS last_crawled_at
+    FROM authors a ${platform ? 'WHERE a.platform = ?' : ''} ORDER BY a.id`
+  const stmt = db.prepare(sql)
+  return (platform ? stmt.all(platform) : stmt.all()) as unknown as AuthorRow[]
 }
 
 export function insertVideos(db: DatabaseSync, items: VideoItem[], taskId: number, platform: string): number {

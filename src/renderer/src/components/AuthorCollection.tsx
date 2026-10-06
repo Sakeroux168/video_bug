@@ -1,6 +1,6 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import { api } from '../api'
-import type { AuthorRow, TaskType } from '../../../shared/types'
+import type { AuthorRow, CreateTaskInput, TaskType } from '../../../shared/types'
 import { Card, btnPrimary, btn } from './ui'
 import { useMarqueeSelect } from './useMarqueeSelect'
 import { useTableSelection } from './useTableSelection'
@@ -21,6 +21,40 @@ function importPlaceholder(sample: string): string {
     `李四　　　　　　${sample}`
 }
 
+/** ISO 时间 → 北京时间日期 YYYY-MM-DD（作者主页日期段按北京时间算，与 R20 一致）；空或坏值返回 '' */
+function beijingDate(iso: string | null | undefined): string {
+  if (!iso) return ''
+  const t = new Date(iso)
+  if (!Number.isFinite(t.getTime())) return ''
+  return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit' }).format(t)
+}
+
+/** 真正「爬过主页」的博主才有「只抓新视频」：起点 = 库里最新视频的发布日；没有视频就用上次爬主页那天。
+ *  关键词搜索时顺带收进作者库的博主库里可能只有一条视频，拿它当起点会让他以前的作品永远抓不到，所以不算爬过。 */
+function followFrom(a: AuthorRow): string {
+  return beijingDate(a.latest_video_at) || beijingDate(a.last_crawled_at)
+}
+const crawledBefore = (a: AuthorRow): boolean => Boolean(a.last_crawled_at)
+
+type CrawlScope = 'new' | 'all'
+type SortKey = 'video_count' | 'last_crawled_at' | 'latest_video_at'
+const TAB_KEY = 'authorCollection.tab'
+
+/** 单个 / 批量爬主页共用：按「只抓新视频 / 全部」算出任务参数。
+ *  爬过的博主无论哪种都要允许重复——以前「已爬过」会直接拦掉，用户以为任务建好了（体验测试 老陈 🔴1）。 */
+function crawlRequest(a: AuthorRow, scope: CrawlScope, targetCount: number, autoDownload: boolean, forceDuplicate = false): CreateTaskInput {
+  const base = { platform: a.platform, type: 'author' as const, query: a.sec_uid, aiFilterEnabled: false, aiOrganizeEnabled: false, autoDownload }
+  const from = followFrom(a)
+  if (scope === 'new' && crawledBefore(a) && from) {
+    return { ...base, allowDuplicateAuthor: true, filters: { timeRange: 'custom', startDate: from, duration: 'all', targetCount } }
+  }
+  return {
+    ...base,
+    ...(forceDuplicate || crawledBefore(a) ? { allowDuplicateAuthor: true } : {}),
+    filters: { timeRange: 'all', duration: 'all', targetCount }
+  }
+}
+
 export default function AuthorCollection({ notify }: { notify: Notify }) {
   const [authors, setAuthors] = useState<AuthorRow[]>([])
   const [selected, setSelected] = useState<Set<number>>(new Set())
@@ -30,13 +64,28 @@ export default function AuthorCollection({ notify }: { notify: Notify }) {
   // 导入平台：解析器与落库平台都跟它走。以前写死抖音，粘快手链接会被抖音解析器拒绝，
   // 且提示说的是「未识别到抖音主页链接」，用户完全看不出问题在哪。
   const [importPlatform, setImportPlatform] = useState('douyin')
-  // 员工反馈：抖音和快手混在一张表里分不清谁是哪的 → 按平台分子 tab
-  const [tab, setTab] = useState('')
+  // 员工反馈：抖音和快手混在一张表里分不清谁是哪的 → 按平台分子 tab。
+  // 记住上次选的 tab（体验测试：作者都在小红书，每次进来却停在空的抖音页）
+  const [tab, setTab] = useState(() => { try { return localStorage.getItem(TAB_KEY) ?? '' } catch { return '' } })
   // 爬主页确认面板：以前点一下就按写死的 200 条 + 自动下载开跑，员工反馈"没人问过我要爬多少"。
-  // 200 条自动下载 = 一晚上几十 GB，而他当时只想看看这个作者有什么。
+  // 默认 20 条（说明书一直建议先填 20；200 条一手快就容易被平台风控）
   const [crawlTarget, setCrawlTarget] = useState<AuthorRow | null>(null)
-  const [crawlCount, setCrawlCount] = useState('200')
+  const [crawlCount, setCrawlCount] = useState('20')
   const [crawlAuto, setCrawlAuto] = useState(true)
+  const [crawlScope, setCrawlScope] = useState<CrawlScope>('new')
+  // 批量爬选中的主页
+  const [batchOpen, setBatchOpen] = useState(false)
+  const [batchCount, setBatchCount] = useState('20')
+  const [batchAuto, setBatchAuto] = useState(true)
+  const [batchScope, setBatchScope] = useState<CrawlScope>('new')
+  const [batchBusy, setBatchBusy] = useState(false)
+  // 默认按加入顺序；点表头才排序（以前按视频数排，爬完一个人顺序就变，容易点错行）
+  const [sortKey, setSortKey] = useState<SortKey | null>(null)
+  // 面板开在列表上方：在长列表下面点「爬主页」时面板在屏幕外，用户以为没反应 → 打开即滚到眼前
+  const panelRef = useRef<HTMLDivElement | null>(null)
+  useEffect(() => {
+    if (crawlTarget || batchOpen) panelRef.current?.scrollIntoView?.({ block: 'nearest', behavior: 'smooth' })
+  }, [crawlTarget, batchOpen])
   // R20：可选的日期段——只要这段时间发的作品。默认不勾 = 原来的行为（不限时间）
   const [crawlRangeOn, setCrawlRangeOn] = useState(false)
   const [crawlFrom, setCrawlFrom] = useState('')
@@ -79,14 +128,24 @@ export default function AuthorCollection({ notify }: { notify: Notify }) {
   })()
   // tab 尚未选择或所选平台已消失时回落到第一个，避免出现"选中了一个不存在的 tab"导致整页空白
   const activeTab = platformTabs.some(t => t.name === tab) ? tab : (platformTabs[0]?.name ?? '')
-  const visible = authors.filter(a => a.platform === activeTab)
+  const inTab = authors.filter(a => a.platform === activeTab)
+  const visible = sortKey === null ? inTab : [...inTab].sort((x, y) => {
+    if (sortKey === 'video_count') return y.video_count - x.video_count
+    return (y[sortKey] ?? '').localeCompare(x[sortKey] ?? '') // 新的在前，没有的排最后
+  })
   const activeLabel = platformTabs.find(t => t.name === activeTab)?.label ?? activeTab
+  const authorCrawlSupported = (platform: string): boolean =>
+    platforms.find(p => p.name === platform)?.supportedTaskTypes?.includes('author') !== false
+  const selectedRows = visible.filter(a => selected.has(a.id))
+  const toggleSort = (key: SortKey): void => setSortKey(k => (k === key ? null : key))
 
   /** 切 tab：必须清空选择。否则在抖音选了几行、切到快手再点「删除选中」，
    *  删掉的是当前根本看不见的抖音作者。 */
   function switchTab(name: string): void {
     setTab(name)
+    try { localStorage.setItem(TAB_KEY, name) } catch { /* 本机记不住也不影响使用 */ }
     setSelected(new Set())
+    setBatchOpen(false)
     setEditingId(null)
     setImportPlatform(name) // 导入平台跟随当前 tab，省一次选择也避免选错
   }
@@ -133,11 +192,13 @@ export default function AuthorCollection({ notify }: { notify: Notify }) {
     refresh()
   }
 
-  /** 点「爬主页」只是打开确认面板，不立刻建任务。默认值保持原行为（200 条 + 自动下载）。 */
+  /** 点「爬主页」只是打开确认面板，不立刻建任务。爬过的博主默认「只抓新视频」。 */
   function openCrawlPanel(a: AuthorRow): void {
     setCrawlTarget(a)
-    setCrawlCount('200')
+    setBatchOpen(false)
+    setCrawlCount('20')
     setCrawlAuto(true)
+    setCrawlScope(crawledBefore(a) && followFrom(a) ? 'new' : 'all')
     setCrawlRangeOn(false)
     setCrawlFrom('')
     setCrawlTo('')
@@ -156,18 +217,55 @@ export default function AuthorCollection({ notify }: { notify: Notify }) {
     // Fix5: 点击立即反馈，让用户知道主页爬取已开始（此前静默启动，用户不知道）
     notify(`正在爬取 ${a.nickname} 的主页…`)
     const targetCount = Number(crawlCount)
-    const r = await api.createTask({
-      platform: a.platform, type: 'author', query: a.sec_uid,
-      filters: crawlRangeOn
-        ? { timeRange: 'custom', startDate: crawlFrom || undefined, endDate: crawlTo || undefined, duration: 'all', targetCount }
-        : { timeRange: 'all', duration: 'all', targetCount },
-      aiFilterEnabled: false, aiOrganizeEnabled: false,
-      autoDownload: crawlAuto,
-      // 按日期段抓通常就是「这个作者以前爬过，现在补某段时间的」——不能被「已爬过主页」去重拦掉
-      ...(crawlRangeOn ? { allowDuplicateAuthor: true } : {})
-    })
-    if (r.skipped) notify(r.reason ?? '该作者主页已爬取过')
+    const r = await api.createTask(crawlRangeOn
+      ? {
+          platform: a.platform, type: 'author', query: a.sec_uid,
+          filters: { timeRange: 'custom', startDate: crawlFrom || undefined, endDate: crawlTo || undefined, duration: 'all', targetCount },
+          aiFilterEnabled: false, aiOrganizeEnabled: false,
+          autoDownload: crawlAuto,
+          // 按日期段抓通常就是「这个作者以前爬过，现在补某段时间的」——不能被「已爬过主页」去重拦掉
+          allowDuplicateAuthor: true
+        }
+      : crawlRequest(a, crawlScope, targetCount, crawlAuto))
+    // 被拒绝的原因要让人看得到：停留久一点（体验测试：3 秒提示一闪就没，用户以为任务建好了）
+    if (r.skipped) notify(`没有建任务：${r.reason ?? '该作者主页已爬取过'}`, { duration: 10000 })
     else notify(`已开始爬取 ${a.nickname} 的主页，可在任务列表查看进度`)
+  }
+
+  function openBatchPanel(): void {
+    setCrawlTarget(null)
+    setBatchOpen(true)
+    setBatchCount('20')
+    setBatchAuto(true)
+    setBatchScope('new')
+  }
+  const batchCountValid = /^\d+$/.test(batchCount.trim()) && Number(batchCount) >= 1 && Number(batchCount) <= 1000
+
+  /** 勾选的博主各建一个任务，交给现有串行队列依次跑；逐个建，结果一次说清楚 */
+  async function startBatch(): Promise<void> {
+    const rows = selectedRows.filter(a => authorCrawlSupported(a.platform))
+    if (rows.length === 0 || !batchCountValid || batchBusy) return
+    setBatchBusy(true)
+    setBatchOpen(false)
+    setSelected(new Set()) // 建完清空勾选，免得手一抖再点一次又建一批
+    const targetCount = Number(batchCount)
+    const skipped: string[] = []
+    let created = 0
+    try {
+      for (const a of rows) {
+        try {
+          const r = await api.createTask(crawlRequest(a, batchScope, targetCount, batchAuto, batchScope === 'all'))
+          if (r.skipped) skipped.push(`${a.nickname}（${r.reason ?? '未建任务'}）`)
+          else created++
+        } catch {
+          skipped.push(`${a.nickname}（建任务出错）`)
+        }
+      }
+    } finally {
+      setBatchBusy(false)
+    }
+    const tail = skipped.length > 0 ? `，跳过 ${skipped.length} 个：${skipped.join('、')}` : ''
+    notify(`已建 ${created} 个任务${tail}${created > 0 ? '，会按顺序一个个爬，可在任务列表查看进度' : ''}`, { duration: 10000 })
   }
 
   async function saveCategory(a: AuthorRow): Promise<void> {
@@ -311,6 +409,15 @@ export default function AuthorCollection({ notify }: { notify: Notify }) {
             只复制链接
           </button>
         )}
+        {selectedRows.length > 0 && (
+          <button
+            className={btn('primary', 'sm')}
+            disabled={batchBusy || !selectedRows.some(a => authorCrawlSupported(a.platform))}
+            onClick={openBatchPanel}
+          >
+            爬选中的主页（{selectedRows.length}）
+          </button>
+        )}
         <button
           className={btn('ghost', 'sm')}
           onClick={toggleImportPanel}
@@ -327,8 +434,24 @@ export default function AuthorCollection({ notify }: { notify: Notify }) {
         <span className="text-slate-300">提示：点行排他选中，Ctrl 点选切换，Shift 点选范围，点空白取消，按住左键拖动框选替换</span>
       </div>
       {crawlTarget && (
-        <div className="mb-3 flex flex-wrap items-center gap-3 rounded-md border border-brand-200 bg-brand-50/40 p-3 text-xs text-slate-600">
+        <div ref={panelRef} className="mb-3 flex flex-wrap items-center gap-3 rounded-md border border-brand-200 bg-brand-50/40 p-3 text-xs text-slate-600">
           <span className="font-medium text-slate-700">爬取「{crawlTarget.nickname}」的主页</span>
+          {crawledBefore(crawlTarget) && (
+            <>
+              <span className="text-slate-500">上次爬取：{beijingDate(crawlTarget.last_crawled_at) || '还没爬过主页'}</span>
+              {followFrom(crawlTarget) && (
+                <label className="flex items-center gap-1">
+                  <input type="radio" name="crawl-scope" disabled={crawlRangeOn} checked={crawlScope === 'new'} onChange={() => setCrawlScope('new')} />
+                  只抓新视频<span className="text-slate-400">（{followFrom(crawlTarget)} 及以后发的）</span>
+                </label>
+              )}
+              <label className="flex items-center gap-1">
+                <input type="radio" name="crawl-scope" aria-label="全部重新爬" disabled={crawlRangeOn} checked={crawlScope === 'all'} onChange={() => setCrawlScope('all')} />
+                全部重新爬<span className="text-slate-400">（不限时间，已下过的会自动跳过）</span>
+              </label>
+              {crawlRangeOn && <span className="text-amber-700">已勾选日期段，按下面的日期段抓</span>}
+            </>
+          )}
           <label htmlFor="crawl-count" className="flex items-center gap-1">
             目标数量
             <input
@@ -383,6 +506,39 @@ export default function AuthorCollection({ notify }: { notify: Notify }) {
           {crawlRangeOn && !crawlRangeError && (
             <span className="text-slate-400">{describeDateRange(crawlFrom, crawlTo)}（按北京时间，含当天）</span>
           )}
+        </div>
+      )}
+      {batchOpen && (
+        <div ref={panelRef} className="mb-3 flex flex-wrap items-center gap-3 rounded-md border border-brand-200 bg-brand-50/40 p-3 text-xs text-slate-600">
+          <span className="font-medium text-slate-700">爬选中的 {selectedRows.length} 个博主的主页（会排队一个个爬）</span>
+          <label className="flex items-center gap-1">
+            目标数量（每人）
+            <input
+              aria-label="批量目标数量"
+              className="w-20 rounded-md border border-slate-300 px-2 py-1 text-xs outline-none focus:border-brand-500 focus:ring-1 focus:ring-brand-500"
+              value={batchCount}
+              onChange={e => setBatchCount(e.target.value)}
+            />
+          </label>
+          <label className="flex items-center gap-1">
+            <input type="radio" name="batch-scope" checked={batchScope === 'new'} onChange={() => setBatchScope('new')} />
+            只抓新视频<span className="text-slate-400">（爬过的从各自最新视频那天起，没爬过的抓全部）</span>
+          </label>
+          <label className="flex items-center gap-1">
+            <input type="radio" name="batch-scope" aria-label="批量全部重新爬" checked={batchScope === 'all'} onChange={() => setBatchScope('all')} />
+            全部重新爬
+          </label>
+          <label className="flex items-center gap-1">
+            <input type="radio" name="batch-mode" checked={batchAuto} onChange={() => setBatchAuto(true)} />
+            <span>自动下载</span>
+          </label>
+          <label className="flex items-center gap-1">
+            <input type="radio" name="batch-mode" checked={!batchAuto} onChange={() => setBatchAuto(false)} />
+            <span>手动挑选</span>
+          </label>
+          <button className={btn('primary', 'sm')} disabled={!batchCountValid || batchBusy} onClick={() => void startBatch()}>开始批量爬取</button>
+          <button className={btn('ghost', 'sm')} onClick={() => setBatchOpen(false)}>取消</button>
+          {!batchCountValid && <span className="text-danger-600">数量需在 1-1000</span>}
         </div>
       )}
       {importOpen && (
@@ -463,7 +619,18 @@ export default function AuthorCollection({ notify }: { notify: Notify }) {
                 <th className="py-2 pr-2 font-medium">作者</th>
                 <th className="py-2 pr-2 font-medium">主页链接</th>
                 <th className="py-2 pr-2 font-medium">品类</th>
-                <th className="py-2 pr-2 font-medium">视频数</th>
+                {([['video_count', '视频数'], ['last_crawled_at', '上次爬取'], ['latest_video_at', '最新视频']] as const).map(([key, label]) => (
+                  <th key={key} className="whitespace-nowrap py-2 pr-2 font-medium">
+                    <button
+                      type="button"
+                      className={`hover:text-slate-600 ${sortKey === key ? 'text-brand-600' : ''}`}
+                      title={sortKey === key ? '再点一次恢复按加入顺序' : `按${label}排序（新的 / 多的在前）`}
+                      onClick={() => toggleSort(key)}
+                    >
+                      {label}{sortKey === key ? ' ↓' : ''}
+                    </button>
+                  </th>
+                ))}
                 <th className="py-2 font-medium">操作</th>
               </tr>
             </thead>
@@ -476,7 +643,12 @@ export default function AuthorCollection({ notify }: { notify: Notify }) {
                   className={`cursor-pointer border-b border-slate-100 transition-colors hover:bg-slate-50 ${selected.has(a.id) ? 'bg-brand-50' : ''}`}
                   onClick={e => handleRowClick(a, e)}
                 >
-                  <td className="py-2 pr-1"><input type="checkbox" checked={selected.has(a.id)} onChange={() => setSelected(rowClick(a.id, visible.map(x => x.id), selected, {}))} /></td>
+                  {/* 勾选框按习惯「点一个勾一个」累加（批量爬要选多个人）；点行本身仍是排他选中 */}
+                  <td className="py-2 pr-1"><input type="checkbox" checked={selected.has(a.id)} onChange={() => setSelected(prev => {
+                    const next = new Set(prev)
+                    if (next.has(a.id)) next.delete(a.id); else next.add(a.id)
+                    return next
+                  })} /></td>
                   <td className="py-2 pr-2 font-medium">
                     {a.nickname}
                     {/* R16：导入的作者需要校验名称与链接是否对得上。
@@ -518,11 +690,13 @@ export default function AuthorCollection({ notify }: { notify: Notify }) {
                     )}
                   </td>
                   <td className="py-2 pr-2 tabular-nums text-slate-500">{a.video_count}</td>
+                  <td className="whitespace-nowrap py-2 pr-2 tabular-nums text-slate-500">{beijingDate(a.last_crawled_at) || '—'}</td>
+                  <td className="whitespace-nowrap py-2 pr-2 tabular-nums text-slate-500">{beijingDate(a.latest_video_at) || '—'}</td>
                   <td className="py-2">
                     <div className="flex items-center gap-1">
                       <button className={btn('primary', 'sm')}
-                        disabled={platforms.find(p => p.name === a.platform)?.supportedTaskTypes?.includes('author') === false}
-                        title={platforms.find(p => p.name === a.platform)?.supportedTaskTypes?.includes('author') === false ? '此平台暂未支持作者主页抓取' : undefined}
+                        disabled={!authorCrawlSupported(a.platform)}
+                        title={!authorCrawlSupported(a.platform) ? '此平台暂未支持作者主页抓取' : undefined}
                         onClick={() => openCrawlPanel(a)}>爬主页</button>
                       <button className="rounded px-2 py-1 text-xs text-emerald-600 hover:bg-emerald-50" onClick={() => void organizeOne(a)}>整理</button>
                       <button className="rounded px-2 py-1 text-xs text-red-400 hover:bg-red-50" onClick={() => void deleteOne(a.id)}>删除</button>

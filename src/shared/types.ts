@@ -82,6 +82,10 @@ export interface AuthorRow {
   organize_state: string | null; ai_classified_at: string | null // Task2 归档状态与 AI 分类时间
   /** 导入作者的校验状态：null=无需校验（抓取收录）/ pending / ok / failed */
   verify_state: string | null; verify_error: string | null
+  /** 追更：库里该作者最新一条视频的发布时间（ISO）；没有视频为 null。由 listAuthors 计算，不是表字段 */
+  latest_video_at?: string | null
+  /** 追更：该作者「爬主页」任务最近一次完成的时间（ISO）；从没爬过为 null。由 listAuthors 计算 */
+  last_crawled_at?: string | null
 }
 
 /** 文件管理：下载目录扫描结果——通用目录树（以磁盘为准，不假定任何一层是品类或作者）。
