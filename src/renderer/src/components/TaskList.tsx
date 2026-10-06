@@ -123,6 +123,14 @@ function formatDuration(sec: number): string {
   return `${m}:${String(s).padStart(2, '0')}`
 }
 
+/** 作者追更任务的起始日期（filters 是 custom 且只有起点）；不是这类任务返回 '' */
+function followUpStart(filters: string | null): string {
+  try {
+    const f = JSON.parse(filters ?? '{}') as { timeRange?: string; startDate?: string; endDate?: string }
+    return f.timeRange === 'custom' && f.startDate && !f.endDate ? f.startDate : ''
+  } catch { return '' }
+}
+
 function formatDate(iso: string | null): string {
   return iso ? iso.slice(0, 10) : '—'
 }
@@ -472,6 +480,10 @@ export default function TaskList({ notify, refreshVersion = 0 }: { notify: Notif
                         </div>
                       )}
                       {t.status === 'paused' && t.error === 'stalled' && <div className="mt-1 max-w-56 whitespace-normal text-amber-700">没有新结果，已暂停。请先确认平台是否要求登录或验证，再试其他关键词。</div>}
+                      {/* 追更（作者 + 起始日期）抓完 0 条：说清是「博主没更新」，不是软件没抓到 */}
+                      {t.status === 'done' && t.type === 'author' && t.fetched_count === 0 && followUpStart(t.filters) && (
+                        <div className="mt-1 max-w-56 whitespace-normal text-slate-500">{followUpStart(t.filters)} 以后没有新作品</div>
+                      )}
                     </td>
                     <td className="whitespace-nowrap py-2" onClick={e => e.stopPropagation()}>
                       <div className="flex items-center gap-2 text-xs">

@@ -69,6 +69,8 @@ CREATE TABLE IF NOT EXISTS videos (
 );
 CREATE INDEX IF NOT EXISTS idx_videos_status ON videos(status);
 CREATE INDEX IF NOT EXISTS idx_videos_task ON videos(task_id);
+-- 作者列表按作者取最新视频时间（追更起点），没有它每个作者都要扫一遍 videos 全表：1 万条视频卡主进程十几秒
+CREATE INDEX IF NOT EXISTS idx_videos_author ON videos(author_id, publish_time);
 CREATE TABLE IF NOT EXISTS transcripts (
   content_hash TEXT PRIMARY KEY,
   text TEXT NOT NULL DEFAULT '',

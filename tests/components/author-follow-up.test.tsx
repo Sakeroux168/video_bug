@@ -105,6 +105,29 @@ describe('爬过的博主：不再被「已爬过」拦掉，默认只抓新视�
   })
 })
 
+describe('全面检查补丁：只有真正爬过主页的才算「爬过」', () => {
+  it('关键词搜索顺带收进作者库的博主（有视频、没爬过主页）→ 不给「只抓新视频」，按全部抓，也不显示上次爬取', async () => {
+    await open([author({ nickname: '关键词带进来的', last_crawled_at: null, latest_video_at: '2026-08-08T02:00:00.000Z' })])
+    clickCrawl('关键词带进来的')
+    await screen.findByText(/爬取「关键词带进来的」的主页/)
+    expect(screen.queryByLabelText(/只抓新视频/)).toBeNull()
+    expect(screen.queryByText(/上次爬取：/)).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: '开始爬取' }))
+    await waitFor(() => expect(window.api.createTask).toHaveBeenCalled())
+    const arg = vi.mocked(window.api.createTask).mock.calls[0][0]
+    expect(arg.filters).toEqual({ timeRange: 'all', duration: 'all', targetCount: 20 })
+    expect(arg.allowDuplicateAuthor).toBeUndefined()
+  })
+
+  it('「全部重新爬」写明已下过的会自动跳过；勾了日期段时说明上面两项不生效', async () => {
+    await open([author()])
+    clickCrawl('爬过的博主')
+    expect(await screen.findByText(/已下过的会自动跳过/)).toBeInTheDocument()
+    fireEvent.click(screen.getByLabelText('只要这段时间发的'))
+    expect(screen.getByText(/按下面的日期段抓/)).toBeInTheDocument()
+  })
+})
+
 describe('勾选多个博主一次批量爬', () => {
   it('勾两个 → 出现「爬选中的主页（2）」；开始后每人各建一个任务，爬过的只抓新视频', async () => {
     await open([author(), fresh()])
@@ -122,6 +145,9 @@ describe('勾选多个博主一次批量爬', () => {
     }))
     expect(calls.find(c => c.query === 'U2')!.filters).toEqual({ timeRange: 'all', duration: 'all', targetCount: 20 })
     await waitFor(() => expect(notify).toHaveBeenCalledWith(expect.stringMatching(/已建 2 个任务/), expect.anything()))
+
+    // 建完清空勾选，免得手一抖再点一次又建一批
+    expect(screen.queryByRole('button', { name: /爬选中的主页/ })).toBeNull()
   })
 
   it('选「全部重新爬」→ 每人都不限时间且允许重复；有被跳过的要说清楚是谁、为什么', async () => {

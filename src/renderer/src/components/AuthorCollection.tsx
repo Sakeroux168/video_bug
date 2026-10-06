@@ -29,11 +29,12 @@ function beijingDate(iso: string | null | undefined): string {
   return new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit' }).format(t)
 }
 
-/** 爬过（或库里已有视频）的博主才有「只抓新视频」：起点 = 库里最新视频的发布日；没有视频就用上次爬主页那天 */
+/** 真正「爬过主页」的博主才有「只抓新视频」：起点 = 库里最新视频的发布日；没有视频就用上次爬主页那天。
+ *  关键词搜索时顺带收进作者库的博主库里可能只有一条视频，拿它当起点会让他以前的作品永远抓不到，所以不算爬过。 */
 function followFrom(a: AuthorRow): string {
   return beijingDate(a.latest_video_at) || beijingDate(a.last_crawled_at)
 }
-const crawledBefore = (a: AuthorRow): boolean => Boolean(a.last_crawled_at || a.latest_video_at)
+const crawledBefore = (a: AuthorRow): boolean => Boolean(a.last_crawled_at)
 
 type CrawlScope = 'new' | 'all'
 type SortKey = 'video_count' | 'last_crawled_at' | 'latest_video_at'
@@ -246,6 +247,7 @@ export default function AuthorCollection({ notify }: { notify: Notify }) {
     if (rows.length === 0 || !batchCountValid || batchBusy) return
     setBatchBusy(true)
     setBatchOpen(false)
+    setSelected(new Set()) // 建完清空勾选，免得手一抖再点一次又建一批
     const targetCount = Number(batchCount)
     const skipped: string[] = []
     let created = 0
@@ -444,9 +446,10 @@ export default function AuthorCollection({ notify }: { notify: Notify }) {
                 </label>
               )}
               <label className="flex items-center gap-1">
-                <input type="radio" name="crawl-scope" disabled={crawlRangeOn} checked={crawlScope === 'all'} onChange={() => setCrawlScope('all')} />
-                全部重新爬
+                <input type="radio" name="crawl-scope" aria-label="全部重新爬" disabled={crawlRangeOn} checked={crawlScope === 'all'} onChange={() => setCrawlScope('all')} />
+                全部重新爬<span className="text-slate-400">（不限时间，已下过的会自动跳过）</span>
               </label>
+              {crawlRangeOn && <span className="text-amber-700">已勾选日期段，按下面的日期段抓</span>}
             </>
           )}
           <label htmlFor="crawl-count" className="flex items-center gap-1">

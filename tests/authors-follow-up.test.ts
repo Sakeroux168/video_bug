@@ -71,3 +71,24 @@ describe('listAuthors：追更需要的两列', () => {
     expect(listAuthors(db).map(a => a.nickname)).toEqual(['先加入', '后加入'])
   })
 })
+
+describe('作者列表在数据多时也要快（全面检查：无索引时 1 万条视频卡主进程 11.6 秒）', () => {
+  it('videos 上有按作者 + 发布时间的索引', () => {
+    const idx = db.prepare("SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='videos'").all() as Array<{ name: string }>
+    expect(idx.map(i => i.name)).toContain('idx_videos_author')
+  })
+
+  it('2000 个作者、10000 条视频，listAuthors 在 250 毫秒内（有索引时实测几十毫秒）', () => {
+    const t = createTask(db, keyword)
+    const ins = db.prepare("INSERT INTO authors (platform, sec_uid, nickname) VALUES ('xiaohongshu', ?, ?)")
+    const vid = db.prepare("INSERT INTO videos (platform, task_id, aweme_id, title, author_id, publish_time, status, fetched_at) VALUES ('xiaohongshu', ?, ?, 't', ?, ?, 'done', '2026-09-01T00:00:00Z')")
+    db.exec('BEGIN')
+    for (let a = 1; a <= 2000; a++) ins.run('U' + a, '博主' + a)
+    for (let v = 1; v <= 10000; v++) vid.run(t, 'V' + v, (v % 2000) + 1, new Date(1758000000000 + v * 1000).toISOString())
+    db.exec('COMMIT')
+    const start = performance.now()
+    const rows = listAuthors(db, 'xiaohongshu')
+    expect(rows).toHaveLength(2000)
+    expect(performance.now() - start).toBeLessThan(250)
+  })
+})
