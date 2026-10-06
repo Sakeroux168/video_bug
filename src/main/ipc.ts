@@ -1,6 +1,6 @@
 import { app, ipcMain, BrowserWindow, dialog, shell, clipboard } from 'electron'
 import type { DatabaseSync } from 'node:sqlite'
-import { statSync } from 'node:fs'
+import { existsSync, statSync } from 'node:fs'
 import { createTask, listTasks, listVideos, listDownloadedVideos, listAuthors, setTaskStatus, setVideoStatus, updateAuthorCategory, deleteAuthors, taskStats, insertAuthorIfAbsent, globalStats, recentDownloads } from './db'
 import { getSettings, saveSettings } from './settings'
 import { deleteVideoRows } from './videoDelete'
@@ -46,7 +46,8 @@ export interface IpcDeps {
 
 export function registerIpc(deps: IpcDeps): void {
   // 程序里删的视频 / 文件夹一律进回收站，删错了还能找回来
-  const trash = (p: string): Promise<void> => shell.trashItem(p)
+  // 文件早就不在了（手动删过）不算失败：回收站找不到它会报错，那样这条记录就永远删不掉了
+  const trash = async (p: string): Promise<void> => { if (existsSync(p)) await shell.trashItem(p) }
   // 安全检查 A2：主进程接口只认本软件主界面。平台窗口加载的是外部网页，万一被攻破也不能借这些接口
   // 读写删文件、打开程序。真实调用一定带 senderFrame；测试里直接传 null 事件不受影响。
   const handle = (channel: string, listener: (e: Electron.IpcMainInvokeEvent, ...args: any[]) => unknown): void => {

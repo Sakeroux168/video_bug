@@ -13,7 +13,17 @@ vi.mock('electron', () => ({
   dialog: {}, clipboard: {},
   shell: { openExternal: vi.fn(), openPath: vi.fn(), showItemInFolder: vi.fn(), trashItem: mockIpc.trashItem }
 }))
+// 下载目录指到系统临时目录，测试不往仓库里写文件
+const tmpDl = vi.hoisted(() => (require('fs') as typeof import('fs')).mkdtempSync((require('path') as typeof import('path')).join((require('os') as typeof import('os')).tmpdir(), 'ipc-data-safety-')))
+vi.mock('../src/main/settings', async orig => {
+  const real = await orig<typeof import('../src/main/settings')>()
+  return { ...real, getSettings: () => ({ ...real.getSettings(), downloadDir: tmpDl }) }
+})
 import { registerIpc } from '../src/main/ipc'
+import { writeFileSync, rmSync } from 'fs'
+import { join } from 'path'
+import { afterAll } from 'vitest'
+afterAll(() => rmSync(tmpDl, { recursive: true, force: true }))
 
 const input: CreateTaskInput = {
   platform: 'douyin', type: 'keyword', query: 'q',
@@ -48,7 +58,7 @@ function setup() {
   return { db, calls, downloader, call }
 }
 
-beforeEach(() => { mockIpc.handlers.clear(); mockIpc.trashItem.mockClear() })
+beforeEach(() => { mockIpc.handlers.clear(); mockIpc.trashItem.mockReset(); mockIpc.trashItem.mockImplementation(async () => {}) })
 
 describe('#10 删作者先停掉他的下载', () => {
   it('先取消这个作者在下载 / 排队的视频，再删数据；别的作者不受影响', async () => {
@@ -86,15 +96,27 @@ describe('B5 已删除的视频', () => {
     expect(db.prepare('SELECT aweme_id, status FROM videos').all()).toEqual([{ aweme_id: 'A', status: 'deleted' }])
   })
 
+  it('文件早被手动删了 → 不去回收站找，照样把记录标成已删除', async () => {
+    const { db, call } = setup()
+    const taskId = createTask(db, input)
+    insertVideos(db, [item('GONE')], taskId, 'douyin')
+    const [v] = listVideos(db, taskId)
+    setVideoStatus(db, v.id, 'done', { local_path: join(tmpDl, '早没了.mp4') })
+    mockIpc.trashItem.mockRejectedValue(new Error('Failed to move item to trash')) // 真的去回收站找会这样报错
+    expect(await call('video:delete', [v.id])).toEqual({ ok: true, deleted: 1 })
+    expect(mockIpc.trashItem).not.toHaveBeenCalled()
+    expect(db.prepare('SELECT status FROM videos WHERE id = ?').get(v.id)).toEqual({ status: 'deleted' })
+  })
+
   it('程序里删视频：文件进回收站（shell.trashItem）', async () => {
     const { db, call } = setup()
     const taskId = createTask(db, input)
     insertVideos(db, [item('A')], taskId, 'douyin')
     const [a] = listVideos(db, taskId)
-    const { getSettings } = await import('../src/main/settings')
-    const p = require('path').join(getSettings().downloadDir, 'A.mp4')
+    const p = join(tmpDl, 'A.mp4')
+    writeFileSync(p, 'mp4')
     setVideoStatus(db, a.id, 'done', { local_path: p })
-    await call('video:delete', [a.id])
+    expect(await call('video:delete', [a.id])).toEqual({ ok: true, deleted: 1 })
     expect(mockIpc.trashItem).toHaveBeenCalledWith(p)
   })
 })
