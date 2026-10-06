@@ -58,7 +58,7 @@ describe('Task 3 视频删除 UI', () => {
     const delBtn = Array.from(row.querySelectorAll('button')).find(b => b.textContent === '删除')
     expect(delBtn).toBeTruthy()
     fireEvent.click(delBtn!)
-    expect(window.confirm).toHaveBeenCalledWith('确定删除该视频？将同时删除本地文件')
+    expect(window.confirm).toHaveBeenCalledWith('确定删除该视频？本地文件会放进回收站，以后追更、重搜也不会再下载它') // 文案随 B5 软删除 + 回收站更新
     expect(window.api.deleteVideos).toHaveBeenCalledWith([1])
   })
 
@@ -80,7 +80,7 @@ describe('Task 3 视频删除 UI', () => {
     const batchBtn = screen.getByText('删除选中(1)')
     fireEvent.click(batchBtn)
     // N=1 走单条确认文案，N>1 才走批量文案
-    expect(window.confirm).toHaveBeenCalledWith('确定删除该视频？将同时删除本地文件')
+    expect(window.confirm).toHaveBeenCalledWith('确定删除该视频？本地文件会放进回收站，以后追更、重搜也不会再下载它') // 文案随 B5 软删除 + 回收站更新
     expect(window.api.deleteVideos).toHaveBeenCalledWith([1])
   })
 

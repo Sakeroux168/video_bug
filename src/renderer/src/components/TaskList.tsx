@@ -30,7 +30,7 @@ const STATUS_CLASS: Record<string, string> = {
   paused: 'text-amber-500'
 }
 
-const DOWNLOAD_BADGES: Array<{ key: keyof TaskStats; label: string; className: string }> = [
+const DOWNLOAD_BADGES: Array<{ key: Exclude<keyof TaskStats, 'deleted'>; label: string; className: string }> = [
   { key: 'pending', label: '等待', className: 'bg-slate-100 text-slate-600' },
   { key: 'done', label: '完成', className: 'bg-success-50 text-success-700' },
   { key: 'downloading', label: '下载中', className: 'bg-sky-50 text-sky-700' },
@@ -262,14 +262,14 @@ export default function TaskList({ notify, refreshVersion = 0 }: { notify: Notif
     setSelected(new Set())
   }
 
-  // Task3：程序内删除视频（③）——confirm 二次确认后删本地文件+DB 记录。
+  // Task3：程序内删除视频（③）——confirm 二次确认后文件进回收站、记录标成已删除（B5：留作不再下载的记号）。
   // 部分失败（ok:false 但 deleted>0，如个别文件删不掉）：已删的照常刷新并提示条数，避免行残留假象；
   // 全部失败（deleted=0）才只报错误。
   function handleDeleteVideos(ids: number[]): void {
     if (ids.length === 0) return
     const msg = ids.length > 1
-      ? `确定删除选中的 ${ids.length} 个视频？将同时删除本地文件`
-      : '确定删除该视频？将同时删除本地文件'
+      ? `确定删除选中的 ${ids.length} 个视频？本地文件会放进回收站，以后追更、重搜也不会再下载它们`
+      : '确定删除该视频？本地文件会放进回收站，以后追更、重搜也不会再下载它'
     if (!window.confirm(msg)) return
     void api.deleteVideos(ids)
       .then(r => {
@@ -610,6 +610,9 @@ export default function TaskList({ notify, refreshVersion = 0 }: { notify: Notif
                             refresh={refresh}
                           />
                         ) : null}
+                        {s && (s.deleted ?? 0) > 0 && (
+                          <DeletedVideos taskId={t.id} count={s.deleted ?? 0} notify={notify} refresh={refresh} />
+                        )}
                       </td>
                     </tr>
                   )}
@@ -851,6 +854,57 @@ function TaskVideoTable({
         </div>
       </div>
     </>
+  )
+}
+
+/**
+ * B5：这个任务里删掉的视频。删除是软删除（记号留着，追更 / 重搜不再下载），
+ * 后悔了在这里点「恢复下载」：标回待下载并重新下载（文件在回收站里的不用管，会重新下一份）。
+ */
+function DeletedVideos({ taskId, count, notify, refresh }: {
+  taskId: number; count: number; notify: (t: string) => void; refresh: () => void
+}): React.ReactElement {
+  const [open, setOpen] = useState(false)
+  const [rows, setRows] = useState<VideoRow[] | null>(null)
+  const load = (): void => { void api.listDeletedTaskVideos(taskId).then(setRows).catch(() => setRows([])) }
+  async function restore(ids: number[]): Promise<void> {
+    if (ids.length === 0) return
+    const r = await api.restoreVideos(ids)
+    notify(r.restored > 0 ? `已恢复 ${r.restored} 个视频，开始重新下载` : '这些视频已经不在「已删除」里了')
+    load()
+    refresh()
+  }
+  return (
+    <div className="mt-2">
+      <button
+        className={btn('secondary', 'sm')}
+        onClick={() => { const next = !open; setOpen(next); if (next) load() }}
+      >已删除({count})</button>
+      {open && (
+        <div className="mt-2 rounded border border-slate-200 bg-white px-3 py-2">
+          <div className="mb-1 flex items-center justify-between text-slate-500">
+            <span>删掉的视频不会再被追更、重搜下回来；想要回来就点「恢复下载」</span>
+            {rows && rows.length > 0 && (
+              <button className={btnSmall} onClick={() => { void restore(rows.map(v => v.id)) }}>全部恢复下载({rows.length})</button>
+            )}
+          </div>
+          {!rows ? (
+            <div className="py-2 text-center text-slate-400">加载中…</div>
+          ) : rows.length === 0 ? (
+            <div className="py-2 text-center text-slate-400">（没有了）</div>
+          ) : (
+            <ul className="divide-y divide-slate-100">
+              {rows.map(v => (
+                <li key={v.id} className="flex items-center justify-between gap-2 py-1">
+                  <span className="min-w-0 truncate text-slate-600">{v.title || v.aweme_id}<span className="ml-2 text-slate-400">{v.author_nickname ?? ''}</span></span>
+                  <button className="shrink-0 text-brand-500 hover:underline" onClick={() => { void restore([v.id]) }}>恢复下载</button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+    </div>
   )
 }
 

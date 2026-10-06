@@ -1,7 +1,7 @@
 import { app, ipcMain, BrowserWindow, dialog, shell, clipboard } from 'electron'
 import type { DatabaseSync } from 'node:sqlite'
-import { statSync } from 'node:fs'
-import { createTask, listTasks, listVideos, listDownloadedVideos, listAuthors, setTaskStatus, setVideoStatus, updateAuthorCategory, deleteAuthors, taskStats, insertAuthorIfAbsent, globalStats, recentDownloads } from './db'
+import { existsSync, statSync } from 'node:fs'
+import { createTask, listTasks, listVideos, listDeletedVideos, restoreVideos, listDownloadedVideos, listAuthors, setTaskStatus, setVideoStatus, updateAuthorCategory, deleteAuthors, taskStats, insertAuthorIfAbsent, globalStats, recentDownloads } from './db'
 import { getSettings, saveSettings } from './settings'
 import { deleteVideoRows } from './videoDelete'
 import { scanFilesTree, deleteFileDir, deleteFileVideo, locateFileDir, locateVideoFile } from './fileManager'
@@ -45,6 +45,9 @@ export interface IpcDeps {
 }
 
 export function registerIpc(deps: IpcDeps): void {
+  // 程序里删的视频 / 文件夹一律进回收站，删错了还能找回来
+  // 文件早就不在了（手动删过）不算失败：回收站找不到它会报错，那样这条记录就永远删不掉了
+  const trash = async (p: string): Promise<void> => { if (existsSync(p)) await shell.trashItem(p) }
   // 安全检查 A2：主进程接口只认本软件主界面。平台窗口加载的是外部网页，万一被攻破也不能借这些接口
   // 读写删文件、打开程序。真实调用一定带 senderFrame；测试里直接传 null 事件不受影响。
   const handle = (channel: string, listener: (e: Electron.IpcMainInvokeEvent, ...args: any[]) => unknown): void => {
@@ -78,6 +81,7 @@ export function registerIpc(deps: IpcDeps): void {
     ...video,
     source_url: resolveVideoSourceUrl(video.platform, video.aweme_id, video.source_url)
   })))
+  handle('task:video:listDeleted', (_e, taskId: number) => listDeletedVideos(db, taskId))
   handle('task:stats', (_e, taskId: number) => taskStats(db, taskId))
   // A1：先等 scheduler.pause()（run 完全退出）再置状态，避免渲染层立刻看到 paused 而 run 还在收尾。
   // R20：pause() 最多等 10 秒，等不到就强制停，按钮不会再跟着卡死；
@@ -110,7 +114,8 @@ export function registerIpc(deps: IpcDeps): void {
     const videoIds = (db.prepare('SELECT id FROM videos WHERE task_id=?').all(id) as unknown as Array<{ id: number }>)
       .map(r => r.id)
     if (videoIds.length > 0) downloader.cancel(videoIds)
-    db.prepare('DELETE FROM videos WHERE task_id=?').run(id)
+    // B5：已删除的记号留着（task_id 指向已删的任务也无妨），否则重搜又会把它们下回来
+    db.prepare("DELETE FROM videos WHERE task_id=? AND status != 'deleted'").run(id)
     db.prepare('DELETE FROM tasks WHERE id=?').run(id)
     // 放行队列：删掉的若是正在跑的任务，pause() 发的暂停事件已经会放行；这里再踢一脚兜底（重复踢无害）。
     deps.kickQueue()
@@ -118,6 +123,9 @@ export function registerIpc(deps: IpcDeps): void {
 
   handle('video:retry', (_e, ids: number[]) => {
     for (const id of ids) {
+      // B5：已删除的是用户不要的，不能被「重试」重新下回来
+      const row = db.prepare('SELECT status FROM videos WHERE id = ?').get(id) as { status: string } | undefined
+      if (!row || row.status === 'deleted') continue
       setVideoStatus(db, id, 'pending', { error: null })
       downloader.enqueue(id)
     }
@@ -127,8 +135,15 @@ export function registerIpc(deps: IpcDeps): void {
   // Task3：程序内删除视频（③）——编排在 videoDelete.ts（先 cancel 在途/排队项防孤儿文件 →
   // 路径安全则删本地文件 → 删 DB 行 → 作者 video_count 重算）；单条失败返回错误但不中断整批。
   handle('video:delete', (_e, ids: number[]) =>
-    deleteVideoRows({ db, downloader, downloadDir: getSettings().downloadDir }, ids)
+    deleteVideoRows({ db, downloader, downloadDir: getSettings().downloadDir, trash }, ids)
   )
+
+  // B5：删掉的视频后悔了 → 标回待下载，交给下载器重新下（地址过期的会提示，重新爬一次就能拿到新地址）
+  handle('video:restore', (_e, ids: number[]) => {
+    const restored = restoreVideos(db, Array.isArray(ids) ? ids : [])
+    if (restored.length > 0) downloader.download(restored)
+    return { restored: restored.length }
+  })
 
   // 全局下载控制：暂停（在途任务跑完，不再拉新）/ 恢复 / 查询暂停状态
   handle('download:pause', () => { downloader.pause(); return true })
@@ -147,7 +162,16 @@ export function registerIpc(deps: IpcDeps): void {
     updateAuthorCategory(db, id, category)
     return true
   })
-  handle('authors:delete', (_e, ids: number[]) => { deleteAuthors(db, ids); return true })
+  handle('authors:delete', (_e, ids: number[]) => {
+    // #10：先掐断这些作者在下载 / 排队的视频，否则删完行后下载器照样写出没有记录的孤儿文件
+    if (ids.length > 0) {
+      const ph = ids.map(() => '?').join(',')
+      const videoIds = (db.prepare(`SELECT id FROM videos WHERE author_id IN (${ph})`).all(...ids) as unknown as Array<{ id: number }>).map(r => r.id)
+      if (videoIds.length > 0) downloader.cancel(videoIds)
+    }
+    deleteAuthors(db, ids)
+    return true
+  })
 
   // 批量导入作者（粘贴主页 URL / 裸 sec_uid 列表）：只登记不刷新已有数据（insertAuthorIfAbsent）。
   // 渲染层已过滤空行/纯空白，这里仍对 nickname 兜底校验；reason 词表逐字返回，供渲染层逐行展示。
@@ -303,10 +327,10 @@ export function registerIpc(deps: IpcDeps): void {
   // downloadDir 每次取最新（设置可能已热更），扫描纯函数在主进程 fileManager.ts 中可单测
   handle('files:tree', () => scanFilesTree(getSettings().downloadDir))
   handle('files:deleteDir', (_e, segments: string[]) =>
-    deleteFileDir({ db, downloadDir: getSettings().downloadDir }, segments)
+    deleteFileDir({ db, downloadDir: getSettings().downloadDir, trash }, segments)
   )
   handle('files:deleteFile', (_e, segments: string[]) =>
-    deleteFileVideo({ db, downloadDir: getSettings().downloadDir, downloader }, segments)
+    deleteFileVideo({ db, downloadDir: getSettings().downloadDir, downloader, trash }, segments)
   )
   // 定位文件夹 / 视频文件（资源管理器选中）：路径防护 + 存在才调 shell，其余返回错误提示
   handle('files:locate', (_e, dirPath: string) => {

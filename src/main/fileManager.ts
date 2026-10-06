@@ -14,6 +14,12 @@ export interface FileManagerDeps {
   downloadDir: string
   /** 删单个视频时沿用 video:delete 语义先掐断在途/排队项；纯目录删除不需要，测试里可不传 */
   downloader?: { cancel(ids: number[]): void }
+  /** 把文件 / 文件夹放进回收站（主进程传 shell.trashItem）；不传就直接删（单测用） */
+  trash?: (path: string) => Promise<void>
+}
+
+function statExists(p: string): boolean {
+  try { statSync(p); return true } catch { return false }
 }
 
 /** 隐藏/临时目录或文件（~ 或 . 开头）一律跳过，不进树也不参与统计。
@@ -126,7 +132,9 @@ export async function deleteFileDir(deps: FileManagerDeps, segments: string[]): 
   const target = resolveManagedPath(downloadDir, segments)
   if (!target) return { ok: false, deleted: 0, error: '非法路径：目标不在下载目录内' }
   try {
-    await rm(target, { recursive: true, force: true })
+    if (deps.trash) {
+      try { await deps.trash(target) } catch (err) { if (statExists(target)) throw err } // 已经不在了视为删掉
+    } else await rm(target, { recursive: true, force: true })
     const { deleted, authorIds } = deleteVideosByPathPrefix(db, target)
     recomputeAuthorCounts(db, authorIds)
     return { ok: true, deleted, filesRemoved: true }
@@ -151,11 +159,11 @@ export async function deleteFileVideo(deps: FileManagerDeps, segments: string[])
   }
   const ids = (db.prepare('SELECT id FROM videos WHERE local_path = ?').all(target) as unknown as Array<{ id: number }>).map(r => r.id)
   if (ids.length > 0) {
-    const r = await deleteVideoRows({ db, downloader: deps.downloader ?? { cancel: () => {} }, downloadDir }, ids)
+    const r = await deleteVideoRows({ db, downloader: deps.downloader ?? { cancel: () => {} }, downloadDir, trash: deps.trash }, ids)
     return r.ok ? { ok: true, deleted: r.deleted, filesRemoved: true } : { ok: false, deleted: r.deleted, error: r.error }
   }
   try {
-    await unlink(target)
+    await (deps.trash ?? unlink)(target)
     return { ok: true, deleted: 0, filesRemoved: true }
   } catch (err) {
     return { ok: false, deleted: 0, error: String(err) }

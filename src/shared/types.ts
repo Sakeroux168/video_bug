@@ -1,6 +1,7 @@
 export type TaskType = 'keyword' | 'author' | 'hashtag'
 export type TaskStatus = 'pending' | 'running' | 'done' | 'paused' | 'failed'
-export type VideoStatus = 'pending' | 'downloading' | 'done' | 'failed' | 'filtered' | 'collected' | 'cancelled' | 'paused'
+/** deleted：用户在程序里删掉的（文件已进回收站）。行留着当记号，追更 / 重搜碰到不再入库、不再下载；各处列表和统计都不算它 */
+export type VideoStatus = 'pending' | 'downloading' | 'done' | 'failed' | 'filtered' | 'collected' | 'cancelled' | 'paused' | 'deleted'
 export type TimeRange = 'all' | '7d' | '30d' | 'custom'
 export type DurationFilter = 'all' | 'under30' | 'short' | 'medium' | 'long' | 'custom'
 /** 详情取数模式（仅小红书）：safe=窗口逐条导航读注水状态；fast=登录态后台取 HTML 解析注水状态 */
@@ -49,6 +50,8 @@ export interface TaskRow {
 export interface TaskStats {
   total: number; done: number; failed: number; downloading: number; pending: number; filtered: number
   collected: number; cancelled: number; paused: number
+  /** 已删除的条数（不算进 total）；界面靠它显示「已删除(N)」入口 */
+  deleted?: number
 }
 
 /** 任务进度瞬时推送（main → 渲染层 evt:task:progress；R11 Task1 起带 reSearchCount，Task2 用于界面显示「已重搜 N 次」） */

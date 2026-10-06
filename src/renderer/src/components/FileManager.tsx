@@ -50,7 +50,7 @@ function entriesOf(node: FilesDirNode): Entry[] {
  * 每一级都是「子文件夹 + 直属视频」的一张表：点文件夹行钻进去、「返回上一级」退回，面包屑显示当前位置。
  * 不假定任何一层是品类或作者——归档层级四个开关各自可关，磁盘上是几层就显示几层，
  * 根目录直接平铺的视频与子文件夹同样可见。
- * 定位/导出/删除对文件夹与视频都可用；删除 = 永久删除（文件夹递归）+ DB 联动，window.confirm 二次确认，删除后刷新。
+ * 定位/导出/删除对文件夹与视频都可用；删除 = 放进回收站（文件夹整个放）+ DB 联动，window.confirm 二次确认，删除后刷新。
  */
 export default function FileManager({ notify }: { notify: Notify }) {
   const [tree, setTree] = useState<FilesTree | null>(null)
@@ -155,8 +155,8 @@ export default function FileManager({ notify }: { notify: Notify }) {
     const label = items.length === 1
       ? `${items[0].kind === 'dir' ? '文件夹' : '视频'}「${items[0].name}」`
       : `选中的 ${items.length} 项`
-    const detail = items.some(i => i.kind === 'dir') ? '文件夹将递归删除其中的全部文件，' : ''
-    if (!window.confirm(`确定永久删除${label}？${detail}此操作不可恢复`)) return
+    const detail = items.some(i => i.kind === 'dir') ? '文件夹里的全部文件会一起删除，' : ''
+    if (!window.confirm(`确定删除${label}？${detail}文件会放进回收站，需要时可以从回收站还原`)) return
     let deleted = 0
     let err: string | null = null
     for (const item of items) {
