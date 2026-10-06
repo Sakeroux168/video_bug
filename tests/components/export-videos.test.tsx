@@ -159,7 +159,7 @@ describe('任务列表导出表格', () => {
     const cap = captureDownload()
     await openTask([makeVideo(1), makeVideo(2), makeVideo(3)])
 
-    // 勾选框是排他选中（既有交互），加选要 Ctrl 点行
+    // 勾一条，再 Ctrl 点行加选（2026-10-06 起勾选框本身也能累加，见 list-details.test.tsx）
     fireEvent.click(screen.getByText('标题1').closest('tr')!.querySelector('input[type=checkbox]')!)
     fireEvent.click(screen.getByText('标题2').closest('tr')!, { ctrlKey: true })
 

@@ -1,6 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { api } from '../api'
-import type { TaskRow, VideoRow, TaskStats } from '../../../shared/types'
+import type { TaskRow, VideoRow, TaskStats, DownloadProgress } from '../../../shared/types'
 import { Card, inputClsSm, btn } from './ui'
 import { useMarqueeSelect } from './useMarqueeSelect'
 import { useTableSelection } from './useTableSelection'
@@ -83,7 +83,7 @@ interface Derived {
   collectedIds: number[]
 }
 
-const btnSmall = 'rounded-md border border-slate-300 px-2 py-1 text-xs text-slate-600 hover:bg-slate-100 disabled:opacity-40'
+const btnSmall = 'whitespace-nowrap rounded-md border border-slate-300 px-2 py-1 text-xs text-slate-600 hover:bg-slate-100 disabled:opacity-40'
 
 interface VideoStats {
   likes: number
@@ -115,6 +115,21 @@ function formatSourceUrl(sourceUrl: string): string {
   } catch {
     return sourceUrl
   }
+}
+
+/** D8：文件大小，按 KB / MB / GB 自动换算 */
+function formatSize(bytes: number | null | undefined): string {
+  if (!bytes || bytes <= 0) return '—'
+  if (bytes < 1024 * 1024) return `${Math.max(1, Math.round(bytes / 1024))} KB`
+  if (bytes < 1024 * 1024 * 1024) return `${(bytes / 1024 / 1024).toFixed(1)} MB`
+  return `${(bytes / 1024 / 1024 / 1024).toFixed(2)} GB`
+}
+
+/** D8：下载中的进度文字「45% · 1.2 MB/s」；不知道总大小时只显示已下多少 */
+function formatProgress(p: DownloadProgress | undefined): string {
+  if (!p) return ''
+  const head = p.total ? `${Math.floor((p.received / p.total) * 100)}%` : formatSize(p.received)
+  return p.speed > 0 ? `${head} · ${formatSize(p.speed)}/s` : head
 }
 
 function formatDuration(sec: number): string {
@@ -160,6 +175,9 @@ export default function TaskList({ notify, refreshVersion = 0 }: { notify: Notif
   // R11 Task2：任务「已重搜 N 次」计数——progress 瞬时推送携带 reSearchCount，DB 无此列，
   // 故存内存 Map；run 恢复/重跑时调度器重置计数并随 progress 推送 0，自动清零。
   const [reSearchCount, setReSearchCount] = useState<Record<number, number>>({})
+  // D8：下载进度（单独一条通道推过来，最多每秒一条；只用来显示，不触发重拉）
+  const [progress, setProgress] = useState<Record<number, DownloadProgress>>({})
+  useEffect(() => api.onDownloadProgress(p => setProgress(prev => ({ ...prev, [p.id]: p }))), [])
 
   const refresh = () => {
     void api.getDownloadState().then(s => setDownloadPaused(s.paused))
@@ -635,6 +653,7 @@ export default function TaskList({ notify, refreshVersion = 0 }: { notify: Notif
                             onDeleteVideos={handleDeleteVideos}
                             notify={notify}
                             refresh={refresh}
+                            progress={progress}
                           />
                         ) : null}
                         {s && (s.deleted ?? 0) > 0 && (
@@ -663,8 +682,9 @@ export default function TaskList({ notify, refreshVersion = 0 }: { notify: Notif
  */
 function TaskVideoTable({
   d, sort, selected, onSelectRows, onTogglePage, onSort, onPageChange,
-  onReplaceSelect, onClearSelection, onDeleteVideos, notify, refresh
+  onReplaceSelect, onClearSelection, onDeleteVideos, notify, refresh, progress = {}
 }: {
+  progress?: Record<number, DownloadProgress>
   d: Derived
   sort: { key: SortKey; dir: 1 | -1 } | undefined
   selected: Set<number>
@@ -778,7 +798,9 @@ function TaskVideoTable({
               {sortHeader('publish_time', '发布')}
               {sortHeader('likes', '点赞')}
               {sortHeader('comments', '评论')}
-              <th className="w-24 py-1 px-1 font-normal">状态</th>
+              <th className="whitespace-nowrap py-1 px-1 font-normal">分辨率</th>
+              <th className="whitespace-nowrap py-1 px-1 font-normal">大小</th>
+              <th className="w-28 py-1 px-1 font-normal">状态</th>
               <th className="py-1 pl-2 pr-1 font-normal">操作</th>
             </tr>
           </thead>
@@ -795,10 +817,12 @@ function TaskVideoTable({
                   onClick={isFiltered ? undefined : e => handleRowClick(v, e)}
                 >
                   <td className={`${rowBar(v.status)} py-1 pl-1 pr-1`}>
-                    <input type="checkbox" disabled={isFiltered} checked={selected.has(v.id)} onChange={() => onSelectRows(rowClick(v.id, d.selectableIds, selected, {}))} />
+                    {/* D8：勾选框是累加的（勾一条加一条、再点取消）；点整行才是只选这一条 */}
+                    <input type="checkbox" disabled={isFiltered} checked={selected.has(v.id)} onChange={() => onSelectRows(rowClick(v.id, d.selectableIds, selected, { checkbox: true }))} />
                   </td>
-                  <td className="max-w-0 py-1 pr-2">
-                    <span className="block truncate">{v.title || '（无标题）'}</span>
+                  {/* D8：标题至少 14rem（min-width 盖过 max-w-0），以前被一排操作按钮挤得只剩几个字 */}
+                  <td data-col="title" className="min-w-[14rem] max-w-0 py-1 pr-2">
+                    <span className="block truncate" title={v.title || undefined}>{v.title || '（无标题）'}</span>
                     {v.source_url ? (
                       <span
                         data-source-url
@@ -818,8 +842,15 @@ function TaskVideoTable({
                   <td data-stat="comments" className="whitespace-nowrap py-1 pr-2 tabular-nums">
                     {videoStats.comments === null ? '—' : formatCount(videoStats.comments)}
                   </td>
+                  <td data-col="resolution" className="whitespace-nowrap py-1 pr-2 tabular-nums text-slate-500">
+                    {v.video_width > 0 && v.video_height > 0 ? `${v.video_width}×${v.video_height}` : '—'}
+                  </td>
+                  <td data-col="size" className="whitespace-nowrap py-1 pr-2 text-right tabular-nums text-slate-500">{formatSize(v.file_size)}</td>
                   <td className={`py-1 pr-2 ${STATUS_CLASS[v.status] ?? 'text-slate-500'}`}>
                     <span className="whitespace-nowrap">{STATUS_LABEL[v.status] ?? v.status}</span>
+                    {v.status === 'downloading' && progress[v.id] && (
+                      <span data-progress className="block whitespace-nowrap text-[10px] leading-tight tabular-nums">{formatProgress(progress[v.id])}</span>
+                    )}
                     {v.status === 'failed' && (
                       <span className="ml-1 text-[10px] leading-tight text-danger-600/90">·{describeError(v.error)}</span>
                     )}

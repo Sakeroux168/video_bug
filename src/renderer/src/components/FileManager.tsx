@@ -253,7 +253,7 @@ export default function FileManager({ notify }: { notify: Notify }) {
                   className={`cursor-pointer border-b border-slate-100 transition-colors hover:bg-slate-50 ${selected.has(entry.id) ? 'bg-brand-50' : ''}`}
                   onClick={e => handleRowClick(entry, e)}
                 >
-                  <td className="py-2 pr-1"><input type="checkbox" checked={selected.has(entry.id)} onChange={() => setSelected(rowClick(entry.id, entryIds, selected, {}))} /></td>
+                  <td className="py-2 pr-1"><input type="checkbox" checked={selected.has(entry.id)} onChange={() => setSelected(rowClick(entry.id, entryIds, selected, { checkbox: true }))} /></td>
                   <td className="py-2 pr-2 font-medium">{entry.name}</td>
                   <td className="py-2 pr-2 text-slate-500">{entry.kind === 'dir' ? '文件夹' : '视频'}</td>
                   <td className="py-2 pr-2 text-slate-500">{entry.videoCount}</td>

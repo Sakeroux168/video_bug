@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { CreateTaskInput, AppSettings, TaskRow, VideoRow, AuthorRow, TaskStats, AsrStatus, AsrProgress, FilesTree, FileDeleteResult, TaskProgressEvent, GlobalStats, RecentDownload, ProcessState } from '../shared/types'
+import type { CreateTaskInput, AppSettings, TaskRow, VideoRow, AuthorRow, TaskStats, AsrStatus, AsrProgress, FilesTree, FileDeleteResult, TaskProgressEvent, DownloadProgress, GlobalStats, RecentDownload, ProcessState } from '../shared/types'
 
 const api = {
   exportCsv: (input: { csv: string; fileName: string }): Promise<import('../shared/types').CsvExportResult> => ipcRenderer.invoke('csv:export', input),
@@ -74,6 +74,11 @@ const api = {
   deleteFileVideo: (segments: string[]): Promise<FileDeleteResult> => ipcRenderer.invoke('files:deleteFile', segments),
   locateFileDir: (path: string): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke('files:locate', path),
   locateVideoFile: (path: string): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke('files:locateFile', path),
+  onDownloadProgress: (cb: (e: DownloadProgress) => void): (() => void) => {
+    const l = (_: unknown, e: DownloadProgress): void => cb(e)
+    ipcRenderer.on('evt:download:progress', l)
+    return () => ipcRenderer.removeListener('evt:download:progress', l)
+  },
   onTaskProgress: (cb: (e: TaskProgressEvent) => void): (() => void) => {
     const l = (_e: unknown, data: unknown) => cb(data as TaskProgressEvent)
     ipcRenderer.on('evt:task:progress', l)

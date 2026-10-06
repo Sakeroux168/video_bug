@@ -38,6 +38,8 @@ export const DOWNLOAD_IDLE_TIMEOUT_MS = 60000
 export const FFPROBE_TIMEOUT_MS = 30000
 /** R20：封面整体最多下多久（封面是附属品，超时就不要封面，视频照常完成） */
 const COVER_TIMEOUT_MS = 60000
+/** D8：下载进度最多多久发一次（毫秒） */
+const PROGRESS_INTERVAL_MS = 1000
 /** 视频与封面共用一个主体名；.original.mp4 仍占位：旧版转码流程留下的原片可能与新下载同名主体，不能撞上 */
 const STEM_EXTENSIONS = ['.mp4', '.original.mp4', '.jpg', '.jpeg', '.png', '.webp']
 /** Windows 文件名不分大小写，占位键统一小写 */
@@ -93,6 +95,13 @@ function splitRanges(total: number, count: number, sourcePart: string): ByteRang
 }
 type DlEvent =
   | { type: 'video:status'; id: number; status: string; error?: string; localPath?: string }
+  /** D8：下载进度（字节 + 每秒速度），最多每秒一条；total 未知时为 null */
+  | { type: 'video:progress'; id: number; received: number; total: number | null; speed: number }
+
+/** 一条视频的下载进度表 */
+interface ProgressMeter { received: number; total: number | null; lastAt: number; lastReceived: number; speed: number }
+/** 下载函数里只管报「又收到多少字节 / 总共多大」，算速度、节流、发事件都在 Downloader 里 */
+interface ProgressSink { total(n: number | null, alreadyReceived?: number): void; bytes(n: number): void }
 
 export class Downloader {
   private queue: number[] = []
@@ -112,6 +121,8 @@ export class Downloader {
   private idleTimeoutMs: number
   /** 会话级分段断点；只承诺同一次程序运行内暂停后继续，不跨重启。 */
   private segmentSessions = new Map<number, SegmentSession>()
+  private progressIntervalMs: number
+  private meters = new Map<number, ProgressMeter>()
   /** 正在下载、还没落盘的文件名（目录+主体名，小写）。同名视频同时下载时靠它避开彼此，否则后存的覆盖先存的 */
   private reservedStems = new Set<string>()
 
@@ -119,12 +130,13 @@ export class Downloader {
     private db: DatabaseSync,
     private settings: DlSettings,
     private fetchImpl: typeof fetch = fetch,
-    opts?: { validator?: (file: string) => Promise<boolean>; idleTimeoutMs?: number }
+    opts?: { validator?: (file: string) => Promise<boolean>; idleTimeoutMs?: number; progressIntervalMs?: number }
   ) {
     // C1: 确保下载目录存在（recursive 幂等）；目录不可写时由下载错误分类兜底为 ERROR.DISK
     try { mkdirSync(this.settings.downloadDir, { recursive: true }) } catch { /* ignore */ }
     this.validator = opts?.validator ?? null
     this.idleTimeoutMs = opts?.idleTimeoutMs ?? DOWNLOAD_IDLE_TIMEOUT_MS
+    this.progressIntervalMs = opts?.progressIntervalMs ?? PROGRESS_INTERVAL_MS
   }
 
   /** 设置保存后热更新下载参数（目录/并发/地址TTL），无需重建 Downloader */
@@ -240,6 +252,31 @@ export class Downloader {
   }
 
   private emit(e: DlEvent): void { for (const l of this.listeners) l(e) }
+
+  /** D8：给一条视频建进度表，返回下载函数用的 sink（字节到了就报，节流到 progressIntervalMs 发一次） */
+  private progressSink(id: number): ProgressSink {
+    const flush = (m: ProgressMeter, force: boolean): void => {
+      const now = Date.now()
+      const dt = now - m.lastAt
+      if (!force && dt < this.progressIntervalMs) return
+      if (dt > 0) m.speed = Math.max(0, Math.round((m.received - m.lastReceived) * 1000 / dt))
+      m.lastAt = now
+      m.lastReceived = m.received
+      this.emit({ type: 'video:progress', id, received: m.received, total: m.total, speed: m.speed })
+    }
+    return {
+      total: (n, already = 0) => {
+        this.meters.set(id, { received: already, total: n, lastAt: Date.now(), lastReceived: already, speed: 0 })
+      },
+      bytes: n => {
+        const m = this.meters.get(id)
+        if (!m) return
+        m.received = Math.max(0, m.received + n)
+        if (m.total !== null) m.received = Math.min(m.received, m.total)
+        flush(m, m.total !== null && m.received === m.total && n > 0) // 下完那一下一定发，界面能看到 100%
+      }
+    }
+  }
 
   /**
    * 清掉下载目录里没人要的半截文件（启动时调一次）：
@@ -372,7 +409,8 @@ export class Downloader {
     url: string,
     target: string,
     headers: Record<string, string>,
-    aborter: AbortController
+    aborter: AbortController,
+    progress?: ProgressSink
   ): Promise<void> {
     const idle = new AbortController()
     const signal = AbortSignal.any([aborter.signal, idle.signal])
@@ -390,9 +428,10 @@ export class Downloader {
         throw new Error('bad_mp4')
       }
       const expected = contentLength(response)
+      progress?.total(expected)
       armIdle()
       const watchdog = new Transform({
-        transform(chunk, _enc, cb) { armIdle(); cb(null, chunk) }
+        transform(chunk, _enc, cb) { armIdle(); progress?.bytes(chunk.length); cb(null, chunk) }
       })
       await pipeline(
         Readable.fromWeb(response.body as import('stream/web').ReadableStream, { signal }),
@@ -416,13 +455,15 @@ export class Downloader {
     total: number,
     headers: Record<string, string>,
     aborter: AbortController,
-    group: AbortController
+    group: AbortController,
+    progress?: ProgressSink
   ): Promise<void> {
     const expected = range.end - range.start + 1
     const requestRange = `bytes=${range.start}-${range.end}`
     for (let attempt = 1; attempt <= SEGMENT_MAX_ATTEMPTS; attempt++) {
       if (aborter.signal.aborted || group.signal.aborted) throw new Error('AbortError')
       rmSync(range.path, { force: true })
+      let attemptBytes = 0
       const idle = new AbortController()
       const signal = AbortSignal.any([aborter.signal, group.signal, idle.signal])
       let idleTimer: ReturnType<typeof setTimeout> | null = null
@@ -447,7 +488,7 @@ export class Downloader {
         }
         armIdle()
         const watchdog = new Transform({
-          transform(chunk, _enc, cb) { armIdle(); cb(null, chunk) }
+          transform(chunk, _enc, cb) { armIdle(); attemptBytes += chunk.length; progress?.bytes(chunk.length); cb(null, chunk) }
         })
         await pipeline(
           Readable.fromWeb(response.body as import('stream/web').ReadableStream, { signal }),
@@ -458,6 +499,7 @@ export class Downloader {
         return
       } catch (err) {
         rmSync(range.path, { force: true })
+        progress?.bytes(-attemptBytes) // 这一段作废重下，已经算进进度的字节退回去
         if (aborter.signal.aborted || group.signal.aborted) throw err
         const failure = idle.signal.aborted
           ? new Error(`download_idle_timeout：${Math.round(this.idleTimeoutMs / 1000)} 秒没收到数据`)
@@ -498,8 +540,12 @@ export class Downloader {
 
     const completed = new Set(this.completedSegmentPaths(id))
     const missing = session.ranges.filter(range => !completed.has(range.path))
+    // 暂停前已经下完的段算进已收到的字节，继续后百分比从那里接着走
+    const already = session.ranges.filter(range => completed.has(range.path)).reduce((n, r) => n + r.end - r.start + 1, 0)
+    const progress = this.progressSink(id)
+    progress.total(session.total, already)
     const group = new AbortController()
-    const tasks = missing.map(range => this.downloadSegment(url, range, session!.total, headers, aborter, group))
+    const tasks = missing.map(range => this.downloadSegment(url, range, session!.total, headers, aborter, group, progress))
     try {
       await Promise.all(tasks)
     } catch (err) {
@@ -625,7 +671,7 @@ export class Downloader {
             const segmented = this.segmentCount() > 1
               ? await this.downloadSegmented(id, url, sourcePart, headers, aborter, cleanupPaths)
               : false
-            if (!segmented) await this.downloadSingle(url, sourcePart, headers, aborter)
+            if (!segmented) await this.downloadSingle(url, sourcePart, headers, aborter, this.progressSink(id))
           } catch (err) {
             if (aborter.signal.aborted) throw err
             lastErr = err
@@ -758,6 +804,7 @@ export class Downloader {
       }
       this.emit({ type: 'video:status', id, status: 'failed', error: code })
     } finally {
+      this.meters.delete(id)
       for (const key of reservedKeys) this.reservedStems.delete(key)
       this.aborters.delete(id)
       this.abortReasons.delete(id) // 兜底清理：若下载在 abort 前已完成（catch 未走），不留陈旧快照
