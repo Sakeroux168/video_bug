@@ -84,7 +84,8 @@ describe('卡住的任务（R20）', () => {
     ] as never)
 
     render(<TaskList notify={() => {}} />)
-    expect(await screen.findByText('卡住了，已跳过')).toBeInTheDocument()
+    // 需求变更（2026-10-06 界面 D1）：状态列只放短标签「卡住了」，完整说明在任务下面的整行提示里
+    expect(await screen.findByText('卡住了')).toBeInTheDocument()
     expect(screen.getByText(/卡住了，已跳过（可点「继续」重试）/)).toBeInTheDocument()
     expect(screen.getAllByText('已暂停')).toHaveLength(1) // 用户自己暂停的照旧
     expect(screen.getAllByRole('button', { name: '继续' })).toHaveLength(2)

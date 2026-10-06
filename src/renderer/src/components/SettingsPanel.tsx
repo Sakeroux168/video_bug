@@ -13,8 +13,14 @@ function fmtBytes(n: number): string {
   return `${n} B`
 }
 
-export default function SettingsPanel() {
+/** onDirtyChange：有没有改了还没保存的内容（D3：App 据此在切页前提醒，以前切走改动就悄悄丢了） */
+export default function SettingsPanel({ onDirtyChange }: { onDirtyChange?: (dirty: boolean) => void } = {}) {
   const [s, setS] = useState<AppSettings | null>(null)
+  /** 最近一次从主进程读到 / 保存成功的设置（JSON），和当前输入框比较就知道改没改 */
+  const [saved, setSaved] = useState<string | null>(null)
+  const dirty = s !== null && saved !== null && JSON.stringify(s) !== saved
+  useEffect(() => { onDirtyChange?.(dirty) }, [dirty, onDirtyChange])
+  useEffect(() => () => onDirtyChange?.(false), [onDirtyChange])
   // 消息带上成败语义：此前成功与失败共用同一个绿色 span，
   // 「AI 连接失败：xxx」会被渲染成绿色，用户一眼看过去以为成功了。
   const [msg, setMsg] = useState<{ text: string; kind: 'ok' | 'err' } | null>(null)
@@ -28,7 +34,7 @@ export default function SettingsPanel() {
   async function refreshAsr(): Promise<void> { setAsr(await api.getAsrStatus()) }
 
   useEffect(() => {
-    void api.getSettings().then(setS)
+    void api.getSettings().then(v => { setS(v); setSaved(JSON.stringify(v)) })
     void refreshAsr()
     // Task14：订阅 ASR 模型下载进度，画进度条；组件卸载时取消订阅
     const off = api.onAsrProgress(p => setProgress(p))
@@ -57,6 +63,7 @@ export default function SettingsPanel() {
       : { ...s, stuckTimeoutMin: stuck, downloadSegments: segments }
     if (toSave !== s) setS(toSave)
     await api.saveSettings(toSave)
+    setSaved(JSON.stringify(toSave))
     if (segments !== s.downloadSegments) ok(`已保存（分段数只能 1-4，已按 ${segments} 段保存）`)
     else ok(stuck === s.stuckTimeoutMin ? '已保存' : `已保存（卡住判定只能 2-60 分钟，已按 ${stuck} 分钟保存）`)
     setTimeout(() => setMsg(null), 1500)
@@ -313,7 +320,10 @@ export default function SettingsPanel() {
       </div>
 
       <div data-settings-actions className="sticky bottom-0 z-10 flex items-center gap-3 rounded-lg border border-slate-200 bg-white p-3 shadow-lg">
-        <button className={btnPrimary} onClick={() => void save()}>保存设置</button>
+        {/* 圆点不算进按钮名字（aria-hidden），按钮始终叫「保存设置」 */}
+        <button className={btnPrimary} title={dirty ? '有修改还没保存' : undefined} onClick={() => void save()}>
+          保存设置{dirty && <span aria-hidden="true" data-testid="settings-dirty"> ●</span>}
+        </button>
         {msg && <span className={`text-sm ${msg.kind === 'err' ? 'text-danger-600' : 'text-success-600'}`}>{msg.text}</span>}
       </div>
     </div>

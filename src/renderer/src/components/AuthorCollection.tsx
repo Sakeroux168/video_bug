@@ -180,14 +180,21 @@ export default function AuthorCollection({ notify }: { notify: Notify }) {
     setSelected(new Set())
   }
 
+  // D2：删作者会连带删掉视频记录和追更依据（最新视频日期），以前一点就删、没法撤销，所以先确认
+  const AFTER_DELETE = '和追更记录，已下载的文件留在磁盘上。'
   async function deleteSelected(): Promise<void> {
     if (selected.size === 0) return
+    const picked = authors.filter(a => selected.has(a.id))
+    const videos = picked.reduce((n, a) => n + (a.video_count ?? 0), 0)
+    if (!window.confirm(`确定删除选中的 ${selected.size} 个作者？会删掉这些作者的 ${videos} 条视频记录${AFTER_DELETE}`)) return
     await api.deleteAuthors([...selected])
     setSelected(new Set())
     notify(`已删除 ${selected.size} 个作者`)
     refresh()
   }
   async function deleteOne(id: number): Promise<void> {
+    const a = authors.find(x => x.id === id)
+    if (!window.confirm(`确定删除作者「${a?.nickname ?? id}」？会删掉这个作者的 ${a?.video_count ?? 0} 条视频记录${AFTER_DELETE}`)) return
     await api.deleteAuthors([id])
     notify('已删除该作者')
     refresh()
