@@ -66,7 +66,9 @@ describe('登录状态与暂停原因', () => {
     await waitFor(() => expect(submit).toHaveBeenCalledTimes(1))
   })
 
-  it.each(['login_required', 'stalled_verify'])('暂停原因 %s 在主任务行显示，不需要展开', async error => {
+  // 需求变更（2026-10-06 界面 D1）：主任务行的状态列只放短标签，完整原因和「打开窗口」按钮挪到紧跟着的整行提示里；
+  // 仍然不需要展开就能看到、能点
+  it.each(['login_required', 'stalled_verify'])('暂停原因 %s 不需要展开就能看到', async error => {
     vi.mocked(window.api.listTasks).mockResolvedValue([{
       id: 1, platform: 'kuaishou', type: 'keyword', query: '猫咪', status: 'paused', error,
       filters: '{}', target_count: 1, fetched_count: 0, auto_download: 0,
@@ -74,7 +76,8 @@ describe('登录状态与暂停原因', () => {
     } as TaskRow])
     render(<TaskList notify={() => {}} />)
     const text = await screen.findByText(error === 'login_required' ? /快手没登录/ : /快手需要验证/)
-    expect(text.closest('tr')).toHaveTextContent('展开')
+    expect(text.closest('tr')?.previousElementSibling).toHaveTextContent('展开') // 紧跟在任务行下面
+    expect(screen.getByTestId('task-status-1')).toHaveTextContent(error === 'login_required' ? '没登录' : '需要验证')
     fireEvent.click(screen.getByText('打开快手窗口'))
     expect(window.api.openBrowserFor).toHaveBeenCalledWith('kuaishou')
     expect(window.api.listTaskVideos).not.toHaveBeenCalled()

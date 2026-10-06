@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { Notice, useNotice } from './components/Notice'
 import { SideNav, btn, type NavItem } from './components/ui'
 import Overview from './components/Overview'
@@ -29,7 +29,16 @@ const PAGE_TITLE: Record<string, string> = Object.fromEntries(NAV.map(n => [n.ke
 export default function App(): JSX.Element {
   // 默认落地页 = 概览。已核查：两个渲染 <App/> 的测试用 getByText/getByPlaceholderText，
   // 不过滤可见性，任务页 hidden 时元素仍在 DOM 且可点击，改默认不影响它们。
-  const [tab, setTab] = useState('overview')
+  const [tab, setTabRaw] = useState('overview')
+  // D3：设置页有没保存的修改时，切到别的页先问一声（以前切走改动就悄悄丢了）
+  const settingsDirty = useRef(false)
+  const onSettingsDirty = useCallback((d: boolean) => { settingsDirty.current = d }, [])
+  const setTab = useCallback((next: string) => {
+    if (next === tab) return
+    if (tab === 'settings' && settingsDirty.current && !window.confirm('设置改了还没保存，要放弃这些修改吗？')) return
+    settingsDirty.current = false
+    setTabRaw(next)
+  }, [tab])
 
   // 拖音窗口显隐：由 tab **推导**，而不是散在每个点击回调里手动调。
   // 此前 Tabs.onChange 一处、引导条另手抄一处（因为它绕过 onChange 直接 setTab）——
@@ -156,7 +165,7 @@ export default function App(): JSX.Element {
         {/* 处理状态住在主进程，切走再切回来只是重新拉一次快照，条件渲染即可 */}
         {tab === 'process' && <VideoProcessPanel notify={notify} />}
         {tab === 'browser' && <BrowserPanel />}
-        {tab === 'settings' && <SettingsPanel />}
+        {tab === 'settings' && <SettingsPanel onDirtyChange={onSettingsDirty} />}
         {tab === 'help' && <HelpPanel />}
         </main>
       </div>

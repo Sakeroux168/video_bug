@@ -124,6 +124,15 @@ function formatDuration(sec: number): string {
 }
 
 /** 作者追更任务的起始日期（filters 是 custom 且只有起点）；不是这类任务返回 '' */
+/** D1：暂停原因的短标签（状态列只放这个；完整说明和按钮在任务下面的整行提示里） */
+const PAUSE_BADGE: Record<string, string> = {
+  login_required: '没登录', stalled_verify: '需要验证', stalled: '没有新结果', stuck: '卡住了', risk: '疑似风控'
+}
+function statusBadge(t: TaskRow): string {
+  if (t.status === 'paused' && t.error && PAUSE_BADGE[t.error]) return PAUSE_BADGE[t.error]
+  return TASK_STATUS_LABEL[t.status] ?? t.status
+}
+
 function followUpStart(filters: string | null): string {
   try {
     const f = JSON.parse(filters ?? '{}') as { timeRange?: string; startDate?: string; endDate?: string }
@@ -220,6 +229,15 @@ export default function TaskList({ notify, refreshVersion = 0 }: { notify: Notif
     })
     return off
   }, [coalescedRefresh])
+
+  /** D2：删任务会删掉它的全部视频记录（正在跑的还会被停下），以前一点就删，先确认 */
+  function deleteTask(t: TaskRow): void {
+    const name = t.author_nickname ?? t.query
+    const n = stats[t.id]?.total ?? 0
+    const running = t.status === 'running' ? '这个任务正在跑，会先停下来。' : ''
+    if (!window.confirm(`确定删除任务「${name}」？${running}会删掉它的 ${n} 条视频记录，已下载的文件留在磁盘上。`)) return
+    void api.deleteTask(t.id).then(() => { notify(`已删除任务「${name}」`); refresh() })
+  }
 
   async function toggleExpand(id: number): Promise<void> {
     const next = new Set(expanded)
@@ -397,16 +415,25 @@ export default function TaskList({ notify, refreshVersion = 0 }: { notify: Notif
       {tasks.length === 0 ? (
         <div className="py-8 text-center text-sm text-slate-400">暂无任务，先在上方「筛选条件」发起抓取</div>
       ) : (
-        <table className="w-full border-collapse text-sm">
+        // D1：固定列宽——以前状态列只有 64px，暂停原因被挤成七八行一竖条，一屏只看得到三四个任务
+        <table className="w-full table-fixed border-collapse text-sm">
+          <colgroup>
+            <col className="w-36" />
+            <col />
+            <col className="w-48" />
+            <col className="w-56" />
+            <col className="w-24" />
+            <col className="w-36" />
+          </colgroup>
           <thead>
             <tr className="border-b border-slate-200 text-left text-xs text-slate-500">
               <th className="whitespace-nowrap py-2 pr-3 font-normal">
                 <input type="checkbox" aria-label="全选任务" className="mr-2" checked={tasks.length > 0 && pickedTasks.length === tasks.length} onChange={() => setSelectedTasks(pickedTasks.length === tasks.length ? new Set() : new Set(tasks.map(t => t.id)))} />平台/类型
               </th>
               <th className="py-2 pr-3 font-normal">关键词</th>
-              <th className="w-52 py-2 pr-3 font-normal">进度</th>
-              <th className="w-72 py-2 pr-3 font-normal">下载统计</th>
-              <th className="w-16 py-2 pr-3 font-normal">状态</th>
+              <th className="py-2 pr-3 font-normal">进度</th>
+              <th className="py-2 pr-3 font-normal">下载统计</th>
+              <th className="py-2 pr-3 font-normal">状态</th>
               <th className="py-2 font-normal">操作</th>
             </tr>
           </thead>
@@ -462,24 +489,9 @@ export default function TaskList({ notify, refreshVersion = 0 }: { notify: Notif
                         <span className="text-xs text-slate-400">—</span>
                       )}
                     </td>
-                    <td className={`whitespace-nowrap py-2 pr-3 text-xs ${t.status === 'failed' ? 'text-red-500' : t.status === 'running' ? 'text-sky-600' : 'text-slate-500'}`}>
-                      {/* R20：看门狗判卡住的任务单独说清楚，别只显示一个「已暂停」让人以为是自己点的 */}
-                      {t.status === 'paused' && t.error === 'stuck' ? <span className="text-amber-600">卡住了，已跳过</span> : TASK_STATUS_LABEL[t.status]}
-                      {t.status === 'paused' && (t.error === 'login_required' || t.error === 'stalled_verify') && (
-                        <div className="mt-1 max-w-56 whitespace-normal text-amber-700">
-                          <span>{platformLabel(t.platform)}{t.error === 'login_required' ? '没登录' : '需要验证'} → </span>
-                          <button className="text-brand-600 hover:underline" onClick={e => {
-                            e.stopPropagation()
-                            void api.openBrowserFor(t.platform).then(r => { if (!r.ok) notify(r.error ?? '打开窗口失败') }).catch(() => notify('打开窗口失败'))
-                          }}>打开{platformLabel(t.platform)}窗口</button>
-                          <span>，{t.error === 'login_required' ? '登好' : '完成验证'}后点「继续」</span>
-                        </div>
-                      )}
-                      {t.status === 'paused' && t.error === 'stalled' && <div className="mt-1 max-w-56 whitespace-normal text-amber-700">没有新结果，已暂停。请先确认平台是否要求登录或验证，再试其他关键词。</div>}
-                      {/* 追更（作者 + 起始日期）抓完 0 条：说清是「博主没更新」，不是软件没抓到 */}
-                      {t.status === 'done' && t.type === 'author' && t.fetched_count === 0 && followUpStart(t.filters) && (
-                        <div className="mt-1 max-w-56 whitespace-normal text-slate-500">{followUpStart(t.filters)} 以后没有新作品</div>
-                      )}
+                    <td data-testid={`task-status-${t.id}`} className={`truncate py-2 pr-3 text-xs ${t.status === 'failed' ? 'text-red-500' : t.status === 'running' ? 'text-sky-600' : t.status === 'paused' && t.error && PAUSE_BADGE[t.error] ? 'text-amber-600' : 'text-slate-500'}`}>
+                      {/* R20：看门狗判卡住的任务单独说清楚，别只显示一个「已暂停」让人以为是自己点的；完整原因见下面整行 */}
+                      {statusBadge(t)}
                     </td>
                     <td className="whitespace-nowrap py-2" onClick={e => e.stopPropagation()}>
                       <div className="flex items-center gap-2 text-xs">
@@ -493,14 +505,33 @@ export default function TaskList({ notify, refreshVersion = 0 }: { notify: Notif
                         {t.status === 'paused' && (
                           <button className="text-slate-400 hover:text-slate-600" onClick={() => { void api.resumeTask(t.id).then(refresh) }}>继续</button>
                         )}
-                        <button className="text-red-400 hover:text-red-500" onClick={() => { void api.deleteTask(t.id).then(refresh) }}>删除</button>
+                        <button className="text-red-400 hover:text-red-500" onClick={() => deleteTask(t)}>删除</button>
                         <button className="text-brand-500 hover:underline" onClick={() => void toggleExpand(t.id)}>{isOpen ? '收起' : '展开'}</button>
                       </div>
                     </td>
                   </tr>
-                  {t.status === 'paused' && t.error === 'stalled_verify' && (
+                  {t.status === 'paused' && (t.error === 'login_required' || t.error === 'stalled_verify') && (
                     <tr className="border-b border-slate-100 bg-amber-50/60">
-                      <td colSpan={6} className="px-2 py-1.5 text-xs text-amber-700">浏览器正在等待人工处理验证，排队的任务暂不自动运行。</td>
+                      <td colSpan={6} className="px-2 py-1.5 text-xs text-amber-700">
+                        <span>{platformLabel(t.platform)}{t.error === 'login_required' ? '没登录' : '需要验证'} → </span>
+                        <button className="font-medium text-brand-600 hover:underline" onClick={e => {
+                          e.stopPropagation()
+                          void api.openBrowserFor(t.platform).then(r => { if (!r.ok) notify(r.error ?? '打开窗口失败') }).catch(() => notify('打开窗口失败'))
+                        }}>打开{platformLabel(t.platform)}窗口</button>
+                        <span>，{t.error === 'login_required' ? '登好' : '完成验证'}后点「继续」</span>
+                        {t.error === 'stalled_verify' && <span className="text-amber-600">（浏览器正在等人工处理验证，排队的任务暂不自动运行）</span>}
+                      </td>
+                    </tr>
+                  )}
+                  {t.status === 'paused' && t.error === 'stalled' && (
+                    <tr className="border-b border-slate-100 bg-amber-50/60">
+                      <td colSpan={6} className="px-2 py-1.5 text-xs text-amber-700">没有新结果，已暂停。请先确认平台是否要求登录或验证，再试其他关键词。</td>
+                    </tr>
+                  )}
+                  {/* 追更（作者 + 起始日期）抓完 0 条：说清是「博主没更新」，不是软件没抓到 */}
+                  {t.status === 'done' && t.type === 'author' && t.fetched_count === 0 && followUpStart(t.filters) && (
+                    <tr className="border-b border-slate-100">
+                      <td colSpan={6} className="px-2 py-1.5 text-xs text-slate-500">{followUpStart(t.filters)} 以后没有新作品</td>
                     </tr>
                   )}
                   {t.status === 'paused' && t.error === 'risk' && (
