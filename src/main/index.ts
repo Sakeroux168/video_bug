@@ -2,7 +2,7 @@ import { app, BrowserWindow, ipcMain, shell } from 'electron'
 import { allowedPermission, isAppUrl } from './security'
 import { join } from 'path'
 import { DatabaseSync } from 'node:sqlite'
-import { initDb } from './db'
+import { initDb, tuneDb } from './db'
 import { VideoBrowser } from './browser'
 import { Scheduler } from './scheduler'
 import { Downloader } from './downloader'
@@ -157,6 +157,7 @@ if (!gotSingleInstanceLock) {
 app.whenReady().then(() => {
   if (!gotSingleInstanceLock) return
   const db = new DatabaseSync(join(app.getPath('userData'), 'scraper.db'))
+  tuneDb(db) // WAL + NORMAL：写库快几十倍（性能检查 F2）
   initDb(db)
 
   createWindow()

@@ -4,7 +4,7 @@ import type { AppSettings, TaskRow, TaskStatus, Filters } from '../shared/types'
 import { ERROR, clampStuckTimeoutMin } from '../shared/types'
 import { filterVideos, dedupeVideos, extractCategory, chinaDayStartSec, chinaDayEndSec } from './extractor'
 import { isRiskSignal } from './errors'
-import { upsertAuthor, setAuthorVerify, refreshSeenVideo } from './db'
+import { upsertAuthor, setAuthorVerify, refreshSeenVideo, inTransaction } from './db'
 import { looseNicknameMatch } from './nicknameMatch'
 import type { Analyzer } from './analyzer'
 import type { Downloader } from './downloader'
@@ -1127,26 +1127,32 @@ export class Scheduler {
       const category = this.task?.type === 'keyword' && this.task.query
         ? this.task.query.slice(0, 20)
         : extractCategory(item.title)
-      const author = upsertAuthor(db, item, adapter.name, category)
       // Task5 下载方式：自动下载 → 入 pending 并交给下载器；手动 → 仅收集（collected），不进下载队列
       const status = this.autoDownload ? 'pending' : 'collected'
-      const info = db.prepare(
-        `INSERT OR IGNORE INTO videos (platform,task_id,aweme_id,title,author_id,play_addr,source_url,cover_url,video_width,video_height,duration,publish_time,stats,status,ai_verdict,fetched_at)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
-      ).run(adapter.name, this.taskId, item.awemeId, item.title, author.id, item.playUrl,
-           item.sourceUrl || null, item.coverUrl || null, item.width, item.height, item.durationSec,
-           new Date(item.publishTime * 1000).toISOString(), JSON.stringify({ likes: item.likes, comments: item.comments }),
-           status, 'pass', new Date().toISOString())
+      // 性能 F2：登记作者 + 入库 + 作者计数合成一次提交（以前每条视频 3～4 次落盘）
+      const info = inTransaction(db, () => {
+        const author = upsertAuthor(db, item, adapter.name, category)
+        const r = db.prepare(
+          `INSERT OR IGNORE INTO videos (platform,task_id,aweme_id,title,author_id,play_addr,source_url,cover_url,video_width,video_height,duration,publish_time,stats,status,ai_verdict,fetched_at)
+           VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
+        ).run(adapter.name, this.taskId, item.awemeId, item.title, author.id, item.playUrl,
+             item.sourceUrl || null, item.coverUrl || null, item.width, item.height, item.durationSec,
+             new Date(item.publishTime * 1000).toISOString(), JSON.stringify({ likes: item.likes, comments: item.comments }),
+             status, 'pass', new Date().toISOString())
+        if (r.changes > 0) {
+          if (!author.created) db.prepare('UPDATE authors SET video_count = video_count + 1 WHERE id = ?').run(author.id)
+        } else refreshSeenVideo(db, adapter.name, item) // 已在库里：更新点赞，没下好的换新地址
+        return r
+      })
       if (info.changes > 0) {
         this.fetched++
         this.lastFetchedAt = Date.now() // T4：有新视频入库，重置"15 秒无新视频"计时
-        if (!author.created) db.prepare('UPDATE authors SET video_count = video_count + 1 WHERE id = ?').run(author.id)
         if (this.autoDownload) {
           const vid = Number(info.lastInsertRowid)
           this.pendingVideoIds.push(vid)
           this.deps.downloader.enqueue(vid)
         }
-      } else refreshSeenVideo(db, adapter.name, item) // 已在库里：更新点赞，没下好的换新地址
+      }
     }
     // R11-2：爬满 → 中断在途滚动（复用暂停信号：滚动脚本下个检查点即退，~550ms 内停；
     // 滚动未在跑时 send 无害——下次脚本开头会清标志），循环轮末立即进 reached，不再白等整轮

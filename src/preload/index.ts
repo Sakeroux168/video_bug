@@ -11,6 +11,7 @@ const api = {
   listTasks: (): Promise<TaskRow[]> => ipcRenderer.invoke('task:list'),
   listTaskVideos: (taskId: number): Promise<VideoRow[]> => ipcRenderer.invoke('task:video:list', taskId),
   getTaskStats: (taskId: number): Promise<TaskStats> => ipcRenderer.invoke('task:stats', taskId),
+  getTaskStatsMany: (ids: number[]): Promise<Record<number, TaskStats>> => ipcRenderer.invoke('task:statsMany', ids),
   pauseTask: (id: number): Promise<void> => ipcRenderer.invoke('task:pause', id),
   resumeTask: (id: number): Promise<void> => ipcRenderer.invoke('task:resume', id),
   deleteTask: (id: number): Promise<void> => ipcRenderer.invoke('task:delete', id),

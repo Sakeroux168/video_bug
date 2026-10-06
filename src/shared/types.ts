@@ -233,6 +233,8 @@ export const ERROR = {
 export interface GlobalStats {
   videos: { total: number; pending: number; downloading: number; done: number; failed: number; filtered: number; collected: number; cancelled: number; paused: number }
   tasks: { total: number; pending: number; running: number; done: number; paused: number; failed: number }
+  /** 概览页作者卡片的三个数（老版本主进程没有这一项，界面要兼容 undefined） */
+  authors?: { total: number; pendingVerify: number; uncategorized: number }
 }
 
 /** 概览页：最近完成的下载一行 */

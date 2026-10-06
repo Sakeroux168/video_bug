@@ -24,6 +24,11 @@ function freshApi(): Api {
     getTaskStats: vi.fn(async () => ({
       total: 0, done: 0, failed: 0, downloading: 0, pending: 0, filtered: 0, collected: 0, cancelled: 0, paused: 0
     })),
+    // 默认转调 getTaskStats，老测试只 mock 了 getTaskStats 也照样能用
+    getTaskStatsMany: vi.fn(async (ids: number[]) => {
+      const all = await Promise.all(ids.map(id => window.api.getTaskStats(id)))
+      return Object.fromEntries(ids.map((id, i) => [id, all[i]])) as Record<number, Awaited<ReturnType<typeof window.api.getTaskStats>>>
+    }),
     pauseTask: vi.fn(async () => {}),
     resumeTask: vi.fn(async () => {}),
     deleteTask: vi.fn(async () => {}),
@@ -43,7 +48,8 @@ function freshApi(): Api {
     deleteAuthors: vi.fn(async () => true),
     getGlobalStats: vi.fn(async () => ({
       videos: { total: 0, pending: 0, downloading: 0, done: 0, failed: 0, filtered: 0, collected: 0, cancelled: 0, paused: 0 },
-      tasks: { total: 0, pending: 0, running: 0, done: 0, paused: 0, failed: 0 }
+      tasks: { total: 0, pending: 0, running: 0, done: 0, paused: 0, failed: 0 },
+      authors: { total: 0, pendingVerify: 0, uncategorized: 0 }
     })),
     listDownloadedVideos: vi.fn(async () => []),
     getRecentDownloads: vi.fn(async () => []),

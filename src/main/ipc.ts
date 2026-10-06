@@ -1,7 +1,7 @@
 import { app, ipcMain, BrowserWindow, dialog, shell, clipboard } from 'electron'
 import type { DatabaseSync } from 'node:sqlite'
 import { existsSync, statSync } from 'node:fs'
-import { createTask, listTasks, listVideos, listDeletedVideos, restoreVideos, listDownloadedVideos, listAuthors, setTaskStatus, setVideoStatus, updateAuthorCategory, deleteAuthors, taskStats, insertAuthorIfAbsent, globalStats, recentDownloads } from './db'
+import { createTask, listTasks, listVideos, listDeletedVideos, restoreVideos, allTaskStats, listDownloadedVideos, listAuthors, setTaskStatus, setVideoStatus, updateAuthorCategory, deleteAuthors, taskStats, insertAuthorIfAbsent, globalStats, recentDownloads } from './db'
 import { getSettings, saveSettings } from './settings'
 import { deleteVideoRows } from './videoDelete'
 import { scanFilesTree, deleteFileDir, deleteFileVideo, locateFileDir, locateVideoFile } from './fileManager'
@@ -83,6 +83,8 @@ export function registerIpc(deps: IpcDeps): void {
   })))
   handle('task:video:listDeleted', (_e, taskId: number) => listDeletedVideos(db, taskId))
   handle('task:stats', (_e, taskId: number) => taskStats(db, taskId))
+  // 任务列表一次拿全部任务的统计（以前每个任务一次 IPC + 一次查询，下载时每秒要刷一两轮）
+  handle('task:statsMany', (_e, ids: number[]) => allTaskStats(db, Array.isArray(ids) ? ids : []))
   // A1：先等 scheduler.pause()（run 完全退出）再置状态，避免渲染层立刻看到 paused 而 run 还在收尾。
   // R20：pause() 最多等 10 秒，等不到就强制停，按钮不会再跟着卡死；
   // 只叫停「正在跑的就是它」的情况——以前不管暂停哪个任务都会把正在跑的那个停掉。
