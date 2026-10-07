@@ -6,7 +6,8 @@ import { getSettings, saveSettings } from './settings'
 import { deleteVideoRows } from './videoDelete'
 import { scanFilesTreeAsync, deleteFileDir, deleteFileVideo, locateFileDir, locateVideoFile } from './fileManager'
 import { listAdapters, getAdapter } from './adapters'
-import type { ProcessOptions } from '../shared/types'
+import type { LibraryQuery, ProcessOptions, VideoMark } from '../shared/types'
+import { listLibrary, listLibraryTasks, setVideoMark, setVideoNote, videoFileFor } from './library'
 import type { Scheduler } from './scheduler'
 import type { Downloader } from './downloader'
 import type { VideoProcessor } from './videoProcessor'
@@ -378,4 +379,22 @@ export function registerIpc(deps: IpcDeps): void {
   })
   // 定位已下载的视频文件（在资源管理器中选中该文件）
   handle('video:locate', (_e, p: string) => { if (p) shell.showItemInFolder(p) })
+
+  // 素材库（2026-10-07）：列表 / 任务下拉 / 标记 / 备注；播放和定位只收视频 id，路径由主进程从库里取
+  handle('library:list', (_e, q: LibraryQuery) => listLibrary(db, q && typeof q === 'object' ? q : {}))
+  handle('library:tasks', () => listLibraryTasks(db))
+  handle('library:mark', (_e, ids: number[], mark: VideoMark | null) => { setVideoMark(db, Array.isArray(ids) ? ids : [], mark ?? null); return true })
+  handle('library:note', (_e, id: number, note: string) => { setVideoNote(db, Number(id), String(note ?? '')); return true })
+  handle('library:play', async (_e, id: number) => {
+    const file = videoFileFor(db, Number(id))
+    if (!file) return { ok: false, error: '找不到这个视频文件（可能被移走或删掉了）' }
+    const err = await shell.openPath(file)
+    return err ? { ok: false, error: err } : { ok: true }
+  })
+  handle('library:locate', (_e, id: number) => {
+    const file = videoFileFor(db, Number(id))
+    if (!file) return { ok: false, error: '找不到这个视频文件（可能被移走或删掉了）' }
+    shell.showItemInFolder(file)
+    return { ok: true }
+  })
 }

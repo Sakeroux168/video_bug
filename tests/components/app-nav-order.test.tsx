@@ -11,7 +11,8 @@ describe('App：左侧导航顺序与「视频处理」页', () => {
     installFakeApi()
     const { container } = render(<App />)
     const labels = Array.from(container.querySelectorAll('nav button')).map(b => b.getAttribute('aria-label'))
-    expect(labels).toEqual(['概览', '任务', '作者收藏', '文件管理', '视频处理', '内置浏览器', '设置', '使用说明'])
+    // 需求变更（2026-10-07）：新增「素材库」，放在文件管理和视频处理之间
+    expect(labels).toEqual(['概览', '任务', '作者收藏', '文件管理', '素材库', '视频处理', '内置浏览器', '设置', '使用说明'])
   })
 
   it('点「视频处理」渲染处理页（标题与开始按钮），并拉取一次当前处理状态', async () => {

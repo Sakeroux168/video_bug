@@ -73,6 +73,25 @@ export interface TaskProgressEvent {
   reSearchCount?: number
 }
 
+/** 素材库标记 */
+export type VideoMark = 'star' | 'todo' | 'used'
+
+/** 素材库查询（全部可选）：sort 默认按下载时间从新到旧；mark='none' = 没标记的 */
+export interface LibraryQuery {
+  search?: string
+  platform?: string
+  taskId?: number
+  mark?: VideoMark | 'none'
+  sort?: 'downloaded' | 'likes' | 'collects' | 'published'
+  page?: number
+  pageSize?: number
+}
+
+/** 素材库的一条：视频行 + 所属任务的关键词 */
+export interface LibraryRow extends VideoRow {
+  task_query: string | null
+}
+
 export interface VideoRow {
   id: number; platform: string; task_id: number; aweme_id: string; title: string
   author_id: number | null; play_addr: string | null; source_url: string | null; duration: number
@@ -86,6 +105,10 @@ export interface VideoRow {
   file_size: number | null; error: string | null; retry_count: number
   fetched_at: string; downloaded_at: string | null
   author_nickname?: string | null // listVideos 联查 authors 得到的作者昵称
+  /** 素材库标记：star 星标 / todo 待用 / used 已用；没标记为 null */
+  mark?: VideoMark | null
+  /** 素材库备注 */
+  note?: string | null
 }
 
 export interface AuthorRow {
