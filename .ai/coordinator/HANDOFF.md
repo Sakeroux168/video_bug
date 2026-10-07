@@ -1,6 +1,6 @@
 # video_bug 当前交接
 
-> 当前执行快照，随进度重写；历史看 Git。更新于 2026-10-07（自动化合并后）。
+> 当前执行快照，随进度重写；历史看 Git。更新于 2026-10-07（Electron 44 合并后）。
 
 ## 基线
 
@@ -36,7 +36,10 @@
 - 视频处理改进 ✅ PR #39：默认「尺寸对、H.264/HEVC、mp4/mov」就跳过（严格 H.264 为选项）；码率上限原片 × 1.2（保底 800k），AAC 音频直接复制；默认输出到「已处理」文件夹、原片不动（原地替换为选项）；强制竖屏 / 横屏；前后大小 + 完成汇总 + 打开文件夹；文件管理「统一分辨率」入口。
 - 素材库 ✅ PR #41：新页面「素材库」，封面走 vs-cover://video/<id>（只按 id 从库取路径）；筛选平台 / 关键词 / 标记 / 搜索，排序下载时间 / 点赞 / 收藏 / 发布；videos 加 mark（star/todo/used）、note 列。✅ PR #42：多选批量标记；打包交付（主进程弹窗选文件夹 → 复制不覆盖 + 来源清单.csv，可标已用、可顺便统一分辨率——processor.start 第三参数 only / dropBackup，只处理复制品且不留 .original.mp4）；设置「按关键词分文件夹」（最外层，达人主页→「达人主页」，话题带 #，默认关）；videosCsv 移到 src/shared。
 - 自动化 ✅ PR #44：托盘一直在（打开 / 现在追更一次 / 退出）；设置「关窗口缩到托盘」默认关；系统通知默认开（窗口在前台不弹，同一条 10 分钟只弹一次）；每天定时追更默认关（爬过主页的作者各建「只抓新视频」任务，错过补跑，全部结束弹汇总）。逻辑在 src/main/automation.ts，托盘 / 通知在 desktop.ts，运行记录在 userData/automation.json；crawlRequest 移到 src/shared/followCrawl.ts；托盘图标 resources/tray.png（打包 files 已加）。真机：缩托盘、通知、手动 / 定时追更、退出都验过；托盘图标本身没用鼠标点过。
-- 用户选的 1→2→3（视频处理 / 素材库 / 自动化）全部完成。后面候选：Electron 升级（单独做）、性能 C4、A8/A9、开机自启（便携版路径要处理）、按作者勾选是否参加定时追更。
+- 用户选的 1→2→3（视频处理 / 素材库 / 自动化）全部完成。
+- 定时追更挑作者 ✅ PR #47（authors.auto_follow；设置「追更哪些作者」all / picked）。开机自动启动 ✅ PR #48（只打包版写启动项，便携版用 PORTABLE_EXECUTABLE_FILE，带 --hidden 只挂托盘；没在打包版上真写启动项 / 重启验证）。
+- Electron 35 → 44 ✅ PR #49（Node 24.21 / Chromium 152）：页面跳转后之前发出的 executeJavaScript 永不返回 → 读详情等轮询全部加超时（不加小红书一条都下不了）；postinstall `install-electron --no`（42 起 npm 不再自动下 Electron 本体）；选文件夹自己记上次位置（43）；clipboard.writeText 异步（44）。真机：小红书抓 + 下、素材库、剪贴板、视频处理、通知、打包版都过；抖音 / 快手 / 语音转写没测。Electron 45 预告：沙盒 preload 没有 Buffer / setImmediate 等。
+- 后面候选：性能 C4、A8（preload 来源校验 / 下载域名白名单）、A9（AI Key 加密）。
 - 待用户决定：本机接口 bridgeEnabled 新装默认是否改为关；`.ai/coordinator/` 里的本机路径要不要清理。
 - 体验测试注意：Electron 的 `window.confirm` 是系统弹窗，会卡住整个程序、远程控制关不掉；测删除这类操作前先用 CDP 把 `window.confirm` 换成返回 true 的函数。
 - 全面检查报告和总汇总在 `E:\项目文件\视频爬取\claude工作区\全面检查\`（先看 `总汇总.md`）。
