@@ -31,6 +31,9 @@ export const SCROLL_TIMEOUT_MS = 60000
  *  页面卡死、正在跳转或渲染进程无响应时 executeJavaScript 可能永远不返回——
  *  以前调度器就卡在这一步：任务一直「进行中」、一动不动，后面排队的全都等着。 */
 export const JS_EVAL_TIMEOUT_MS = 15000
+/** 读详情 / 读页面元素这种轮询用的短超时。Electron 44 起页面一跳转，跳转前发出的 executeJavaScript
+ *  永远不返回（旧版会报错返回）；不设超时，轮询就卡在那一次上，再也不读了（真机：每条笔记都「详情超时」） */
+export const JS_POLL_TIMEOUT_MS = 3000
 
 /** R11-4：长操作强制超时——Promise.race 竞速，超时侧 reject 带 code=OP_TIMEOUT 的标记错误（不引入依赖）。
  *  R20：无论哪边先完成都清掉计时器，不留一堆悬着的 setTimeout。 */
@@ -233,7 +236,7 @@ export class VideoBrowser {
   private async hasUsableXiaohongshuPage(): Promise<boolean> {
     if (!this.win || this.win.isDestroyed()) return false
     try {
-      return Boolean(await this.win.webContents.executeJavaScript(`(() => {
+      return Boolean(await withTimeout(this.win.webContents.executeJavaScript(`(() => {
         if (document.querySelector('[data-note-id]')) return true;
         const unref = value => value && typeof value === 'object' && (value.__v_isRef || '_value' in value || 'value' in value)
           ? (value._value ?? value.value ?? value._rawValue) : value;
@@ -244,7 +247,7 @@ export class VideoBrowser {
         if (Array.isArray(search.feeds) && search.feeds.length > 0) return true;
         const user = s.user || {};
         return Array.isArray(user.notes) && user.notes.length > 0;
-      })()`))
+      })()`), JS_EVAL_TIMEOUT_MS, '查页面内容'))
     } catch { return false }
   }
 
@@ -261,7 +264,7 @@ export class VideoBrowser {
     const script = adapter.buildDetailDomScript(noteId)
     if (!script) return null
     try {
-      const raw = await this.win.webContents.mainFrame.executeJavaScript(script)
+      const raw = await withTimeout(this.win.webContents.mainFrame.executeJavaScript(script), JS_POLL_TIMEOUT_MS, '读详情')
       const item = adapter.parseDetail(raw)
       return item?.awemeId === noteId ? item : null
     } catch { return null }
@@ -309,8 +312,8 @@ export class VideoBrowser {
     const wc = this.win.webContents
     const readNoteIds = async (): Promise<string[]> => {
       try {
-        const value = await wc.executeJavaScript(`(() => [...document.querySelectorAll('[data-note-id]')]
-          .map(el => (el.getAttribute('data-note-id') || '').trim()).filter(Boolean))()`)
+        const value = await withTimeout(wc.executeJavaScript(`(() => [...document.querySelectorAll('[data-note-id]')]
+          .map(el => (el.getAttribute('data-note-id') || '').trim()).filter(Boolean))()`), JS_EVAL_TIMEOUT_MS, '读笔记列表')
         return Array.isArray(value) ? value.filter((v): v is string => typeof v === 'string') : []
       } catch { return [] }
     }
@@ -360,7 +363,7 @@ export class VideoBrowser {
               return null;
             })()`
       try {
-        const value = await wc.executeJavaScript(script) as { x?: unknown; y?: unknown } | null
+        const value = await withTimeout(wc.executeJavaScript(script), JS_EVAL_TIMEOUT_MS, '找筛选按钮') as { x?: unknown; y?: unknown } | null
         return value && Number.isFinite(Number(value.x)) && Number.isFinite(Number(value.y))
           ? { x: Number(value.x), y: Number(value.y) } : null
       } catch { return null }
