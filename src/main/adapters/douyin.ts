@@ -1,5 +1,5 @@
 import type { PlatformAdapter, VideoItem } from './types'
-import type { TaskType } from '../../shared/types'
+import type { Filters, TaskType } from '../../shared/types'
 
 /** 是否"长得像"一条抖音视频对象（新版卡片有 aweme_info 包装；老版直接带 aweme_id+video/desc/author） */
 function isAwemeLike(x: unknown): boolean {
@@ -167,6 +167,22 @@ export const douyinAdapter: PlatformAdapter = {
   displayName: '抖音',
   taskReady: true,
   interactions: ['collects', 'shares'],
+  // 真机核对（2026-10-07）：搜索页悬停「筛选」出现「排序依据 = 综合排序 / 最新发布 / 最多点赞」；
+  // 选「最多点赞」后搜索接口 /search/item/ 带 sort_type=1，「最新发布」带 sort_type=2
+  sortOptions: ['mostLiked', 'latest'],
+  nativeSearchFilters: (type, filters) => {
+    if (type === 'author' || !filters.sortBy) return []
+    const option = filters.sortBy === 'latest' ? '最新发布' : filters.sortBy === 'mostLiked' ? '最多点赞' : null
+    return option ? [{ group: '排序依据', option }] : []
+  },
+  acceptsSortedResponse: (url, filters) => {
+    const want = filters.sortBy === 'latest' ? '2' : filters.sortBy === 'mostLiked' ? '1' : null
+    if (!want) return true
+    try {
+      const u = new URL(url, 'https://www.douyin.com') // 截到的地址常常是相对路径
+      return /\/search\/item\//.test(u.pathname) && u.searchParams.get('sort_type') === want
+    } catch { return false }
+  },
   sourceHosts: ['www.douyin.com'],
   sessionPartition: 'persist:douyin',
   homeUrl: 'https://www.douyin.com/',
@@ -175,7 +191,9 @@ export const douyinAdapter: PlatformAdapter = {
   apiUrlPatterns: [/aweme\/v1\/web\//, /aweme\/v1\/app\//],
   // 与泛化前写死在注入脚本里的两条特征逐字一致，不收窄
   rawUrlHints: ['/aweme/', '/search/'],
-  buildSearchUrl: (q: string) => `https://www.douyin.com/search/${encodeURIComponent(q)}`,
+  // N01：选了排序就开「视频」标签页（?type=video）——真机上只有这一页的搜索接口 /search/item/ 带 sort_type，
+  // 「综合」页的接口看不出排没排过序
+  buildSearchUrl: (q: string, filters?: Filters) => `https://www.douyin.com/search/${encodeURIComponent(q)}${filters?.sortBy ? '?type=video' : ''}`,
   buildAuthorUrl: (secUid: string) => `https://www.douyin.com/user/${secUid}`,
   buildHashtagUrl: (q: string) => `https://www.douyin.com/search/%23${encodeURIComponent(q)}`,
   buildVideoUrl,

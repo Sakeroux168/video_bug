@@ -6,7 +6,7 @@ import { installFakeApi } from '../helpers/fake-api'
 // 2026-10-07 功能 N02：只抓热门——新建抓取表单里可以设「最少点赞」「最少收藏」
 
 const platforms = [
-  { name: 'douyin', displayName: '抖音', authorInputPlaceholder: '', taskReady: true, interactions: ['collects', 'shares'] },
+  { name: 'douyin', displayName: '抖音', authorInputPlaceholder: '', taskReady: true, interactions: ['collects', 'shares'], sortOptions: ['mostLiked', 'latest'] },
   { name: 'kuaishou', displayName: '快手', authorInputPlaceholder: '', taskReady: true, interactions: ['plays'] }
 ]
 async function setup() {
@@ -55,5 +55,29 @@ describe('N02 最少点赞 / 最少收藏', () => {
     fireEvent.change(screen.getByLabelText('最少点赞'), { target: { value: '-5' } })
     fireEvent.click(screen.getByText('开始抓取'))
     expect(await screen.findByText('门槛要填 0 以上的整数')).toBeInTheDocument()
+  })
+})
+
+// 2026-10-07 功能 N01：按最多点赞 / 最新排序抓
+describe('N01 排序', () => {
+  it('抖音：「排序」只列这个平台网页上真有的选项；选了随任务提交', async () => {
+    const onSubmit = await setup()
+    const select = screen.getByLabelText('排序') as HTMLSelectElement
+    expect([...select.options].map(o => o.textContent)).toEqual(['综合（默认）', '最多点赞', '最新'])
+    fireEvent.change(select, { target: { value: 'mostLiked' } })
+    fireEvent.change(screen.getByPlaceholderText('输入内容'), { target: { value: '猫咪' } })
+    fireEvent.click(screen.getByText('开始抓取'))
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledWith(expect.objectContaining({
+      filters: expect.objectContaining({ sortBy: 'mostLiked' })
+    })))
+  })
+
+  it('快手网页搜索没有排序：不显示「排序」；抓作者主页时也不显示', async () => {
+    await setup()
+    fireEvent.click(screen.getByLabelText('作者'))
+    expect(screen.queryByLabelText('排序')).toBeNull()
+    fireEvent.click(screen.getByLabelText('关键词'))
+    fireEvent.change(screen.getByLabelText('平台'), { target: { value: 'kuaishou' } })
+    expect(screen.queryByLabelText('排序')).toBeNull()
   })
 })

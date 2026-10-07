@@ -7,6 +7,9 @@ export type DurationFilter = 'all' | 'under30' | 'short' | 'medium' | 'long' | '
 /** 详情取数模式（仅小红书）：safe=窗口逐条导航读注水状态；fast=登录态后台取 HTML 解析注水状态 */
 export type DetailMode = 'safe' | 'fast'
 
+/** 只抓热门（2026-10-07）：在平台网页的筛选面板上选的排序；不填 = 平台默认的综合排序 */
+export type SortBy = 'mostLiked' | 'mostCollected' | 'mostCommented' | 'latest'
+
 export interface Filters {
   timeRange: TimeRange
   startDate?: string // ISO date，timeRange='custom' 时必填
@@ -21,6 +24,7 @@ export interface Filters {
   /** 只抓热门（2026-10-07）：点赞 / 收藏低于这个数的不要；不填 = 不限 */
   minLikes?: number
   minCollects?: number
+  sortBy?: SortBy
   aiFilterEnabled?: boolean // createTask 会把它序列化进 filters JSON 列（Task 6）
   aiOrganizeEnabled?: boolean // 同上，任务级开关随 filters 落库
 }
