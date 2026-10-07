@@ -1,4 +1,6 @@
-import { app, BrowserWindow, ipcMain, shell } from 'electron'
+import { app, BrowserWindow, ipcMain, net, protocol, shell } from 'electron'
+import { pathToFileURL } from 'url'
+import { coverFileFor } from './library'
 import { allowedPermission, isAppUrl } from './security'
 import { join } from 'path'
 import { DatabaseSync } from 'node:sqlite'
@@ -156,6 +158,10 @@ function push(evt: unknown): void {
 
 // 安全检查 A6：只允许开一个程序（按数据目录区分）。以前双击两次就有两个程序同时写同一个数据库、抢同一个登录档案；
 // 现在第二次打开只把已经开着的窗口调到前面。
+// 素材库封面：vs-cover://video/<视频id>。只按 id 从库里找封面（界面传不进任意路径），
+// 只注册在主窗口用的默认会话上，平台网页（各自的分区）用不了。必须在 ready 之前声明。
+protocol.registerSchemesAsPrivileged([{ scheme: 'vs-cover', privileges: { standard: true, secure: true, supportFetchAPI: true } }])
+
 const gotSingleInstanceLock = app.requestSingleInstanceLock()
 if (!gotSingleInstanceLock) {
   app.quit()
@@ -174,6 +180,11 @@ app.whenReady().then(() => {
   tuneDb(db) // WAL + NORMAL：写库快几十倍（性能检查 F2）
   initDb(db)
   dbRef = db
+  protocol.handle('vs-cover', req => {
+    const id = Number(new URL(req.url).pathname.replace(/^\/+/, ''))
+    const file = Number.isInteger(id) ? coverFileFor(db, id) : null
+    return file ? net.fetch(pathToFileURL(file).toString()) : new Response(null, { status: 404 })
+  })
 
   createWindow()
 

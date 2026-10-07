@@ -134,6 +134,9 @@ export function initDb(db: DatabaseSync): void {
   addColumnIfMissing(db, 'videos', 'original_path', 'TEXT')
   addColumnIfMissing(db, 'videos', 'normalization_error', 'TEXT')
   addColumnIfMissing(db, 'tasks', 'output_dir', 'TEXT') // R19：任务自己的下载文件夹
+  // 素材库（2026-10-07）：标记（star 星标 / todo 待用 / used 已用）和备注
+  addColumnIfMissing(db, 'videos', 'mark', 'TEXT')
+  addColumnIfMissing(db, 'videos', 'note', 'TEXT')
 }
 
 /** 老库迁移：表缺列时补列（ALTER TABLE ADD COLUMN 不能带 NOT NULL 无默认值的约束，故用 DEFAULT） */

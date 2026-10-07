@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { CreateTaskInput, AppSettings, TaskRow, VideoRow, AuthorRow, TaskStats, AsrStatus, AsrProgress, FilesTree, FileDeleteResult, TaskProgressEvent, DownloadProgress, ProcessOptions, GlobalStats, RecentDownload, ProcessState } from '../shared/types'
+import type { CreateTaskInput, AppSettings, TaskRow, VideoRow, AuthorRow, TaskStats, AsrStatus, AsrProgress, FilesTree, FileDeleteResult, TaskProgressEvent, DownloadProgress, ProcessOptions, LibraryQuery, LibraryRow, VideoMark, GlobalStats, RecentDownload, ProcessState } from '../shared/types'
 
 const api = {
   exportCsv: (input: { csv: string; fileName: string }): Promise<import('../shared/types').CsvExportResult> => ipcRenderer.invoke('csv:export', input),
@@ -12,6 +12,13 @@ const api = {
   listTaskVideos: (taskId: number): Promise<VideoRow[]> => ipcRenderer.invoke('task:video:list', taskId),
   getTaskStats: (taskId: number): Promise<TaskStats> => ipcRenderer.invoke('task:stats', taskId),
   getTaskStatsMany: (ids: number[]): Promise<Record<number, TaskStats>> => ipcRenderer.invoke('task:statsMany', ids),
+  // 素材库
+  listLibrary: (q: LibraryQuery): Promise<{ rows: LibraryRow[]; total: number }> => ipcRenderer.invoke('library:list', q),
+  listLibraryTasks: (): Promise<Array<{ id: number; platform: string; type: string; query: string; count: number }>> => ipcRenderer.invoke('library:tasks'),
+  markVideos: (ids: number[], mark: VideoMark | null): Promise<boolean> => ipcRenderer.invoke('library:mark', ids, mark),
+  noteVideo: (id: number, note: string): Promise<boolean> => ipcRenderer.invoke('library:note', id, note),
+  playVideo: (id: number): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke('library:play', id),
+  locateLibraryVideo: (id: number): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke('library:locate', id),
   pauseTask: (id: number): Promise<void> => ipcRenderer.invoke('task:pause', id),
   resumeTask: (id: number): Promise<void> => ipcRenderer.invoke('task:resume', id),
   deleteTask: (id: number): Promise<void> => ipcRenderer.invoke('task:delete', id),
