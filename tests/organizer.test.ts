@@ -460,7 +460,7 @@ describe('Organizer.organizePending / organizeAll / markAuthorPending', () => {
 // 归档层级开关：员工反馈 {品类}/{作者}/{横竖屏}/{时长} 四层套下来文件夹太多、翻不动。
 // 每层独立可关；一层不开时视频就平铺在下载目录，不再有"待归档"这回事。
 // ---------------------------------------------------------------------------
-const NO_LEVELS: OrganizeLevels = { category: false, author: false, orientation: false, duration: false }
+const NO_LEVELS: OrganizeLevels = { keyword: false, category: false, author: false, orientation: false, duration: false }
 
 /** 只开指定层级的 organizer；resolveCategory / probeDimensions 用 spy 以便断言"没被调用" */
 function leveled(on: Partial<OrganizeLevels>) {
@@ -636,5 +636,44 @@ describe('归档层级开关', () => {
     expect(leveled({}).org.isEnabled()).toBe(false)
     expect(leveled({ duration: true }).org.isEnabled()).toBe(true)
     expect(leveled({ category: true, author: true }).org.isEnabled()).toBe(true)
+  })
+})
+
+// ---------------------------------------------------------------------------
+// 2026-10-07 素材库第二部分（N27）：按关键词分文件夹——同一个关键词抓的视频放在一起，
+// 在最外层（关键词/品类/作者/横竖屏/时长）；达人主页任务归「达人主页」，话题前面带 #
+// ---------------------------------------------------------------------------
+describe('按关键词分文件夹', () => {
+  it('只开关键词 → 关键词一层；同一作者不同任务的视频各进各的关键词目录', async () => {
+    const { authorId, vids } = authorWithDoneVideos('KW', '王五', 1)
+    db.prepare('UPDATE tasks SET query = ? WHERE id = (SELECT task_id FROM videos WHERE id = ?)').run('猫/咪', vids[0].id)
+    const t2 = createTask(db, { ...input, type: 'hashtag', query: '减脂餐' })
+    insertVideos(db, [item({ awemeId: 'KW_tag', authorSecUid: 'KW', authorNickname: '王五' })], t2, 'douyin')
+    const tagVid = listVideos(db, t2)[0]
+    const tagSrc = join(dir, 'KW_tag.mp4'); writeFileSync(tagSrc, Buffer.from([1]))
+    setVideoStatus(db, tagVid.id, 'done', { local_path: tagSrc })
+
+    const { org, resolveCategory } = leveled({ keyword: true })
+    expect(await org.organizeAuthor(authorId)).toMatchObject({ moved: 2, state: 'done' })
+    const path = (id: number) => (db.prepare('SELECT local_path FROM videos WHERE id=?').get(id) as { local_path: string }).local_path
+    expect(dirname(path(vids[0].id))).toBe(join(dir, '猫_咪'))
+    expect(dirname(path(tagVid.id))).toBe(join(dir, '#减脂餐'))
+    expect(resolveCategory).not.toHaveBeenCalled()
+  })
+
+  it('达人主页任务 → 「达人主页」；和作者层一起开时关键词在外层', async () => {
+    const { authorId, vids } = authorWithDoneVideos('HOME', '赵六', 1)
+    db.prepare("UPDATE tasks SET type = 'author', query = 'https://www.douyin.com/user/x' WHERE id = (SELECT task_id FROM videos WHERE id = ?)").run(vids[0].id)
+    const { org } = leveled({ keyword: true, author: true })
+    await org.organizeAuthor(authorId)
+    const row = db.prepare('SELECT local_path FROM videos WHERE id=?').get(vids[0].id) as { local_path: string }
+    expect(dirname(row.local_path)).toBe(join(dir, '达人主页', '赵六'))
+  })
+
+  it('关键词层关着（老用户四层全开）也不会多出关键词目录', async () => {
+    const { authorId, vids } = authorWithDoneVideos('OLD', '老用户', 1)
+    await organizer().organizeAuthor(authorId)
+    const row = db.prepare('SELECT local_path FROM videos WHERE id=?').get(vids[0].id) as { local_path: string }
+    expect(row.local_path.startsWith(join(dir, '美食'))).toBe(true)
   })
 })

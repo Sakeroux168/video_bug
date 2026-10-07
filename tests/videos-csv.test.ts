@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { buildVideosCsv, toVideoExportRows, filterVideosUnder } from '../src/renderer/src/components/videosCsv'
+import { buildVideosCsv, toVideoExportRows, filterVideosUnder } from '../src/shared/videosCsv'
 import type { VideoRow } from '../src/shared/types'
 
 // 员工要一份可以交出去的表格：作者名、原视频标题、原视频链接、点赞、评论，

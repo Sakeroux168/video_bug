@@ -83,6 +83,14 @@ describe('D7 使用说明和软件对得上', () => {
     expect(t).toContain('视频处理')
   })
 
+  // 2026-10-07 素材库第二部分：分文件夹多了「关键词」一层；说明里要讲素材库和打包交付
+  it('讲到按关键词分文件夹、素材库、打包交付', () => {
+    const t = text()
+    expect(t).toContain('关键词 / 品类 / 作者 / 横竖屏 / 时长')
+    expect(t).toContain('素材库')
+    expect(t).toContain('打包交付')
+  })
+
   it('「未分类」只在勾了按品类分文件夹时才有；登录不只说抖音；不再叫人截图给技术', () => {
     const t = text()
     expect(t).toMatch(/勾了「按品类分文件夹」[^。]*未分类/)

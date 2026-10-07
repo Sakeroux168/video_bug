@@ -3,7 +3,7 @@ import { DatabaseSync } from 'node:sqlite'
 import { initDb, createTask, insertVideos, listVideos, refreshSeenVideo } from '../src/main/db'
 import { filterVideos } from '../src/main/extractor'
 import { Scheduler as RealScheduler } from '../src/main/scheduler'
-import { buildVideosCsv, toVideoExportRows } from '../src/renderer/src/components/videosCsv'
+import { buildVideosCsv, toVideoExportRows } from '../src/shared/videosCsv'
 import type { VideoItem } from '../src/main/adapters/types'
 import type { CreateTaskInput, Filters, VideoRow } from '../src/shared/types'
 

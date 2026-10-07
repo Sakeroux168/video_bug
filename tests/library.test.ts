@@ -1,10 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { DatabaseSync } from 'node:sqlite'
-import { mkdtempSync, rmSync, writeFileSync } from 'fs'
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, readdirSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
 import { initDb, createTask, insertVideos, listVideos, setVideoStatus } from '../src/main/db'
-import { listLibrary, listLibraryTasks, setVideoMark, setVideoNote, coverFileFor, videoFileFor } from '../src/main/library'
+import { listLibrary, listLibraryTasks, setVideoMark, setVideoNote, coverFileFor, videoFileFor, exportLibraryVideos } from '../src/main/library'
 import type { VideoItem } from '../src/main/adapters/types'
 import type { CreateTaskInput } from '../src/shared/types'
 
@@ -122,5 +122,62 @@ describe('封面 / 视频文件只按视频 id 从库里找（界面不能传路
     expect(videoFileFor(db, id('A'))).toMatch(/A\.mp4$/)
     rmSync(join(dir, 'A.mp4'))
     expect(videoFileFor(db, id('A'))).toBeNull()
+  })
+})
+
+// 2026-10-07 素材库第二部分：多选 →「打包交付」——复制到选的文件夹 + 来源清单.csv；原文件不动
+describe('打包交付', () => {
+  it('复制选中的视频到目标文件夹，附「来源清单.csv」（带 BOM，有标题、作者、关键词、交付后的文件名）；原文件还在', async () => {
+    const { id } = seed()
+    const out = join(dir, '交付'); mkdirSync(out)
+    const r = await exportLibraryVideos(db, [id('B'), id('A')], out, { markUsed: false })
+    expect(r).toMatchObject({ copied: 2, missing: 0, failed: 0 })
+    expect(readdirSync(out).sort()).toEqual(['A.mp4', 'B.mp4', '来源清单.csv'])
+    expect(readFileSync(join(dir, 'A.mp4'), 'utf8')).toBe('mp4')
+    const csv = readFileSync(r.csvPath!, 'utf8')
+    expect(csv.charCodeAt(0)).toBe(0xfeff)
+    const lines = csv.slice(1).split('\r\n')
+    expect(lines).toHaveLength(3)
+    expect(lines[0]).toContain('本地文件名')
+    expect(lines[1]).toContain('黑猫')
+    expect(lines[1]).toContain('作者B')
+    expect(lines[1]).toContain('猫咪')
+    expect(lines[1]).toContain('B.mp4')
+  })
+
+  it('目标文件夹里已有同名文件 → 新的改名，不覆盖；清单也不覆盖', async () => {
+    const { id } = seed()
+    const out = join(dir, '交付'); mkdirSync(out)
+    writeFileSync(join(out, 'A.mp4'), 'old')
+    writeFileSync(join(out, '来源清单.csv'), 'old')
+    const r = await exportLibraryVideos(db, [id('A')], out, { markUsed: false })
+    expect(readFileSync(join(out, 'A.mp4'), 'utf8')).toBe('old')
+    expect(readFileSync(join(out, 'A_1.mp4'), 'utf8')).toBe('mp4')
+    expect(readFileSync(join(out, '来源清单.csv'), 'utf8')).toBe('old')
+    expect(r.csvPath).toMatch(/来源清单 \(1\)\.csv$/)
+    expect(readFileSync(r.csvPath!, 'utf8')).toContain('A_1.mp4')
+  })
+
+  it('勾了「交付后标为已用」→ 复制成功的标成已用；文件找不到的算缺失、不标', async () => {
+    const { id } = seed()
+    rmSync(join(dir, 'B.mp4'))
+    const out = join(dir, '交付'); mkdirSync(out)
+    const r = await exportLibraryVideos(db, [id('A'), id('B')], out, { markUsed: true })
+    expect(r).toMatchObject({ copied: 1, missing: 1 })
+    expect(listLibrary(db, { mark: 'used' }).rows.map(v => v.aweme_id)).toEqual(['A'])
+  })
+
+  it('一条都没复制成 → 不生成清单', async () => {
+    const { id } = seed()
+    rmSync(join(dir, 'A.mp4'))
+    const out = join(dir, '交付'); mkdirSync(out)
+    const r = await exportLibraryVideos(db, [id('A')], out, { markUsed: false })
+    expect(r).toMatchObject({ copied: 0, missing: 1, csvPath: null })
+    expect(readdirSync(out)).toEqual([])
+  })
+
+  it('目标文件夹不存在 → 报错', async () => {
+    const { id } = seed()
+    await expect(exportLibraryVideos(db, [id('A')], join(dir, '没有'), { markUsed: false })).rejects.toThrow('文件夹不存在')
   })
 })

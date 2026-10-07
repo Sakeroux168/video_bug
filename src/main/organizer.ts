@@ -33,18 +33,29 @@ export function authorDirName(author: { nickname: string; sec_uid: string }, db:
 }
 
 /** 归档层级开关：勾选哪几层就建哪几层目录。
- *  路径顺序恒为 品类/作者/横竖屏/时长——关掉中间某层只会让路径塌陷，不会重排剩下的层。
+ *  路径顺序恒为 关键词/品类/作者/横竖屏/时长——关掉中间某层只会让路径塌陷，不会重排剩下的层。
  *  一层都不开 = 视频平铺在下载目录根（员工反馈四层套下来文件夹太多、翻不动）。 */
 export interface OrganizeLevels {
+  /** 2026-10-07 N27：按抓取任务的关键词建最外层目录（同一个关键词抓的放一起） */
+  keyword: boolean
   category: boolean
   author: boolean
   orientation: boolean
   duration: boolean
 }
 
-/** 升级前的归档行为：四层全开。老用户默认值与既有测试基线都用它。 */
+/** 升级前的归档行为：四层全开（关键词层是后加的，老行为里没有）。老用户默认值与既有测试基线都用它。 */
 export const ALL_ORGANIZE_LEVELS: OrganizeLevels = {
-  category: true, author: true, orientation: true, duration: true
+  keyword: false, category: true, author: true, orientation: true, duration: true
+}
+
+/** 关键词目录名：关键词任务用关键词，话题加 #，达人主页任务统一归「达人主页」；找不到任务归「其他」 */
+export function keywordDirName(task: { type: string; query: string } | undefined): string {
+  if (!task) return '其他'
+  if (task.type === 'author') return '达人主页'
+  const q = task.query.trim().replace(/^#/, '')
+  if (!q) return '其他'
+  return sanitizeDirName(task.type === 'hashtag' ? `#${q}` : q)
 }
 
 /** 品类解析函数：入参为作者行与已下载视频样本，返回品类名；null/抛错由调用方回退「未分类」 */
@@ -86,7 +97,7 @@ export class Organizer {
   /** 是否还有任何一层要建目录。全关时不存在"归档"这件事，视频本就该平铺。 */
   private hasAnyLevel(): boolean {
     const l = this.deps.levels
-    return l.category || l.author || l.orientation || l.duration
+    return l.keyword || l.category || l.author || l.orientation || l.duration
   }
 
   private inJobFolder(v: VideoRow): boolean {
@@ -190,6 +201,7 @@ export class Organizer {
         }
         // 固定顺序拼接已启用的层；hasAnyLevel 已保证至少一段，destDir 不会等于下载目录根
         const segments: string[] = []
+        if (levels.keyword) segments.push(keywordDirName(db.prepare('SELECT type, query FROM tasks WHERE id = ?').get(v.task_id) as { type: string; query: string } | undefined))
         if (levels.category) segments.push(category)
         if (levels.author) segments.push(authorDir)
         if (levels.orientation) segments.push(screenBucket(width, height))

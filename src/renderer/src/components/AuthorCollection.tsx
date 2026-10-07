@@ -7,7 +7,7 @@ import { useTableSelection } from './useTableSelection'
 import { parsePastedAuthors } from './parsePastedAuthors'
 import { parseAuthorsCsv, buildAuthorsCsv, decodeCsvBytes } from './authorsCsv'
 import { checkDateRange, describeDateRange } from './dateRange'
-import { csvFileName } from './videosCsv'
+import { csvFileName } from '../../../shared/videosCsv'
 import { saveCsvFile } from './csvSave'
 import type { Notify } from './Notice'
 

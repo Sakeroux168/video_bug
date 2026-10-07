@@ -246,6 +246,7 @@ app.whenReady().then(() => {
     organizer = new Organizer({
       db, downloadDir: s.downloadDir,
       levels: {
+        keyword: s.organizeByKeyword,
         category: s.organizeByCategory,
         author: s.organizeByAuthor,
         orientation: s.organizeByOrientation,

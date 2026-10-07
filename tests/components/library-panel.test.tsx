@@ -19,12 +19,12 @@ function row(id: number, over: Partial<LibraryRow> = {}): LibraryRow {
   } as LibraryRow
 }
 
-async function setup(rows: LibraryRow[], total = rows.length) {
+async function setup(rows: LibraryRow[], total = rows.length, onOpenProcess = vi.fn()) {
   installFakeApi()
   vi.mocked(window.api.listLibrary).mockResolvedValue({ rows, total })
   vi.mocked(window.api.listLibraryTasks).mockResolvedValue([{ id: 1, platform: 'douyin', type: 'keyword', query: '猫咪', count: 2 }])
   const notify = vi.fn()
-  render(<LibraryPanel notify={notify} />)
+  render(<LibraryPanel notify={notify} onOpenProcess={onOpenProcess} />)
   if (rows.length) await screen.findByText(rows[0].title)
   return notify
 }
@@ -100,5 +100,84 @@ describe('素材库', () => {
   it('还没有下载过视频：提示去任务页抓', async () => {
     await setup([])
     expect(await screen.findByText(/还没有下载完成的视频/)).toBeInTheDocument()
+  })
+
+  // 2026-10-07 素材库第二部分：多选 → 批量标记 / 打包交付（可顺便统一分辨率）
+  describe('多选', () => {
+    const pick = (title: string) => fireEvent.click(within(card(title)).getByRole('checkbox', { name: `选中 ${title}` }))
+    const exported = (over = {}) => ({
+      ok: true, result: { copied: 2, missing: 0, failed: 0, csvPath: 'E:/交付/来源清单.csv', dir: 'E:/交付', files: [] }, ...over
+    })
+
+    it('勾两条 → 显示「已选 2 条」；批量标成待用', async () => {
+      await setup([row(1), row(2, { title: '视频2' })])
+      expect(screen.queryByText(/已选/)).toBeNull()
+      pick('视频1'); pick('视频2')
+      expect(screen.getByText('已选 2 条')).toBeInTheDocument()
+      fireEvent.click(within(screen.getByTestId('library-selection')).getByRole('button', { name: '标为待用' }))
+      await waitFor(() => expect(window.api.markVideos).toHaveBeenCalledWith([1, 2], 'todo'))
+    })
+
+    it('「全选本页」「清空」', async () => {
+      await setup([row(1), row(2, { title: '视频2' })])
+      pick('视频1')
+      fireEvent.click(screen.getByRole('button', { name: '全选本页' }))
+      expect(screen.getByText('已选 2 条')).toBeInTheDocument()
+      fireEvent.click(screen.getByRole('button', { name: '清空' }))
+      expect(screen.queryByText(/已选/)).toBeNull()
+    })
+
+    it('打包交付：默认交付后标「已用」、不转码；完成后显示结果和「打开文件夹」', async () => {
+      await setup([row(1), row(2, { title: '视频2' })])
+      vi.mocked(window.api.exportLibrary).mockResolvedValue(exported())
+      pick('视频1'); pick('视频2')
+      fireEvent.click(screen.getByRole('button', { name: '打包交付…' }))
+      expect(screen.getByLabelText(/交付后标为「已用」/)).toBeChecked()
+      expect(screen.getByLabelText(/顺便统一分辨率/)).not.toBeChecked()
+      fireEvent.click(screen.getByRole('button', { name: '选文件夹并开始' }))
+      await waitFor(() => expect(window.api.exportLibrary).toHaveBeenCalledWith([1, 2], { markUsed: true, normalize: false }))
+      const done = await screen.findByTestId('library-export-done')
+      expect(done.textContent).toContain('已复制 2 条')
+      expect(done.textContent).toContain('来源清单')
+      fireEvent.click(within(done).getByRole('button', { name: '打开文件夹' }))
+      expect(window.api.openDir).toHaveBeenCalledWith('E:/交付')
+    })
+
+    it('勾「顺便统一分辨率」→ 开始后能一键去「视频处理」看进度；有找不到的文件要说出来', async () => {
+      const onOpenProcess = vi.fn()
+      await setup([row(1)], 1, onOpenProcess)
+      vi.mocked(window.api.exportLibrary).mockResolvedValue(exported({
+        processing: true, result: { copied: 1, missing: 1, failed: 0, csvPath: 'E:/交付/来源清单.csv', dir: 'E:/交付', files: [] }
+      }))
+      pick('视频1')
+      fireEvent.click(screen.getByRole('button', { name: '打包交付…' }))
+      fireEvent.click(screen.getByLabelText(/顺便统一分辨率/))
+      fireEvent.click(screen.getByRole('button', { name: '选文件夹并开始' }))
+      await waitFor(() => expect(window.api.exportLibrary).toHaveBeenCalledWith([1], { markUsed: true, normalize: true }))
+      const done = await screen.findByTestId('library-export-done')
+      expect(done.textContent).toContain('1 条找不到文件')
+      fireEvent.click(within(done).getByRole('button', { name: '去看进度' }))
+      expect(onOpenProcess).toHaveBeenCalled()
+    })
+
+    it('统一分辨率没能开始（上一轮还在跑）→ 说原因', async () => {
+      await setup([row(1)])
+      vi.mocked(window.api.exportLibrary).mockResolvedValue(exported({ processing: false, processError: '当前还有一轮处理没结束，请先停止' }))
+      pick('视频1')
+      fireEvent.click(screen.getByRole('button', { name: '打包交付…' }))
+      fireEvent.click(screen.getByLabelText(/顺便统一分辨率/))
+      fireEvent.click(screen.getByRole('button', { name: '选文件夹并开始' }))
+      expect((await screen.findByTestId('library-export-done')).textContent).toContain('当前还有一轮处理没结束')
+    })
+
+    it('选文件夹时点了取消 → 什么都不提示', async () => {
+      const notify = await setup([row(1)])
+      pick('视频1')
+      fireEvent.click(screen.getByRole('button', { name: '打包交付…' }))
+      fireEvent.click(screen.getByRole('button', { name: '选文件夹并开始' }))
+      await waitFor(() => expect(window.api.exportLibrary).toHaveBeenCalled())
+      expect(notify).not.toHaveBeenCalled()
+      expect(screen.queryByTestId('library-export-done')).toBeNull()
+    })
   })
 })

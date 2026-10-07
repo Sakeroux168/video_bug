@@ -92,8 +92,12 @@ export default function HelpPanel(): React.ReactElement {
         <p className="mt-2 rounded-md bg-slate-50 px-3 py-2 text-xs leading-5 text-slate-500">
           默认视频就直接放在下载目录，不分文件夹。想分类的话去「设置 → 下载后分文件夹整理」，
           可以单独勾选
-          <code className="mx-1 rounded bg-slate-100 px-1 py-0.5">品类 / 作者 / 横竖屏 / 时长</code>
-          四层里的任意几层，勾了几层就建几层目录。改这里只影响之后下载的视频，已经归好的文件不会自动搬家。
+          <code className="mx-1 rounded bg-slate-100 px-1 py-0.5">关键词 / 品类 / 作者 / 横竖屏 / 时长</code>
+          里的任意几层，勾了几层就建几层目录。改这里只影响之后下载的视频，已经归好的文件不会自动搬家。
+        </p>
+        <p className="mt-2 rounded-md bg-slate-50 px-3 py-2 text-xs leading-5 text-slate-500">
+          下好的视频去「素材库」看封面挑：可以打星标 / 待用 / 已用、写备注。勾几条点「打包交付」，
+          就复制到你选的文件夹，附一份来源清单表格，还可以顺便统一分辨率；原视频不动。
         </p>
       </Card>
 

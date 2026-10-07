@@ -1,7 +1,10 @@
 import type { DatabaseSync, SQLInputValue } from 'node:sqlite'
-import { existsSync, statSync } from 'node:fs'
-import { extname } from 'node:path'
-import type { LibraryQuery, LibraryRow, VideoMark } from '../shared/types'
+import { existsSync, statSync, constants } from 'node:fs'
+import { copyFile, open, unlink } from 'node:fs/promises'
+import { basename, extname, join } from 'node:path'
+import type { LibraryExportResult, LibraryQuery, LibraryRow, VideoMark } from '../shared/types'
+import { buildVideosCsv, toVideoExportRows } from '../shared/videosCsv'
+import { ensureUniqueStem } from './filename'
 
 /**
  * 素材库（2026-10-07 功能 E / N07 / N08）：按数据库列出下载完成的视频，筛选、排序、标记。
@@ -86,4 +89,69 @@ export function videoFileFor(db: DatabaseSync, id: number): string | null {
   const p = row?.local_path
   if (!p || extname(p).toLowerCase() !== '.mp4' || !existsSync(p)) return null
   return p
+}
+
+const PLATFORM_LABEL: Record<string, string> = { douyin: '抖音', kuaishou: '快手', xiaohongshu: '小红书' }
+const MANIFEST_NAME = '来源清单'
+
+/** 来源清单：wx 独占创建，已有同名就叫「来源清单 (1).csv」，不覆盖别人的文件 */
+async function writeManifest(dir: string, csv: string): Promise<string> {
+  for (let n = 0; n < 1000; n++) {
+    const path = join(dir, n === 0 ? `${MANIFEST_NAME}.csv` : `${MANIFEST_NAME} (${n}).csv`)
+    let handle: Awaited<ReturnType<typeof open>>
+    try { handle = await open(path, 'wx') } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'EEXIST') continue
+      throw error
+    }
+    try {
+      try { await handle.writeFile('\uFEFF' + csv, 'utf8') } finally { await handle.close() }
+      return path
+    } catch (error) {
+      await unlink(path).catch(() => {})
+      throw error
+    }
+  }
+  throw new Error('同名清单太多')
+}
+
+/**
+ * 打包交付（2026-10-07 素材库第二部分）：把选中的视频复制到 destDir（原文件不动、不覆盖已有文件），
+ * 再写一份「来源清单.csv」（标题、作者、链接、点赞……、交付后的文件名、关键词）。
+ * markUsed：复制成功的标成「已用」，下次挑素材一眼能看出来。
+ */
+export async function exportLibraryVideos(db: DatabaseSync, ids: number[], destDir: string, opts: { markUsed: boolean }): Promise<LibraryExportResult> {
+  try { if (!statSync(destDir).isDirectory()) throw new Error() } catch { throw new Error('文件夹不存在') }
+  const clean = [...new Set(ids.filter(id => Number.isInteger(id)))]
+  const byId = new Map<number, LibraryRow>()
+  if (clean.length) {
+    const rows = db.prepare(`SELECT v.*, a.nickname AS author_nickname, t.query AS task_query
+      FROM videos v LEFT JOIN authors a ON a.id = v.author_id LEFT JOIN tasks t ON t.id = v.task_id
+      WHERE v.status = 'done' AND v.id IN (${clean.map(() => '?').join(',')})`).all(...clean) as unknown as LibraryRow[]
+    for (const r of rows) byId.set(r.id, r)
+  }
+  const done: LibraryRow[] = []
+  let missing = 0
+  let failed = 0
+  for (const id of clean) { // 按选中的顺序复制，清单也是这个顺序
+    const row = byId.get(id)
+    const src = row?.local_path
+    if (!row || !src || !existsSync(src)) { missing++; continue }
+    const ext = extname(src)
+    const stem = ensureUniqueStem(destDir, basename(src, ext), [ext])
+    const dest = join(destDir, `${stem}${ext}`)
+    try {
+      await copyFile(src, dest, constants.COPYFILE_EXCL)
+      done.push({ ...row, local_path: dest })
+    } catch {
+      failed++ // 磁盘满、没权限等：这一条不算，接着复制下一条
+    }
+  }
+  let csvPath: string | null = null
+  if (done.length) {
+    const rows = toVideoExportRows(done, p => PLATFORM_LABEL[p] ?? p)
+      .map((r, i) => ({ ...r, task: done[i].task_query ?? '' }))
+    csvPath = await writeManifest(destDir, buildVideosCsv(rows, true))
+    if (opts.markUsed) setVideoMark(db, done.map(r => r.id), 'used')
+  }
+  return { copied: done.length, missing, failed, csvPath, dir: destDir, files: done.map(r => r.local_path as string) }
 }

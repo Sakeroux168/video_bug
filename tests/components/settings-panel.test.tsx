@@ -31,6 +31,7 @@ const SETTING_LABELS: Record<keyof AppSettings, string> = {
   stallThresholdSec: '停滞检测(秒)',
   rescueCooldownSec: '重搜冷却(秒)',
   stuckTimeoutMin: '卡住判定(分钟)',
+  organizeByKeyword: '按关键词分文件夹',
   organizeByCategory: '按品类分文件夹',
   organizeByAuthor: '按作者分文件夹',
   organizeByOrientation: '按横屏/竖屏分文件夹',
@@ -200,6 +201,20 @@ describe('SettingsPanel 归档层级开关', () => {
       organizeByCategory: false,
       organizeByOrientation: false,
       organizeByDuration: false
+    })))
+  })
+
+  // 2026-10-07 N27：新增「按关键词分文件夹」，在最外层
+  it('勾「按关键词分文件夹」→ 保存 organizeByKeyword: true', async () => {
+    installFakeApi()
+    render(<SettingsPanel />)
+
+    fireEvent.click(await screen.findByLabelText('按关键词分文件夹'))
+    fireEvent.click(screen.getByRole('button', { name: '保存设置' }))
+
+    await waitFor(() => expect(window.api.saveSettings).toHaveBeenCalledWith(expect.objectContaining({
+      organizeByKeyword: true,
+      organizeByAuthor: false
     })))
   })
 

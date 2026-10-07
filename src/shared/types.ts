@@ -88,6 +88,20 @@ export interface LibraryQuery {
 }
 
 /** 素材库的一条：视频行 + 所属任务的关键词 */
+/** 素材库「打包交付」结果：复制了几条、文件找不到几条、复制失败几条、清单路径（一条没复制成就是 null） */
+export interface LibraryExportResult { copied: number; missing: number; failed: number; csvPath: string | null; dir: string; files: string[] }
+/** 打包交付的选项：markUsed 交付后标「已用」；normalize 复制过去后顺便统一分辨率（只处理复制过去的那几个） */
+export interface LibraryExportOptions { markUsed: boolean; normalize: boolean }
+export interface LibraryExportResponse {
+  ok: boolean
+  canceled?: boolean
+  error?: string
+  result?: LibraryExportResult
+  /** 统一分辨率开始了没有；没开始的原因（比如上一轮还没处理完） */
+  processing?: boolean
+  processError?: string
+}
+
 export interface LibraryRow extends VideoRow {
   task_query: string | null
 }
@@ -215,6 +229,8 @@ export interface AppSettings {
   rescueCooldownSec: number
   /** R20：卡住判定分钟数（默认 5）——任务这么久没抓到新数据、页面也没在滚，就强制停下、标「卡住了」，放行后面排队的任务 */
   stuckTimeoutMin: number
+  /** 归档层级：按抓取关键词建最外层目录（2026-10-07 N27；新装和老用户都默认关） */
+  organizeByKeyword: boolean
   /** 归档层级：按品类建目录（需要 AI 解析品类；关闭后不再调用 resolveCategory） */
   organizeByCategory: boolean
   /** 归档层级：按作者建目录 */

@@ -6,7 +6,7 @@ import { useMarqueeSelect } from './useMarqueeSelect'
 import { useTableSelection } from './useTableSelection'
 import { useCoalescedRefresh } from './useCoalescedRefresh'
 import { describeError } from '../errors'
-import { buildVideosCsv, toVideoExportRows, csvFileName } from './videosCsv'
+import { buildVideosCsv, toVideoExportRows, csvFileName } from '../../../shared/videosCsv'
 import { saveCsvFile } from './csvSave'
 import type { Notify } from './Notice'
 
