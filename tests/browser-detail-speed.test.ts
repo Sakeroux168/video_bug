@@ -1,6 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { VideoBrowser } from '../src/main/browser'
 import { xiaohongshuAdapter } from '../src/main/adapters/xiaohongshu'
+import { kuaishouAdapter } from '../src/main/adapters/kuaishou'
 import type { PlatformAdapter } from '../src/main/adapters/types'
 
 // 稳妥模式提速：详情注水状态改用 webContents.mainFrame.executeJavaScript 读取
@@ -125,5 +126,61 @@ describe('VideoBrowser.setBusy：只在任务进行中关掉后台节流', () =>
     const b = new VideoBrowser({} as never)
     expect(() => b.setBusy(true)).not.toThrow()
     expect(b.isBusy).toBe(true)
+  })
+})
+
+// 2026-10-07 用户：快手页打不开。查下来是系统代理（翻墙软件）——内置浏览器跟着系统代理走，
+// 快手拒绝从代理过来的请求（首页只回一行 {"result":2}），关掉代理直连就正常。
+// 现在平台网页默认直连，不走系统代理；设置里可以关掉这个开关恢复走系统代理。
+describe('VideoBrowser.setDirect：平台网页直连，不走系统代理', () => {
+  beforeEach(() => { sessionFromPartition.mockReset() })
+
+  it('开（默认）→ 平台分区设成直连；关 → 恢复系统代理', async () => {
+    const setProxy = vi.fn(async () => {})
+    sessionFromPartition.mockReturnValue({ setProxy })
+    const b = new VideoBrowser({} as never)
+    ;(b as unknown as { current: unknown }).current = xiaohongshuAdapter
+    await b.setDirect(true)
+    expect(sessionFromPartition).toHaveBeenLastCalledWith('persist:xiaohongshu')
+    expect(setProxy).toHaveBeenLastCalledWith({ mode: 'direct' })
+    await b.setDirect(false)
+    expect(setProxy).toHaveBeenLastCalledWith({ mode: 'system' })
+  })
+
+  it('还没打开平台窗口 → 先记住，打开时再设', async () => {
+    const setProxy = vi.fn(async () => {})
+    sessionFromPartition.mockReturnValue({ setProxy })
+    const b = new VideoBrowser({} as never)
+    await b.setDirect(true)
+    expect(setProxy).not.toHaveBeenCalled()
+    expect(b.isDirect).toBe(true)
+  })
+})
+
+// 2026-10-07 再查：快手还会拒绝浏览器标识里带「video-scraper/x.y.z」或「Electron/x.y.z」的请求
+// （同样只回 {"result":2}；用户换了台电脑也一样）。平台窗口改用同版本普通 Chrome 的标识。
+describe('快手窗口的浏览器标识是普通 Chrome 的（别的平台不动）', () => {
+  it('小红书不改标识（它的登录跟标识绑着，改了要重新登录）', async () => {
+    const setUserAgent = vi.fn()
+    sessionFromPartition.mockReturnValue({ setProxy: vi.fn(async () => {}), getUserAgent: () => 'X Electron/44.6.0 Y', setUserAgent })
+    const b = new VideoBrowser({} as never)
+    ;(b as unknown as { current: unknown }).current = xiaohongshuAdapter
+    await b.setDirect(true)
+    expect(setUserAgent).not.toHaveBeenCalled()
+  })
+
+  beforeEach(() => { sessionFromPartition.mockReset() })
+
+  it('去掉 video-scraper/版本号 和 Electron/版本号，其余照旧', async () => {
+    const setUserAgent = vi.fn()
+    sessionFromPartition.mockReturnValue({
+      setProxy: vi.fn(async () => {}),
+      getUserAgent: () => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) video-scraper/0.1.3 Chrome/152.0.7977.130 Electron/44.6.0 Safari/537.36',
+      setUserAgent
+    })
+    const b = new VideoBrowser({} as never)
+    ;(b as unknown as { current: unknown }).current = kuaishouAdapter
+    await b.setDirect(true)
+    expect(setUserAgent).toHaveBeenCalledWith('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.7977.130 Safari/537.36')
   })
 })

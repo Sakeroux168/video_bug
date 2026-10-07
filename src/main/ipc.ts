@@ -294,6 +294,7 @@ export function registerIpc(deps: IpcDeps): void {
     // Task14: 下载目录 / ASR 就绪状态变化 → 重建 Organizer（resolveCategory 实时读 asr/analyzer）
     deps.reloadOrganizer()
     deps.applyLoginItem?.()
+    void deps.browser?.setDirect?.(s.platformDirect !== false) // 平台网页直连开关，已经打开的平台页马上生效
     deps.downloader.updateSettings(s)
   })
 

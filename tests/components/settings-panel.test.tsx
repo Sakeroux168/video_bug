@@ -45,7 +45,8 @@ const SETTING_LABELS: Record<keyof AppSettings, string> = {
   autoFollowTime: '追更时间',
   autoFollowCount: '每个作者最多抓',
   autoFollowScope: '追更哪些作者',
-  openAtLogin: '开机自动启动（启动后缩在托盘，不弹窗口）'
+  openAtLogin: '开机自动启动（启动后缩在托盘，不弹窗口）',
+  platformDirect: '抖音 / 快手 / 小红书网页直接连接，不走翻墙软件（系统代理）'
 }
 
 // 2026-10-07 安全加固 A9 / L7：AI 配置写明会把什么发出去

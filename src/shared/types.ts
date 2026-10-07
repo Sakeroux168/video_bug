@@ -261,6 +261,8 @@ export interface AppSettings {
   autoFollowScope: 'all' | 'picked'
   /** 开机自动启动（启动后只挂托盘）；只有打包版会真的写系统启动项 */
   openAtLogin: boolean
+  /** 抖音 / 快手 / 小红书网页直连，不走系统代理（翻墙软件）。默认开：快手会拒绝从代理过来的请求 */
+  platformDirect: boolean
 }
 
 /** ASR 单个模型文件的状态（models.status() 的结果形状，跨进程用） */

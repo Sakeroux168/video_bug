@@ -51,6 +51,7 @@ function fullSettings(over: Partial<AppSettings> = {}): AppSettings {
     autoFollowCount: 50,
     autoFollowScope: 'picked',
     openAtLogin: true,
+    platformDirect: false, // 2026-10-07 新增
     ...over
   }
 }

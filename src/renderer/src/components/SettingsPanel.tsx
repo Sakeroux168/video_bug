@@ -307,6 +307,18 @@ export default function SettingsPanel({ onDirtyChange }: { onDirtyChange?: (dirt
           </div>
         </Card>
 
+        <Card title="网络">
+          <div className="space-y-2 text-xs text-slate-500">
+            <label className="flex items-start gap-2 leading-5 text-slate-600">
+              <input className="mt-1" type="checkbox" checked={s.platformDirect !== false} onChange={e => set('platformDirect', e.target.checked)} />
+              抖音 / 快手 / 小红书网页直接连接，不走翻墙软件（系统代理）
+            </label>
+            <p className="pl-5 leading-5 text-slate-400">
+              建议一直勾着：开着翻墙软件时，快手会拒绝打开（页面一片空白）。下载视频本来就是直接连的。
+            </p>
+          </div>
+        </Card>
+
         <Card title="抓取参数">
           <div className="grid gap-3 text-xs text-slate-500 sm:grid-cols-2">
             <label className="flex flex-col gap-1">

@@ -276,6 +276,7 @@ export const kuaishouAdapter: PlatformAdapter = {
   authorInputPlaceholder: 'https://www.kuaishou.com/profile/xxx',
   downloadReferer: 'https://www.kuaishou.com/',
   // 视频：kwaicdn / kwimgs；图片：yximgs / kwimgs
+  plainUserAgent: true, // 快手拒绝浏览器标识里带 Electron / 程序名的请求（首页只回 {"result":2}）
   navHosts: ['kuaishou.com', 'kuaishouzt.com', 'gifshow.com', 'kwai.com', 'ksapisrv.com', 'kwaicdn.com', 'yximgs.com'],
   downloadHosts: ['kuaishou.com', 'kwaicdn.com', 'kwimgs.com', 'yximgs.com', 'gifshow.com', 'kuaishoucdn.com', 'ksapisrv.com'],
   // 真机：搜索走 /rest/v/search/feed，作者主页走 /rest/v/profile/feed；
