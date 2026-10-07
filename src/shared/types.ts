@@ -132,6 +132,8 @@ export interface AuthorRow {
   organize_state: string | null; ai_classified_at: string | null // Task2 归档状态与 AI 分类时间
   /** 导入作者的校验状态：null=无需校验（抓取收录）/ pending / ok / failed */
   verify_state: string | null; verify_error: string | null
+  /** 2026-10-07：1 = 参加定时追更（设置里选「只追标了的作者」时才看这个） */
+  auto_follow?: number | null
   /** 追更：库里该作者最新一条视频的发布时间（ISO）；没有视频为 null。由 listAuthors 计算，不是表字段 */
   latest_video_at?: string | null
   /** 追更：该作者「爬主页」任务最近一次完成的时间（ISO）；从没爬过为 null。由 listAuthors 计算 */
@@ -252,6 +254,8 @@ export interface AppSettings {
   autoFollowTime: string
   /** 追更时每个作者最多抓几条 */
   autoFollowCount: number
+  /** 追更哪些作者：all = 全部爬过主页的；picked = 只追作者收藏里标了「定时追更」的 */
+  autoFollowScope: 'all' | 'picked'
 }
 
 /** ASR 单个模型文件的状态（models.status() 的结果形状，跨进程用） */

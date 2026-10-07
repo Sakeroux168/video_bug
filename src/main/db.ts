@@ -125,6 +125,8 @@ export function initDb(db: DatabaseSync): void {
   addColumnIfMissing(db, 'authors', 'ai_classified_at', 'TEXT')
   addColumnIfMissing(db, 'authors', 'verify_state', 'TEXT')
   addColumnIfMissing(db, 'authors', 'verify_error', 'TEXT')
+  // 2026-10-07：定时追更可以只追勾了的作者（1 = 参加）
+  addColumnIfMissing(db, 'authors', 'auto_follow', 'INTEGER')
   addColumnIfMissing(db, 'videos', 'cover_url', 'TEXT')
   addColumnIfMissing(db, 'videos', 'cover_path', 'TEXT')
   addColumnIfMissing(db, 'videos', 'video_width', 'INTEGER NOT NULL DEFAULT 0')
@@ -295,6 +297,13 @@ export function updateAuthorCategory(db: DatabaseSync, id: number, category: str
 }
 
 /** 删除作者及其关联视频（#3：不要的作者整组清理）。调用方要先取消这些视频的下载（ipc authors:delete）；文件不动 */
+/** 定时追更：把这些作者加入 / 移出「只追标了的」名单 */
+export function setAuthorsAutoFollow(db: DatabaseSync, ids: number[], on: boolean): void {
+  const clean = ids.filter(id => Number.isInteger(id))
+  if (!clean.length) return
+  db.prepare(`UPDATE authors SET auto_follow = ? WHERE id IN (${clean.map(() => '?').join(',')})`).run(on ? 1 : null, ...clean)
+}
+
 export function deleteAuthors(db: DatabaseSync, ids: number[]): void {
   if (!ids.length) return
   const ph = ids.map(() => '?').join(',')

@@ -210,3 +210,25 @@ describe('作者表格', () => {
     expect(screen.getByRole('tab', { name: /小红书/ })).toHaveAttribute('aria-selected', 'true')
   })
 })
+
+// 2026-10-07 定时追更可以挑作者：作者收藏里勾选 →「加入定时追更 / 移出定时追更」；加入的名字旁有标记
+describe('挑哪些作者参加定时追更', () => {
+  it('勾两个 →「加入定时追更」；名字旁显示「定时追更」', async () => {
+    await open([author(), fresh({ auto_follow: 1 })])
+    expect(within(row('没爬过的博主')).getByText('定时追更')).toBeInTheDocument()
+    expect(within(row('爬过的博主')).queryByText('定时追更')).toBeNull()
+    fireEvent.click(within(row('爬过的博主')).getAllByRole('checkbox')[0])
+    fireEvent.click(within(row('没爬过的博主')).getAllByRole('checkbox')[0])
+    fireEvent.click(screen.getByRole('button', { name: '加入定时追更' }))
+    await waitFor(() => expect(window.api.setAuthorsAutoFollow).toHaveBeenCalledWith([1, 2], true))
+    expect(await within(row('爬过的博主')).findByText('定时追更')).toBeInTheDocument()
+  })
+
+  it('「移出定时追更」', async () => {
+    await open([author({ auto_follow: 1 })])
+    fireEvent.click(within(row('爬过的博主')).getAllByRole('checkbox')[0])
+    fireEvent.click(screen.getByRole('button', { name: '移出定时追更' }))
+    await waitFor(() => expect(window.api.setAuthorsAutoFollow).toHaveBeenCalledWith([1], false))
+    await waitFor(() => expect(within(row('爬过的博主')).queryByText('定时追更')).toBeNull())
+  })
+})

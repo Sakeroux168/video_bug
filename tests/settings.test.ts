@@ -49,6 +49,7 @@ function fullSettings(over: Partial<AppSettings> = {}): AppSettings {
     autoFollowEnabled: true,
     autoFollowTime: '21:30',
     autoFollowCount: 50,
+    autoFollowScope: 'picked',
     ...over
   }
 }

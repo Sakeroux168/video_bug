@@ -33,16 +33,18 @@ export function shouldRunFollow(now: Date, s: Schedule, lastRunAt: string | null
   return !last || !Number.isFinite(last.getTime()) || last < due
 }
 
-/** 会被追更的作者：爬过主页的（关键词搜索时顺带收进来的不算），平台能建任务 */
-export function followAuthors(db: DatabaseSync): ReturnType<typeof listAuthors> {
-  return listAuthors(db).filter(a => crawledBefore(a) && getAdapter(a.platform)?.taskReady !== false)
+/** 会被追更的作者（平台要能建任务）：
+ *  all = 爬过主页的（关键词搜索时顺带收进来的不算）；picked = 作者收藏里标了「定时追更」的（没爬过的也算，按全部抓） */
+export function followAuthors(db: DatabaseSync, scope: AppSettings['autoFollowScope'] = 'all'): ReturnType<typeof listAuthors> {
+  return listAuthors(db).filter(a => getAdapter(a.platform)?.taskReady !== false &&
+    (scope === 'picked' ? a.auto_follow === 1 : crawledBefore(a)))
 }
 
 export interface AutoFollowResult { authors: number; created: number; skipped: number; taskIds: number[] }
 
 /** 给每个爬过主页的作者建一个「只抓新视频」任务，排队一个个跑；已经在排队 / 在爬的跳过 */
-export function runAutoFollow(db: DatabaseSync, enqueue: (id: number) => void, opts: { count: number }): AutoFollowResult {
-  const authors = followAuthors(db)
+export function runAutoFollow(db: DatabaseSync, enqueue: (id: number) => void, opts: { count: number; scope?: AppSettings['autoFollowScope'] }): AutoFollowResult {
+  const authors = followAuthors(db, opts.scope)
   const taskIds: number[] = []
   let skipped = 0
   for (const a of authors) {

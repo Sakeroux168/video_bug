@@ -74,6 +74,17 @@ describe('定时追更建任务', () => {
     expect(r).toMatchObject({ created: 0, skipped: 1 })
   })
 
+  // 2026-10-07 挑作者：「只追标了定时追更的」——只给标了的建；标了但没爬过主页的也建（按全部抓，条数照设置）
+  it('只追标了的作者：没标的不建；标了没爬过的按全部抓', () => {
+    seed()
+    db.prepare("UPDATE authors SET auto_follow = 1 WHERE sec_uid LIKE '%bbbb%'").run()
+    const r = runAutoFollow(db, () => {}, { count: 5, scope: 'picked' })
+    expect(r).toMatchObject({ authors: 1, created: 1 })
+    const row = db.prepare('SELECT query, filters FROM tasks WHERE id = ?').get(r.taskIds[0]) as { query: string; filters: string }
+    expect(row.query).toContain('bbbb')
+    expect(JSON.parse(row.filters)).toMatchObject({ timeRange: 'all', targetCount: 5 })
+  })
+
   it('没有爬过主页的作者 → 什么都不建', () => {
     expect(runAutoFollow(db, () => {}, { count: 20 })).toMatchObject({ authors: 0, created: 0 })
   })
