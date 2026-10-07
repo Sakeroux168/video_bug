@@ -1,6 +1,6 @@
 # video_bug 当前交接
 
-> 当前执行快照，随进度重写；历史看 Git。更新于 2026-10-07（Electron 44 合并后）。
+> 当前执行快照，随进度重写；历史看 Git。更新于 2026-10-07（安全加固、性能收尾合并后）。
 
 ## 基线
 
@@ -39,7 +39,9 @@
 - 用户选的 1→2→3（视频处理 / 素材库 / 自动化）全部完成。
 - 定时追更挑作者 ✅ PR #47（authors.auto_follow；设置「追更哪些作者」all / picked）。开机自动启动 ✅ PR #48（只打包版写启动项，便携版用 PORTABLE_EXECUTABLE_FILE，带 --hidden 只挂托盘；没在打包版上真写启动项 / 重启验证）。
 - Electron 35 → 44 ✅ PR #49（Node 24.21 / Chromium 152）：页面跳转后之前发出的 executeJavaScript 永不返回 → 读详情等轮询全部加超时（不加小红书一条都下不了）；postinstall `install-electron --no`（42 起 npm 不再自动下 Electron 本体）；选文件夹自己记上次位置（43）；clipboard.writeText 异步（44）。真机：小红书抓 + 下、素材库、剪贴板、视频处理、通知、打包版都过；抖音 / 快手 / 语音转写没测。Electron 45 预告：沙盒 preload 没有 Buffer / setImmediate 等。
-- 后面候选：性能 C4、A8（preload 来源校验 / 下载域名白名单）、A9（AI Key 加密）。
+- 安全加固 ✅ PR #51：下载只认平台域名（适配器 `downloadHosts`，IP / localhost 不认，不合格 `bad_host` 不重试；快手 CDN 域名没有真实下载记录核对过，报错就补）；平台页 preload 只认 source=本窗口、origin=本页面的 platform:raw；AI Key 用 safeStorage 加密存 `aiApiKeyEnc`；本机接口新装默认关（老用户没写过的保持开）。
+- 性能收尾 C4 ✅ PR #52：视频处理快照节流 250ms + 界面最多画 200 行；导出只查 9 列；页面钩子按接口地址过滤（无关 JSON 只报地址）；ffmpeg 时限；下载并发 1–5、分段重试退避、403/429 不重试、整条重试 5s/15s。
+- 全面检查列出的 A / B / C / D 组都做完了。剩下没做的：F3 后半（文件管理目录树按层懒加载）、F7（空闲时平台窗口降速）、F14（作者表 / 任务表分页）、安全 L 组的几条低风险项；要做再挑。
 - 用户 2026-10-07 定：本机接口新装默认关（PR #51）；`.ai/coordinator/` 里的本机路径清理掉、改记在总控本机笔记里。
 - 体验测试注意：Electron 的 `window.confirm` 是系统弹窗，会卡住整个程序、远程控制关不掉；测删除这类操作前先用 CDP 把 `window.confirm` 换成返回 true 的函数。
 - 全面检查报告和总汇总在总控工作区的「全面检查」文件夹（先看 `总汇总.md`）。
