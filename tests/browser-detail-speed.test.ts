@@ -57,6 +57,32 @@ describe('VideoBrowser.extractCurrentDetail 用 mainFrame', () => {
   })
 })
 
+// 2026-10-07 升级 Electron 44 真机发现：页面一跳转，跳转前发出的 executeJavaScript 永远不返回（旧版会报错返回）。
+// 调度器每 200ms 读一次，读到一半卡住就再也不读了 → 每条笔记都「详情超时，跳过」。读详情必须有超时。
+describe('VideoBrowser.extractCurrentDetail 不会卡死', () => {
+  it('这一次读取一直不返回 → 到时间返回 null，下一次照常读', async () => {
+    vi.useFakeTimers()
+    try {
+      const b = new VideoBrowser({} as never)
+      const frames = [
+        { executeJavaScript: vi.fn(() => new Promise(() => {})) },
+        { executeJavaScript: vi.fn(async () => pageDetailJson('N1')) }
+      ]
+      let call = 0
+      ;(b as unknown as { win: unknown }).win = {
+        isDestroyed: () => false,
+        get webContents(): unknown { return { get mainFrame(): unknown { return frames[Math.min(call++, 1)] } } }
+      }
+      const first = b.extractCurrentDetail(xiaohongshuAdapter, 'N1')
+      await vi.advanceTimersByTimeAsync(5000)
+      expect(await first).toBeNull()
+      expect((await b.extractCurrentDetail(xiaohongshuAdapter, 'N1'))?.awemeId).toBe('N1')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
+
 describe('VideoBrowser.fetchDetailHtml（快速模式 session fetch）', () => {
   beforeEach(() => { sessionFromPartition.mockReset() })
 

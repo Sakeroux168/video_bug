@@ -53,6 +53,19 @@ export interface IpcDeps {
 }
 
 export function registerIpc(deps: IpcDeps): void {
+  /** 上次在选文件夹对话框里选的位置。Electron 43 起系统不再记住上次的位置、默认总打开「下载」，
+   *  这里自己记：先打开上次选的，没有就打开设置里的下载目录 */
+  let lastPicked: string | null = null
+  async function pickFolder(title: string): Promise<string | null> {
+    const { canceled, filePaths } = await dialog.showOpenDialog(deps.getWindow(), {
+      title, properties: ['openDirectory', 'createDirectory'],
+      defaultPath: lastPicked || getSettings().downloadDir || undefined
+    })
+    if (canceled || filePaths.length === 0) return null
+    lastPicked = filePaths[0]
+    return filePaths[0]
+  }
+
   // 程序里删的视频 / 文件夹一律进回收站，删错了还能找回来
   // 文件早就不在了（手动删过）不算失败：回收站找不到它会报错，那样这条记录就永远删不掉了
   const trash = async (p: string): Promise<void> => { if (existsSync(p)) await shell.trashItem(p) }
@@ -197,7 +210,8 @@ export function registerIpc(deps: IpcDeps): void {
   // 「导出全部已下载」用：跨任务取 done 的视频（含作者昵称）
   handle('videos:downloaded', () => listDownloadedVideos(db))
 
-  handle('clipboard:write', (_e, text: string) => { clipboard.writeText(String(text ?? '')) })
+  // Electron 44 起 writeText 是异步的（返回 Promise），要等它写完
+  handle('clipboard:write', async (_e, text: string) => { await clipboard.writeText(String(text ?? '')) })
 
   handle('video:source:open', async (_e, id: number) => {
     const row = db.prepare('SELECT platform, aweme_id, source_url FROM videos WHERE id=?').get(id) as
@@ -381,12 +395,7 @@ export function registerIpc(deps: IpcDeps): void {
   handle('process:stop', () => { deps.processor.stop() })
 
   // 选择目录（#1 下载目录；视频处理页复用，只换标题）
-  handle('dialog:pickDir', async (_e, title?: string) => {
-    const { canceled, filePaths } = await dialog.showOpenDialog(deps.getWindow(), {
-      title: title || '选择下载目录', properties: ['openDirectory', 'createDirectory']
-    })
-    return canceled || filePaths.length === 0 ? null : filePaths[0]
-  })
+  handle('dialog:pickDir', (_e, title?: string) => pickFolder(title || '选择下载目录'))
   // 在系统文件管理器中打开某个目录（#8）
   // 只打开真实存在的文件夹：shell.openPath 对 .exe 等文件是直接运行（安全检查 A2）
   handle('dialog:openDir', (_e, p: unknown) => {
@@ -407,12 +416,10 @@ export function registerIpc(deps: IpcDeps): void {
     const list = Array.isArray(ids) ? ids.filter((n): n is number => Number.isInteger(n)) : []
     if (!list.length) return { ok: false, error: '先勾选要交付的视频' }
     const o = options && typeof options === 'object' ? options as Record<string, unknown> : {}
-    const { canceled, filePaths } = await dialog.showOpenDialog(deps.getWindow(), {
-      title: '选一个文件夹放交付的视频', properties: ['openDirectory', 'createDirectory']
-    })
-    if (canceled || !filePaths[0]) return { ok: false, canceled: true }
+    const dest = await pickFolder('选一个文件夹放交付的视频')
+    if (!dest) return { ok: false, canceled: true }
     try {
-      const result = await exportLibraryVideos(db, list, filePaths[0], { markUsed: o.markUsed === true })
+      const result = await exportLibraryVideos(db, list, dest, { markUsed: o.markUsed === true })
       if (o.normalize !== true || result.copied === 0) return { ok: true, result }
       // 交付文件夹里是复制品，原地替换安全；only 限定只处理这次复制过去的
       const r = deps.processor.start(result.dir, { mode: 'replace', orientation: 'auto', strict: false }, { only: result.files, dropBackup: true })
