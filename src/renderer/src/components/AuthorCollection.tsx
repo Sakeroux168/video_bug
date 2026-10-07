@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState } from 'react'
 import { api } from '../api'
 import type { AuthorRow, TaskType } from '../../../shared/types'
 import { beijingDate, crawlRequest, crawledBefore, followFrom, type CrawlScope } from '../../../shared/followCrawl'
-import { Card, btnPrimary, btn } from './ui'
+import { Card, btnPrimary, btn, Pager } from './ui'
 import { useMarqueeSelect } from './useMarqueeSelect'
 import { useTableSelection } from './useTableSelection'
 import { parsePastedAuthors } from './parsePastedAuthors'
@@ -24,6 +24,8 @@ function importPlaceholder(sample: string): string {
 
 type SortKey = 'video_count' | 'last_crawled_at' | 'latest_video_at'
 const TAB_KEY = 'authorCollection.tab'
+/** F14：作者表每页多少个 */
+const AUTHOR_PAGE_SIZE = 100
 
 export default function AuthorCollection({ notify }: { notify: Notify }) {
   const [authors, setAuthors] = useState<AuthorRow[]>([])
@@ -36,6 +38,7 @@ export default function AuthorCollection({ notify }: { notify: Notify }) {
   const [importPlatform, setImportPlatform] = useState('douyin')
   // 员工反馈：抖音和快手混在一张表里分不清谁是哪的 → 按平台分子 tab。
   // 记住上次选的 tab（体验测试：作者都在小红书，每次进来却停在空的抖音页）
+  const [authorPage, setAuthorPage] = useState(1)
   const [tab, setTab] = useState(() => { try { return localStorage.getItem(TAB_KEY) ?? '' } catch { return '' } })
   // 爬主页确认面板：以前点一下就按写死的 200 条 + 自动下载开跑，员工反馈"没人问过我要爬多少"。
   // 默认 20 条（说明书一直建议先填 20；200 条一手快就容易被平台风控）
@@ -104,16 +107,21 @@ export default function AuthorCollection({ notify }: { notify: Notify }) {
     if (sortKey === 'video_count') return y.video_count - x.video_count
     return (y[sortKey] ?? '').localeCompare(x[sortKey] ?? '') // 新的在前，没有的排最后
   })
+  // F14：作者多了分页画，每页 100 个；换 tab / 排序回第 1 页
+  const authorPageCount = Math.max(1, Math.ceil(visible.length / AUTHOR_PAGE_SIZE))
+  const curAuthorPage = Math.min(authorPage, authorPageCount)
+  const pageRows = visible.length > AUTHOR_PAGE_SIZE ? visible.slice((curAuthorPage - 1) * AUTHOR_PAGE_SIZE, curAuthorPage * AUTHOR_PAGE_SIZE) : visible
   const activeLabel = platformTabs.find(t => t.name === activeTab)?.label ?? activeTab
   const authorCrawlSupported = (platform: string): boolean =>
     platforms.find(p => p.name === platform)?.supportedTaskTypes?.includes('author') !== false
   const selectedRows = visible.filter(a => selected.has(a.id))
-  const toggleSort = (key: SortKey): void => setSortKey(k => (k === key ? null : key))
+  const toggleSort = (key: SortKey): void => { setSortKey(k => (k === key ? null : key)); setAuthorPage(1) }
 
   /** 切 tab：必须清空选择。否则在抖音选了几行、切到快手再点「删除选中」，
    *  删掉的是当前根本看不见的抖音作者。 */
   function switchTab(name: string): void {
     setTab(name)
+    setAuthorPage(1)
     try { localStorage.setItem(TAB_KEY, name) } catch { /* 本机记不住也不影响使用 */ }
     setSelected(new Set())
     setBatchOpen(false)
@@ -121,9 +129,10 @@ export default function AuthorCollection({ notify }: { notify: Notify }) {
     setImportPlatform(name) // 导入平台跟随当前 tab，省一次选择也避免选错
   }
 
-  const allSelected = visible.length > 0 && visible.every(a => selected.has(a.id))
+  // 全选 / 范围选只管这一页
+  const allSelected = pageRows.length > 0 && pageRows.every(a => selected.has(a.id))
   function toggleAll(): void {
-    setSelected(allSelected ? new Set() : new Set(visible.map(a => a.id)))
+    setSelected(allSelected ? new Set() : new Set(pageRows.map(a => a.id)))
   }
 
   // 行选择终版语义（排他/ctrl 切换/shift 范围），锚点按本组件实例独立
@@ -138,7 +147,7 @@ export default function AuthorCollection({ notify }: { notify: Notify }) {
   function handleRowClick(a: AuthorRow, e: React.MouseEvent): void {
     if (didDragRef.current) return
     if ((e.target as HTMLElement).closest('button, a, input')) return
-    setSelected(rowClick(a.id, visible.map(x => x.id), selected, { ctrlKey: e.ctrlKey, shiftKey: e.shiftKey }))
+    setSelected(rowClick(a.id, pageRows.map(x => x.id), selected, { ctrlKey: e.ctrlKey, shiftKey: e.shiftKey }))
   }
 
   // 点容器内空白区域（非行、非交互元素）→ 清空全部选择；
@@ -627,7 +636,7 @@ export default function AuthorCollection({ notify }: { notify: Notify }) {
               </tr>
             </thead>
             <tbody>
-              {visible.map(a => (
+              {pageRows.map(a => (
                 <tr
                   key={`${a.platform}:${a.sec_uid}`}
                   data-id={a.id}
@@ -709,6 +718,8 @@ export default function AuthorCollection({ notify }: { notify: Notify }) {
           )}
         </div>
       )}
+      {/* 放在框选区域外面：点翻页不能被当成「点空白取消选择」 */}
+      <Pager page={curAuthorPage} pageCount={authorPageCount} onPage={setAuthorPage} what="作者" total={visible.length} />
     </Card>
   )
 }

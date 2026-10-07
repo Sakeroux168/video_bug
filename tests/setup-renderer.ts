@@ -2,6 +2,7 @@ import '@testing-library/jest-dom/vitest'
 import { afterEach } from 'vitest'
 import { cleanup } from '@testing-library/react'
 import { installFakeApi } from './helpers/fake-api'
+import { resetFileTreeCache } from '../src/renderer/src/components/fileTreeCache'
 
 // jsdom 环境（组件测试）专用 setup：
 // - 引入 jest-dom 断言（toBeInTheDocument 等）
@@ -11,5 +12,6 @@ import { installFakeApi } from './helpers/fake-api'
 installFakeApi()
 afterEach(() => {
   cleanup()
+  resetFileTreeCache() // 文件管理会记住上次的目录树和所在文件夹（2026-10-07 F3），不能串到下一个测试
   try { globalThis.localStorage?.clear() } catch { /* node 环境没有 localStorage */ }
 })

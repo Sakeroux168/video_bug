@@ -190,16 +190,19 @@ function push(evt: unknown): void {
   if (t) {
     if (t.type === 'task:progress' && t.status === 'running') {
       taskRunning = true
+      browser?.setBusy(true) // F7：任务进行中才关后台节流
       forceBrowserFull = false
       updateBrowserDisplay()
     }
     if (t.type === 'task:done') {
       taskRunning = false
+      browser?.setBusy(false)
       forceBrowserFull = false
       updateBrowserDisplay()
     }
     if (t.type === 'task:paused') {
       taskRunning = false
+      browser?.setBusy(false)
       if (t.reason === 'login_required') {
         // D6：状态灯跟着变成「未登录」（以前任务写没登录、状态灯还写未知）
         const row = dbRef?.prepare('SELECT platform FROM tasks WHERE id = ?').get((evt as { taskId?: number }).taskId ?? 0) as { platform?: string } | undefined
