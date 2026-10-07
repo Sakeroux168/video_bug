@@ -114,8 +114,40 @@ export class VideoBrowser {
       this.current = adapter // 同分区不同适配器实例（理论上不会有）也认新的
       return
     }
+    // 先把这个平台的分区设成直连 / 系统代理，再建窗口加载页面
+    await this.applyProxy(adapter.sessionPartition)
     const previous = this.teardownWindow()
     this.createWindow(adapter, previous)
+  }
+
+  private direct = true
+
+  get isDirect(): boolean { return this.direct }
+
+  /**
+   * 平台网页直连开关（2026-10-07）：开 = 平台分区不走系统代理（翻墙软件），关 = 跟系统代理走。
+   * 起因：快手拒绝从代理过来的请求（首页只回一行 {"result":2}），用户开着翻墙软件时快手页打不开。
+   * 已经打开的平台窗口马上生效；还没打开的，打开时按这个设置。
+   */
+  async setDirect(direct: boolean): Promise<void> {
+    this.direct = direct
+    if (this.current) await this.applyProxy(this.current.sessionPartition)
+  }
+
+  private async applyProxy(partition: string): Promise<void> {
+    try {
+      const { session } = await import('electron')
+      const ses = session.fromPartition(partition)
+      // 浏览器标识里去掉程序名：快手会拒绝带「video-scraper/版本号」的请求（只回 {"result":2}，页面空白）
+      if (typeof ses.getUserAgent === 'function') {
+        const ua = ses.getUserAgent()
+        const clean = ua.replace(/ video-scraper\/\S+/i, '')
+        if (clean !== ua) ses.setUserAgent(clean)
+      }
+      await ses.setProxy(this.direct ? { mode: 'direct' } : { mode: 'system' })
+    } catch (e) {
+      console.warn('[浏览器] 设置代理方式失败：', e instanceof Error ? e.message : e)
+    }
   }
 
   /** 销毁当前窗口，返回它的位置与可见状态供新窗口继承；无窗口返回 null */

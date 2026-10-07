@@ -40,7 +40,8 @@ const DEFAULTS: AppSettings = {
   autoFollowTime: '09:00',
   autoFollowCount: 20,
   autoFollowScope: 'all',
-  openAtLogin: false
+  openAtLogin: false,
+  platformDirect: true
 }
 
 /** 升级前的老用户行为：四层全开。
