@@ -120,6 +120,21 @@ export interface ProcessItem {
   target?: { width: number; height: number }
   /** 稳定错误码（media_probe_failed / ffmpeg_not_found / ffmpeg_failed / output_invalid / backup_exists / replace_failed） */
   error?: string
+  /** 处理前后的文件大小（字节），转码成功才有 sizeAfter；界面据此标出「处理后变大了」 */
+  sizeBefore?: number
+  sizeAfter?: number
+}
+
+/**
+ * 视频处理选项（2026-10-07）：
+ * - mode：folder = 结果放进所选文件夹下的「已处理」文件夹，原片不动（界面默认）；replace = 原地替换，原片改名备份成 .original.mp4
+ * - strict：严格 H.264（编码 / 像素格式 / 容器全部达标才跳过）；默认只要尺寸对、剪辑软件能打开就跳过
+ * - orientation：强制竖屏 / 横屏；auto = 按原片方向
+ */
+export interface ProcessOptions {
+  mode?: 'folder' | 'replace'
+  strict?: boolean
+  orientation?: 'auto' | 'portrait' | 'landscape'
 }
 /** 视频处理页整体阶段：idle → running ⇄ paused → finished；stop 后 stopping → stopped */
 export type ProcessPhase = 'idle' | 'running' | 'paused' | 'stopping' | 'finished' | 'stopped'
@@ -139,6 +154,8 @@ export interface ProcessState {
   items: ProcessItem[]
   /** 简洁运行日志（最新在后，最多保留 200 行） */
   log: string[]
+  /** 「已处理」模式下结果放在哪（界面上「打开文件夹」用）；原地替换模式为 null */
+  outputDir?: string | null
 }
 
 /** 文件管理删除结果：deleted = DB 删除的视频行数（文件夹删除成功与否看 ok/filesRemoved） */

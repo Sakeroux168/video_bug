@@ -52,7 +52,8 @@ function entriesOf(node: FilesDirNode): Entry[] {
  * 根目录直接平铺的视频与子文件夹同样可见。
  * 定位/导出/删除对文件夹与视频都可用；删除 = 放进回收站（文件夹整个放）+ DB 联动，window.confirm 二次确认，删除后刷新。
  */
-export default function FileManager({ notify }: { notify: Notify }) {
+/** onProcessDir：文件夹行「统一分辨率」——把这个文件夹的完整路径交给「视频处理」页（App 负责切页） */
+export default function FileManager({ notify, onProcessDir }: { notify: Notify; onProcessDir?: (dir: string) => void }) {
   const [tree, setTree] = useState<FilesTree | null>(null)
   const [cwd, setCwd] = useState<string[]>([]) // 当前文件夹的相对段落（[] = 下载目录根）
   const [selected, setSelected] = useState<Set<string>>(new Set())
@@ -262,6 +263,12 @@ export default function FileManager({ notify }: { notify: Notify }) {
                     <button className="rounded px-2 py-1 text-xs text-brand-500 hover:bg-brand-50" onClick={() => void locate(entry)}>定位</button>
                     {entry.kind === 'dir' && (
                       <button className="rounded px-2 py-1 text-xs text-slate-600 hover:bg-slate-100" onClick={() => void exportUnder([...cwd, entry.name], `文件夹「${entry.name}」`)}>导出</button>
+                    )}
+                    {entry.kind === 'dir' && onProcessDir && (
+                      <button className="whitespace-nowrap rounded px-2 py-1 text-xs text-slate-600 hover:bg-slate-100" onClick={() => {
+                        const full = joinPath(downloadDir, ...cwd, entry.name)
+                        onProcessDir(downloadDir.includes('\\') ? full.replace(/\//g, '\\') : full) // Windows 路径统一用反斜杠
+                      }}>统一分辨率</button>
                     )}
                     <button className="rounded px-2 py-1 text-xs text-danger-600 hover:bg-danger-50" onClick={() => void deleteEntries([entry])}>删除</button>
                   </td>

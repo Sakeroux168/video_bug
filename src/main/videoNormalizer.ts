@@ -12,7 +12,12 @@ export interface MediaProbe {
   audioCodec: string | null
   formatName: string
   durationSec: number
+  /** 容器总码率（bit/s），读不到就没有；转码时用它给输出码率设上限 */
+  bitRate?: number
 }
+
+/** 目标方向：auto = 按原片方向；portrait / landscape = 强制竖屏 / 横屏 */
+export type TargetOrientation = 'auto' | 'portrait' | 'landscape'
 
 export interface VideoSize {
   width: number
@@ -28,6 +33,10 @@ export interface NormalizeVideoRequest {
   inputPath: string
   outputPath: string
   signal?: AbortSignal
+  /** 严格 H.264：要求编码 / 像素格式 / 容器 / 音频全部达标才跳过；默认只要「尺寸对、剪辑软件能打开」就跳过 */
+  strict?: boolean
+  /** 强制竖屏 / 横屏；不给 = 按原片方向 */
+  orientation?: TargetOrientation
   /** 探测完源文件、还没开始转码时回调一次：源显示尺寸与目标尺寸。「视频处理」页用它在转码进行中就显示尺寸，不必等结果。 */
   onProbe?: (info: { source: VideoSize; target: VideoSize }) => void
 }
@@ -80,12 +89,36 @@ export function displayDimensions(probe: Pick<MediaProbe, 'width' | 'height' | '
     : { width, height }
 }
 
-export function targetDimensions(probe: Pick<MediaProbe, 'width' | 'height' | 'rotation'>): VideoSize | null {
+export function targetDimensions(probe: Pick<MediaProbe, 'width' | 'height' | 'rotation'>, orientation: TargetOrientation = 'auto'): VideoSize | null {
   const display = displayDimensions(probe)
   if (!display) return null
-  return display.height >= display.width
+  const portrait = orientation === 'portrait' || (orientation === 'auto' && display.height >= display.width)
+  return portrait
     ? { width: 1080, height: 1920 }
     : { width: 1920, height: 1080 }
+}
+
+/** 剪辑软件（剪映、PR 等）普遍能直接打开的编码和容器 */
+const EDITOR_FRIENDLY_CODECS = new Set(['h264', 'hevc', 'h265'])
+
+/**
+ * 默认档的「不用转」：显示尺寸已经是目标尺寸、像素是方的、编码和容器剪辑软件能打开（2026-10-07 O07）。
+ * 以前只认 H.264 + yuv420p + AAC，HEVC 1080×1920 也会被重转一遍，体积变成 3～4 倍。
+ */
+export function isGoodEnough(probe: MediaProbe, target: VideoSize): boolean {
+  const display = displayDimensions(probe)
+  if (!display) return false
+  return display.width === target.width
+    && display.height === target.height
+    && (probe.sampleAspectRatio === null || isSquarePixel(probe.sampleAspectRatio) || probe.sampleAspectRatio === '0:1')
+    && EDITOR_FRIENDLY_CODECS.has(probe.videoCodec.toLowerCase())
+    && probe.formatName.toLowerCase().split(',').some(f => f === 'mp4' || f === 'mov')
+}
+
+/** 转码码率上限：原片的 1.2 倍，但不低于 800k（原片码率太低时硬压会糊）；读不到原片码率就不设上限 */
+export function maxBitrateFor(source: MediaProbe): number | undefined {
+  if (!source.bitRate || source.bitRate <= 0) return undefined
+  return Math.max(Math.round(source.bitRate * 1.2), 800_000)
 }
 
 function isSquarePixel(value: string | null): boolean {
@@ -126,7 +159,9 @@ export function buildNormalizationFilter(target: VideoSize): string {
   ].join(';')
 }
 
-export function buildNormalizationArgs(inputPath: string, outputPath: string, target: VideoSize): string[] {
+export function buildNormalizationArgs(inputPath: string, outputPath: string, target: VideoSize, opts: { maxBitrate?: number; copyAudio?: boolean } = {}): string[] {
+  // 码率上限（O07）：CRF 只管画质不管体积，竖屏放大后常常比原片大好几倍
+  const cap = opts.maxBitrate && opts.maxBitrate > 0 ? Math.round(opts.maxBitrate / 1000) : 0
   return [
     '-hide_banner', '-loglevel', 'error', '-y',
     '-i', inputPath,
@@ -138,9 +173,10 @@ export function buildNormalizationArgs(inputPath: string, outputPath: string, ta
     '-c:v', 'libx264',
     '-preset', 'medium',
     '-crf', '20',
+    ...(cap > 0 ? ['-maxrate', `${cap}k`, '-bufsize', `${cap * 2}k`] : []),
     '-pix_fmt', 'yuv420p',
-    '-c:a', 'aac',
-    '-b:a', '192k',
+    // 原片音频已经是 AAC 就直接复制（不重编码、体积不涨）；不是才转成 AAC 192k
+    ...(opts.copyAudio ? ['-c:a', 'copy'] : ['-c:a', 'aac', '-b:a', '192k']),
     '-movflags', '+faststart',
     '-metadata:s:v:0', 'rotate=0',
     outputPath
@@ -215,18 +251,24 @@ export async function normalizeVideo(
 ): Promise<NormalizeVideoResult> {
   const source = await deps.probeMedia(request.inputPath)
   if (!source) return { status: 'failed', error: 'media_probe_failed' }
-  const target = targetDimensions(source)
+  const target = targetDimensions(source, request.orientation)
   const display = displayDimensions(source)
   if (!target || !display) return { status: 'failed', error: 'media_probe_failed' }
   request.onProbe?.({ source: display, target })
-  if (isAlreadyCompatible(source)) return { status: 'skipped', target, source: display }
+  const fine = request.strict
+    ? isAlreadyCompatible(source) && source.width === target.width && source.height === target.height
+    : isGoodEnough(source, target)
+  if (fine) return { status: 'skipped', target, source: display }
   const ffmpeg = deps.findFfmpeg()
   if (!ffmpeg) return { status: 'failed', error: 'ffmpeg_not_found', target, source: display }
 
   try {
     await deps.runFfmpeg(
       ffmpeg,
-      buildNormalizationArgs(request.inputPath, request.outputPath, target),
+      buildNormalizationArgs(request.inputPath, request.outputPath, target, {
+        maxBitrate: maxBitrateFor(source),
+        copyAudio: source.audioCodec?.toLowerCase() === 'aac'
+      }),
       request.signal
     )
   } catch (error) {
@@ -252,7 +294,7 @@ export async function probeMedia(file: string, deps: MediaProbeDeps = realProbeD
     try {
       deps.execFile(ffprobe, [
         '-v', 'error',
-        '-show_entries', 'stream=codec_type,codec_name,width,height,pix_fmt,sample_aspect_ratio:stream_tags=rotate:stream_side_data=rotation:format=format_name,duration',
+        '-show_entries', 'stream=codec_type,codec_name,width,height,pix_fmt,sample_aspect_ratio:stream_tags=rotate:stream_side_data=rotation:format=format_name,duration,bit_rate',
         '-of', 'json',
         file
       ], (error, stdout) => {
@@ -269,7 +311,7 @@ export async function probeMedia(file: string, deps: MediaProbeDeps = realProbeD
               tags?: { rotate?: string | number }
               side_data_list?: Array<{ rotation?: string | number }>
             }>
-            format?: { format_name?: string; duration?: string | number }
+            format?: { format_name?: string; duration?: string | number; bit_rate?: string | number }
           }
           const video = data.streams?.find(stream => stream.codec_type === 'video')
           const width = validDimension(video?.width)
@@ -289,7 +331,9 @@ export async function probeMedia(file: string, deps: MediaProbeDeps = realProbeD
             videoCodec,
             audioCodec: audio?.codec_name ? String(audio.codec_name) : null,
             formatName: String(data.format?.format_name ?? ''),
-            durationSec: duration >= 0 ? duration : 0
+            durationSec: duration >= 0 ? duration : 0,
+            // 读不到就不给（toEqual 时和以前的结果一样）
+            bitRate: finiteNumber(data.format?.bit_rate, 0) > 0 ? Math.round(finiteNumber(data.format?.bit_rate, 0)) : undefined
           })
         } catch {
           resolve(null)
