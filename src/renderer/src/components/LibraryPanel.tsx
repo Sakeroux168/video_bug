@@ -1,12 +1,13 @@
 import React, { useCallback, useEffect, useState } from 'react'
 import { api } from '../api'
-import type { LibraryQuery, LibraryRow, VideoMark } from '../../../shared/types'
+import type { LibraryExportResponse, LibraryQuery, LibraryRow, VideoMark } from '../../../shared/types'
 import { Card, btn, inputCls } from './ui'
 
 /**
  * 素材库（2026-10-07 功能 E / N07 / N08）：用封面缩略图浏览所有下载完成的视频。
  * 筛选、排序、分页都在主进程查库（几千条也不卡界面）；封面走 vs-cover://video/<id>，界面不碰文件路径。
  * 标记：星标 / 待用 / 已用（避免重复用同一条素材），备注随手记。
+ * 多选（第二部分）：批量标记；「打包交付」= 复制到选的文件夹 + 来源清单，可顺便统一分辨率。
  */
 
 const PAGE_SIZE = 60
@@ -29,12 +30,26 @@ function duration(sec: number): string {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`
 }
 
-export default function LibraryPanel({ notify }: { notify: (text: string) => void }): React.ReactElement {
+/** 交付结果一句话：复制了几条、找不到 / 失败几条 */
+function exportSummary(r: NonNullable<LibraryExportResponse['result']>): string {
+  const parts = [`已复制 ${r.copied} 条`]
+  if (r.missing) parts.push(`${r.missing} 条找不到文件`)
+  if (r.failed) parts.push(`${r.failed} 条复制失败（看看磁盘空间）`)
+  return parts.join('，')
+}
+
+export default function LibraryPanel({ notify, onOpenProcess }: { notify: (text: string) => void; onOpenProcess?: () => void }): React.ReactElement {
   const [q, setQ] = useState<LibraryQuery>({ sort: 'downloaded', page: 1, pageSize: PAGE_SIZE })
   const [data, setData] = useState<{ rows: LibraryRow[]; total: number } | null>(null)
   const [tasks, setTasks] = useState<Array<{ id: number; platform: string; type: string; query: string; count: number }>>([])
   const [editing, setEditing] = useState<number | null>(null)
   const [draft, setDraft] = useState('')
+  const [selected, setSelected] = useState<Set<number>>(new Set())
+  const [exportOpen, setExportOpen] = useState(false)
+  const [markUsed, setMarkUsed] = useState(true)
+  const [normalize, setNormalize] = useState(false)
+  const [exporting, setExporting] = useState(false)
+  const [exportDone, setExportDone] = useState<LibraryExportResponse | null>(null)
 
   const load = useCallback((query: LibraryQuery) => {
     void api.listLibrary(query).then(setData).catch(() => setData({ rows: [], total: 0 }))
@@ -49,6 +64,33 @@ export default function LibraryPanel({ notify }: { notify: (text: string) => voi
     const next = v.mark === mark ? null : mark
     await api.markVideos([v.id], next)
     setData(prev => prev && { ...prev, rows: prev.rows.map(r => r.id === v.id ? { ...r, mark: next } : r) })
+  }
+
+  function toggleSelect(id: number): void {
+    setSelected(prev => { const next = new Set(prev); if (next.has(id)) next.delete(id); else next.add(id); return next })
+  }
+
+  async function markSelected(mark: VideoMark | null): Promise<void> {
+    const ids = [...selected]
+    await api.markVideos(ids, mark)
+    setData(prev => prev && { ...prev, rows: prev.rows.map(r => selected.has(r.id) ? { ...r, mark } : r) })
+  }
+
+  async function runExport(): Promise<void> {
+    setExporting(true)
+    try {
+      const r = await api.exportLibrary([...selected], { markUsed, normalize })
+      if (r.canceled) return
+      if (!r.ok || !r.result) { notify(r.error ?? '打包交付失败'); return }
+      setExportDone(r)
+      setExportOpen(false)
+      setSelected(new Set())
+      if (markUsed && r.result.copied > 0) load(q) // 标了「已用」，刷新一下卡片
+    } catch {
+      notify('打包交付失败')
+    } finally {
+      setExporting(false)
+    }
   }
 
   async function saveNote(v: LibraryRow): Promise<void> {
@@ -114,6 +156,54 @@ export default function LibraryPanel({ notify }: { notify: (text: string) => voi
         </div>
       </Card>
 
+      {selected.size > 0 && (
+        <div data-testid="library-selection" className="sticky top-0 z-10 space-y-2 rounded-lg border border-brand-200 bg-brand-50 px-3 py-2 text-xs">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="font-medium text-brand-700">已选 {selected.size} 条</span>
+            <button type="button" className={btn('ghost', 'sm')} onClick={() => setSelected(prev => new Set([...prev, ...(data?.rows ?? []).map(r => r.id)]))}>全选本页</button>
+            <button type="button" className={btn('ghost', 'sm')} onClick={() => { setSelected(new Set()); setExportOpen(false) }}>清空</button>
+            <span className="mx-1 h-4 w-px bg-brand-200" />
+            {(['star', 'todo', 'used'] as const).map(m => (
+              <button key={m} type="button" className={btn('secondary', 'sm')} onClick={() => void markSelected(m)}>标为{MARK_LABEL[m]}</button>
+            ))}
+            <button type="button" className={btn('secondary', 'sm')} onClick={() => void markSelected(null)}>清除标记</button>
+            <button type="button" className={`${btn('primary', 'sm')} ml-auto`} onClick={() => setExportOpen(o => !o)}>打包交付…</button>
+          </div>
+          {exportOpen && (
+            <div className="flex flex-wrap items-center gap-4 border-t border-brand-200 pt-2 text-slate-600">
+              <span className="text-slate-500">把选中的视频复制到一个文件夹，附一份「来源清单」表格；原视频不动。</span>
+              <label className="flex items-center gap-1.5">
+                <input type="checkbox" checked={markUsed} onChange={e => setMarkUsed(e.target.checked)} />
+                交付后标为「已用」
+              </label>
+              <label className="flex items-center gap-1.5">
+                <input type="checkbox" checked={normalize} onChange={e => setNormalize(e.target.checked)} />
+                顺便统一分辨率（只处理复制过去的）
+              </label>
+              <button type="button" className={btn('primary', 'sm')} disabled={exporting} onClick={() => void runExport()}>
+                {exporting ? '正在复制…' : '选文件夹并开始'}
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
+      {exportDone?.result && (
+        <div data-testid="library-export-done" className="flex flex-wrap items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800">
+          <span>
+            {exportSummary(exportDone.result)}
+            {exportDone.result.csvPath ? '，来源清单也放进去了' : ''}
+            {exportDone.processing ? '。正在统一分辨率' : ''}
+            {exportDone.processError ? `。统一分辨率没开始：${exportDone.processError}` : ''}
+          </span>
+          <button type="button" className={btn('secondary', 'sm')} onClick={() => void api.openDir(exportDone.result!.dir)}>打开文件夹</button>
+          {exportDone.processing && onOpenProcess && (
+            <button type="button" className={btn('secondary', 'sm')} onClick={onOpenProcess}>去看进度</button>
+          )}
+          <button type="button" className="ml-auto text-emerald-700 hover:underline" onClick={() => setExportDone(null)}>知道了</button>
+        </div>
+      )}
+
       {!data ? (
         <div className="py-8 text-center text-sm text-slate-400">加载中…</div>
       ) : data.total === 0 ? (
@@ -126,7 +216,9 @@ export default function LibraryPanel({ notify }: { notify: (text: string) => voi
             {data.rows.map(v => {
               const st = stats(v)
               return (
-                <div key={v.id} data-library-card className={`flex flex-col overflow-hidden rounded-lg border border-slate-200 bg-white ${v.mark === 'used' ? 'opacity-60' : ''}`}>
+                <div key={v.id} data-library-card className={`relative flex flex-col overflow-hidden rounded-lg border bg-white ${selected.has(v.id) ? 'border-brand-500 ring-1 ring-brand-500' : 'border-slate-200'} ${v.mark === 'used' ? 'opacity-60' : ''}`}>
+                  <input type="checkbox" aria-label={`选中 ${v.title || '（无标题）'}`} checked={selected.has(v.id)} onChange={() => toggleSelect(v.id)}
+                    className="absolute right-1.5 top-1.5 z-10 h-4 w-4 cursor-pointer" />
                   <button type="button" className="relative block aspect-[3/4] w-full bg-slate-100" title="播放" onClick={() => void play(v)}>
                     {v.cover_path
                       ? <img src={`vs-cover://video/${v.id}`} alt="" loading="lazy" className="h-full w-full object-cover" />

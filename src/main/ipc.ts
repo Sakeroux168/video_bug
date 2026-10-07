@@ -6,8 +6,8 @@ import { getSettings, saveSettings } from './settings'
 import { deleteVideoRows } from './videoDelete'
 import { scanFilesTreeAsync, deleteFileDir, deleteFileVideo, locateFileDir, locateVideoFile } from './fileManager'
 import { listAdapters, getAdapter } from './adapters'
-import type { LibraryQuery, ProcessOptions, VideoMark } from '../shared/types'
-import { listLibrary, listLibraryTasks, setVideoMark, setVideoNote, videoFileFor } from './library'
+import type { LibraryExportResponse, LibraryQuery, ProcessOptions, VideoMark } from '../shared/types'
+import { exportLibraryVideos, listLibrary, listLibraryTasks, setVideoMark, setVideoNote, videoFileFor } from './library'
 import type { Scheduler } from './scheduler'
 import type { Downloader } from './downloader'
 import type { VideoProcessor } from './videoProcessor'
@@ -385,6 +385,25 @@ export function registerIpc(deps: IpcDeps): void {
   handle('library:tasks', () => listLibraryTasks(db))
   handle('library:mark', (_e, ids: number[], mark: VideoMark | null) => { setVideoMark(db, Array.isArray(ids) ? ids : [], mark ?? null); return true })
   handle('library:note', (_e, id: number, note: string) => { setVideoNote(db, Number(id), String(note ?? '')); return true })
+  // 打包交付：界面只传视频 id；文件夹由这里弹窗选（界面传不进任意路径）
+  handle('library:export', async (_e, ids: unknown, options: unknown): Promise<LibraryExportResponse> => {
+    const list = Array.isArray(ids) ? ids.filter((n): n is number => Number.isInteger(n)) : []
+    if (!list.length) return { ok: false, error: '先勾选要交付的视频' }
+    const o = options && typeof options === 'object' ? options as Record<string, unknown> : {}
+    const { canceled, filePaths } = await dialog.showOpenDialog(deps.getWindow(), {
+      title: '选一个文件夹放交付的视频', properties: ['openDirectory', 'createDirectory']
+    })
+    if (canceled || !filePaths[0]) return { ok: false, canceled: true }
+    try {
+      const result = await exportLibraryVideos(db, list, filePaths[0], { markUsed: o.markUsed === true })
+      if (o.normalize !== true || result.copied === 0) return { ok: true, result }
+      // 交付文件夹里是复制品，原地替换安全；only 限定只处理这次复制过去的
+      const r = deps.processor.start(result.dir, { mode: 'replace', orientation: 'auto', strict: false }, { only: result.files, dropBackup: true })
+      return { ok: true, result, processing: r.ok, processError: r.error }
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : String(e) }
+    }
+  })
   handle('library:play', async (_e, id: number) => {
     const file = videoFileFor(db, Number(id))
     if (!file) return { ok: false, error: '找不到这个视频文件（可能被移走或删掉了）' }

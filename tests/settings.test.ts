@@ -36,6 +36,7 @@ function fullSettings(over: Partial<AppSettings> = {}): AppSettings {
     stallThresholdSec: 10,
     rescueCooldownSec: 10,
     stuckTimeoutMin: 5,
+    organizeByKeyword: true, // 2026-10-07 N27 新增
     organizeByCategory: false,
     organizeByAuthor: true,
     organizeByOrientation: false,

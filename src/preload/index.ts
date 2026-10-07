@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { CreateTaskInput, AppSettings, TaskRow, VideoRow, AuthorRow, TaskStats, AsrStatus, AsrProgress, FilesTree, FileDeleteResult, TaskProgressEvent, DownloadProgress, ProcessOptions, LibraryQuery, LibraryRow, VideoMark, GlobalStats, RecentDownload, ProcessState } from '../shared/types'
+import type { CreateTaskInput, AppSettings, TaskRow, VideoRow, AuthorRow, TaskStats, AsrStatus, AsrProgress, FilesTree, FileDeleteResult, TaskProgressEvent, DownloadProgress, ProcessOptions, LibraryQuery, LibraryRow, LibraryExportOptions, LibraryExportResponse, VideoMark, GlobalStats, RecentDownload, ProcessState } from '../shared/types'
 
 const api = {
   exportCsv: (input: { csv: string; fileName: string }): Promise<import('../shared/types').CsvExportResult> => ipcRenderer.invoke('csv:export', input),
@@ -19,6 +19,7 @@ const api = {
   noteVideo: (id: number, note: string): Promise<boolean> => ipcRenderer.invoke('library:note', id, note),
   playVideo: (id: number): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke('library:play', id),
   locateLibraryVideo: (id: number): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke('library:locate', id),
+  exportLibrary: (ids: number[], options: LibraryExportOptions): Promise<LibraryExportResponse> => ipcRenderer.invoke('library:export', ids, options),
   pauseTask: (id: number): Promise<void> => ipcRenderer.invoke('task:pause', id),
   resumeTask: (id: number): Promise<void> => ipcRenderer.invoke('task:resume', id),
   deleteTask: (id: number): Promise<void> => ipcRenderer.invoke('task:delete', id),

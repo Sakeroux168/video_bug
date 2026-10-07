@@ -41,6 +41,7 @@ function freshApi(): Api {
     noteVideo: vi.fn(async () => true),
     playVideo: vi.fn(async () => ({ ok: true })),
     locateLibraryVideo: vi.fn(async () => ({ ok: true })),
+    exportLibrary: vi.fn(async () => ({ ok: false, canceled: true })),
     restoreVideos: vi.fn(async () => ({ restored: 0 })),
     downloadPause: vi.fn(async () => true),
     downloadResume: vi.fn(async () => true),
@@ -105,7 +106,7 @@ function makeSettings(): AppSettings {
     scrollIntervalMs: 3000, scrollSpeed: 'medium', scrollPageWaitMs: 8000,
     addressTtlMin: 10, allowDuplicateAuthor: false, organizeDebounceMs: 5000, asrMaxSec: 90,
     stallThresholdSec: 5, rescueCooldownSec: 10, stuckTimeoutMin: 5,
-    organizeByCategory: false, organizeByAuthor: false, organizeByOrientation: false, organizeByDuration: false,
+    organizeByKeyword: false, organizeByCategory: false, organizeByAuthor: false, organizeByOrientation: false, organizeByDuration: false,
     bridgeEnabled: true, bridgePort: 47321
   }
 }

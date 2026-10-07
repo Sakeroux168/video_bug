@@ -1,6 +1,6 @@
 import type { Dirent } from 'node:fs'
 import { existsSync, mkdirSync, readdirSync, renameSync, rmSync, statSync } from 'node:fs'
-import { basename, dirname, extname, join, relative } from 'node:path'
+import { basename, dirname, extname, join, relative, resolve } from 'node:path'
 import { normalizeVideo } from './videoNormalizer'
 import type { NormalizeVideoRequest, NormalizeVideoResult } from './videoNormalizer'
 import { isCountedVideo } from './fileManager'
@@ -77,6 +77,7 @@ export class VideoProcessor {
   private options: ProcessOptions = {}
   /** 「已处理」模式的输出根目录；原地替换模式为 null */
   private outputDir: string | null = null
+  private dropBackup = false
   private items: ProcessItem[] = []
   private log: string[] = []
   private active = 0
@@ -114,8 +115,11 @@ export class VideoProcessor {
     }
   }
 
-  /** 选定文件夹开始一轮：运行/暂停/停止中不允许再开；目录必须存在。扫描是同步 readdir，几千个文件也在毫秒级。 */
-  start(dir: string, options: ProcessOptions = {}): { ok: boolean; error?: string } {
+  /** 选定文件夹开始一轮：运行/暂停/停止中不允许再开；目录必须存在。扫描是同步 readdir，几千个文件也在毫秒级。
+   *  extra 只由主进程传，界面传不进来（素材库打包交付后统一分辨率用）：
+   *  only = 只处理这几个文件，交付文件夹里原来就有的视频不碰；
+   *  dropBackup = 替换成功后删掉 .original.mp4（交付的是复制品，原片还在下载目录，不能让备份混进交付文件夹） */
+  start(dir: string, options: ProcessOptions = {}, extra: { only?: string[]; dropBackup?: boolean } = {}): { ok: boolean; error?: string } {
     if (this.phase === 'running' || this.phase === 'paused' || this.phase === 'stopping') {
       return { ok: false, error: '当前还有一轮处理没结束，请先停止' }
     }
@@ -129,7 +133,11 @@ export class VideoProcessor {
     this.options = options
     this.outputDir = options.mode === 'folder' ? join(dir, PROCESSED_DIR_NAME) : null
     this.log = []
-    this.items = scanVideoFiles(dir).map(path => ({ path, name: basename(path), status: 'pending' as const }))
+    this.dropBackup = extra.dropBackup === true
+    const allow = extra.only ? new Set(extra.only.map(p => resolve(p).toLowerCase())) : null
+    this.items = scanVideoFiles(dir)
+      .filter(path => !allow || allow.has(resolve(path).toLowerCase()))
+      .map(path => ({ path, name: basename(path), status: 'pending' as const }))
     if (this.items.length === 0) {
       this.phase = 'finished'
       this.pushLog(`${dir} 里没有可处理的 .mp4 视频`)
@@ -278,7 +286,12 @@ export class VideoProcessor {
         if (this.replaceInPlace(item.path, temp, backup)) {
           item.status = 'done'
           try { item.sizeAfter = statSync(item.path).size } catch { /* ignore */ }
-          this.pushLog(`完成 ${item.name}：${size(item.source)} → ${size(item.target)}，原片已备份为 ${basename(backup)}`)
+          if (this.dropBackup) {
+            rmSync(backup, { force: true })
+            this.pushLog(`完成 ${item.name}：${size(item.source)} → ${size(item.target)}`)
+          } else {
+            this.pushLog(`完成 ${item.name}：${size(item.source)} → ${size(item.target)}，原片已备份为 ${basename(backup)}`)
+          }
           try { this.deps.onReplaced?.({ path: item.path, backup, target: result.target }) } catch { /* 回写失败不影响文件本身 */ }
         } else {
           item.status = 'failed'

@@ -167,7 +167,7 @@ export default function App(): JSX.Element {
         {tab === 'authors' && <AuthorCollection notify={notify} />}
         {tab === 'files' && <FileManager notify={notify} onProcessDir={d => { setProcessDir(d); setTab('process') }} />}
         {/* 处理状态住在主进程，切走再切回来只是重新拉一次快照，条件渲染即可 */}
-        {tab === 'library' && <LibraryPanel notify={notify} />}
+        {tab === 'library' && <LibraryPanel notify={notify} onOpenProcess={() => setTab('process')} />}
         {tab === 'process' && <VideoProcessPanel notify={notify} initialDir={processDir} />}
         {tab === 'browser' && <BrowserPanel />}
         {tab === 'settings' && <SettingsPanel onDirtyChange={onSettingsDirty} />}

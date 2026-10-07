@@ -25,6 +25,7 @@ const DEFAULTS: AppSettings = {
   stuckTimeoutMin: 5, // R20：任务 5 分钟没任何进展 → 判卡住，强制停下并放行排队的任务
   // 归档层级：全新安装默认四层全关，视频平铺在下载目录。
   // 员工反馈旧版 {品类}/{作者}/{横竖屏}/{时长} 四层套下来文件夹太多、翻不动。
+  organizeByKeyword: false,
   organizeByCategory: false,
   organizeByAuthor: false,
   organizeByOrientation: false,

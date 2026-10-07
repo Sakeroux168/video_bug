@@ -1,5 +1,5 @@
-import { neutralizeCsvFormula } from '../../../shared/csvSafe'
-import type { VideoRow } from '../../../shared/types'
+import { neutralizeCsvFormula } from './csvSafe'
+import type { VideoRow } from './types'
 
 /**
  * 视频数据导出表。员工要一份能交出去的表格：作者名、原视频标题、原视频链接、

@@ -145,7 +145,12 @@ export default function SettingsPanel({ onDirtyChange }: { onDirtyChange?: (dirt
           </p>
           <div className="mt-3 space-y-2 border-t border-slate-100 pt-3 text-xs text-slate-600">
             <p className="font-medium text-slate-700">下载后分文件夹整理</p>
-            <p className="leading-5 text-slate-400">勾选的项会按「品类 / 作者 / 横竖屏 / 时长」的固定顺序建子文件夹；一项都不勾就直接放在下载目录里。</p>
+            <p className="leading-5 text-slate-400">勾选的项会按「关键词 / 品类 / 作者 / 横竖屏 / 时长」的固定顺序建子文件夹；一项都不勾就直接放在下载目录里。</p>
+            <label className="flex items-center gap-2">
+              <input type="checkbox" checked={s.organizeByKeyword} onChange={e => set('organizeByKeyword', e.target.checked)} />
+              <span>按关键词分文件夹</span>
+            </label>
+            <p className="pl-5 leading-5 text-slate-400">同一个关键词抓的视频放一起；抓达人主页的放「达人主页」。</p>
             <label className="flex items-center gap-2">
               <input type="checkbox" checked={s.organizeByCategory} onChange={e => set('organizeByCategory', e.target.checked)} />
               <span>按品类分文件夹</span>
@@ -163,7 +168,7 @@ export default function SettingsPanel({ onDirtyChange }: { onDirtyChange?: (dirt
               <input type="checkbox" checked={s.organizeByDuration} onChange={e => set('organizeByDuration', e.target.checked)} />
               <span>按时长分文件夹</span>
             </label>
-            {!s.organizeByCategory && !s.organizeByAuthor && !s.organizeByOrientation && !s.organizeByDuration && (
+            {!s.organizeByKeyword && !s.organizeByCategory && !s.organizeByAuthor && !s.organizeByOrientation && !s.organizeByDuration && (
               <p className="leading-5 text-slate-500">当前：所有视频直接放在下载目录，不分文件夹。</p>
             )}
             <p className="leading-5 text-amber-600">改这里只影响之后下载的视频；已经归好的文件不会自动搬家。</p>

@@ -4,7 +4,7 @@ import type { FilesTree, FilesDirNode } from '../../../shared/types'
 import { Card, btn } from './ui'
 import { useMarqueeSelect } from './useMarqueeSelect'
 import { useTableSelection } from './useTableSelection'
-import { buildVideosCsv, toVideoExportRows, csvFileName, filterVideosUnder } from './videosCsv'
+import { buildVideosCsv, toVideoExportRows, csvFileName, filterVideosUnder } from '../../../shared/videosCsv'
 import { saveCsvFile } from './csvSave'
 import type { Notify } from './Notice'
 

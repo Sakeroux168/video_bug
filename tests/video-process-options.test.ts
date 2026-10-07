@@ -164,4 +164,19 @@ describe('③ 输出到「已处理」文件夹（原片不动）', () => {
     await vi.waitFor(() => expect(vp.getState().phase).toBe('finished'))
     expect(calls[0]).toMatchObject({ strict: true, orientation: 'portrait' })
   })
+
+  // 2026-10-07 素材库「打包交付 + 统一分辨率」：只处理这次复制过去的文件，文件夹里原来就有的别碰
+  it('指定只处理哪几个文件：别的视频不动；交付用的不留 .original.mp4 备份', async () => {
+    const a = put('a.mp4')
+    put('mine.mp4')
+    const calls: NormalizeVideoRequest[] = []
+    const vp = new VideoProcessor({ normalize: fake(calls) })
+    expect(vp.start(tmp, { mode: 'replace' }, { only: [a], dropBackup: true })).toEqual({ ok: true })
+    await vi.waitFor(() => expect(vp.getState().phase).toBe('finished'))
+    expect(vp.getState().total).toBe(1)
+    expect(calls.map(c => c.inputPath)).toHaveLength(1)
+    expect(readFileSync(join(tmp, 'mine.mp4'), 'utf8')).toBe('SRC'.repeat(1000))
+    expect(readFileSync(a, 'utf8')).toBe('OUT'.repeat(500))
+    expect(existsSync(join(tmp, 'a.original.mp4'))).toBe(false)
+  })
 })
