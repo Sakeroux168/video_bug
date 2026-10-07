@@ -1,0 +1,11 @@
+// 主进程测试（tests/*.ts）的类型检查；界面测试在 tsconfig.web.json 里
+{
+  "compilerOptions": {
+    "target": "ES2022", "module": "ESNext",
+    "moduleResolution": "Bundler", "strict": true, "skipLibCheck": true,
+    "esModuleInterop": true, "types": ["node"], "noEmit": true,
+    "jsx": "react-jsx", "lib": ["ES2022", "DOM", "DOM.Iterable"]
+  },
+  "exclude": ["tests/setup-renderer.ts"],
+  "include": ["tests/*.ts", "tests/shims.d.ts", "src/main/**/*", "src/preload/**/*", "src/shared/**/*"]
+}

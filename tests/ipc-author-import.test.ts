@@ -45,7 +45,8 @@ function setup(): { db: DatabaseSync; importAuthors: (items: ImportItem[]) => Pr
     reloadOrganizer: () => {},
     getOrganizer: () => null,
     enqueueTask: () => {},
-    setBrowserVisible: () => {}
+    setBrowserVisible: () => {},
+    processor: {} as never, dequeueTask: () => {}, kickQueue: () => {}
   })
   const handler = mockIpc.handlers.get('authors:import')!
   return {

@@ -32,7 +32,7 @@ const input: CreateTaskInput = {
 
 const item = (awemeId: string, secUid: string, nickname: string): VideoItem => ({
   awemeId, title: `标题${awemeId}`, authorSecUid: secUid, authorNickname: nickname,
-  authorHomeUrl: `https://www.douyin.com/user/${secUid}`, playUrl: 'https://v/play/1',
+  authorHomeUrl: `https://www.douyin.com/user/${secUid}`, playUrl: 'https://v/play/1', coverUrl: '', width: 0, height: 0,
   durationSec: 60, publishTime: 1710000000, likes: 10
 })
 

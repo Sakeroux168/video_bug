@@ -18,11 +18,11 @@ function browserWithDom(html: string) {
     sendCommand: vi.fn(async (method: string, params: Record<string, unknown>) => {
       sent.push({ method, params })
       if (method === 'Input.dispatchMouseEvent' && params.type === 'mouseMoved') {
-        const panel = dom.window.document.querySelector<HTMLElement>('.filter-panel')
+        const panel = (dom.window.document.querySelector('.filter-panel') as HTMLElement | null)
         if (panel) panel.style.display = 'block'
       }
       if (method === 'Input.dispatchMouseEvent' && params.type === 'mouseReleased') {
-        const card = dom.window.document.querySelector<HTMLElement>('[data-note-id]')
+        const card = (dom.window.document.querySelector('[data-note-id]') as HTMLElement | null)
         if (card) card.dataset.noteId = 'FILTERED'
       }
     })

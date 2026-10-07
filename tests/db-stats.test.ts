@@ -18,7 +18,7 @@ const input: CreateTaskInput = {
 }
 const item = (over: Partial<VideoItem> = {}): VideoItem => ({
   awemeId: 'AW1', title: '标题1', authorSecUid: 'SEC1', authorNickname: '作者1',
-  authorHomeUrl: 'u', playUrl: 'p', durationSec: 60, publishTime: 1710000000, likes: 10, ...over
+  authorHomeUrl: 'u', playUrl: 'p', coverUrl: '', width: 0, height: 0, durationSec: 60, publishTime: 1710000000, likes: 10, ...over
 })
 
 describe('globalStats', () => {

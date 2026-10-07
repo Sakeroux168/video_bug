@@ -249,7 +249,8 @@ export async function downloadOne(
   out.on('error', rejectWriteDone)
 
   try {
-    for await (const chunk of res.body) {
+    // Node 的 fetch 响应体可以 for await；DOM 版类型声明里没写这一点，这里显式标出来
+    for await (const chunk of res.body as unknown as AsyncIterable<Uint8Array>) {
       out.write(chunk)
       received += chunk.length
       if (opts.onProgress) opts.onProgress({ key: spec.key, received, total })

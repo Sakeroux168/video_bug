@@ -1,10 +1,16 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { DatabaseSync } from 'node:sqlite'
-import { Scheduler } from '../src/main/scheduler'
+import { Scheduler as RealScheduler } from '../src/main/scheduler'
 import { createTask, initDb } from '../src/main/db'
 import { xiaohongshuAdapter as adapter } from '../src/main/adapters/xiaohongshu'
 import type { VideoBrowser } from '../src/main/browser'
 import type { Downloader } from '../src/main/downloader'
+
+// 测试里的浏览器 / 下载器 / AI 是只实现了用到那几个方法的替身；构造调度器时放宽这三个依赖的类型
+type SchedulerDepsForTest = Omit<ConstructorParameters<typeof RealScheduler>[0], 'browser' | 'downloader' | 'analyzer'> &
+  { browser: unknown; downloader: unknown; analyzer: unknown }
+const Scheduler = RealScheduler as unknown as new (deps: SchedulerDepsForTest) => RealScheduler
+type Scheduler = RealScheduler
 
 vi.mock('electron', () => ({ app: { getPath: () => require('os').tmpdir() + '/vs-test-' + process.pid + '-xhs-test' } }))
 const searchUrl = '//so.xiaohongshu.com/api/sns/web/v2/search/notes'

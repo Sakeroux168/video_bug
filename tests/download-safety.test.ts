@@ -47,7 +47,7 @@ describe('B1 同名视频不能互相覆盖', () => {
       started++
       if (started === 2) gate.resolve()
       await gate.p // 两条都选好文件名、都开始下之后才一起返回
-      return new Response(mp4(String(url).includes('/A.') ? 1 : 2))
+      return new Response(new Uint8Array(mp4(String(url).includes('/A.') ? 1 : 2)))
     }) as typeof fetch
     const dl = new Downloader(db, settings(), fetchImpl, { validator: async () => true })
     for (const v of listVideos(db, taskId)) dl.enqueue(v.id)
@@ -63,12 +63,12 @@ describe('B1 同名视频不能互相覆盖', () => {
     insertVideos(db, [item('A'), item('B')], taskId, 'douyin')
     const aDone = deferred()
     const fetchImpl = (async (url: unknown) => {
-      if (String(url).includes('/A.')) return new Response(mp4(1))
+      if (String(url).includes('/A.')) return new Response(new Uint8Array(mp4(1)))
       await aDone.p
       return new Response('no', { status: 403 })
     }) as typeof fetch
     const dl = new Downloader(db, settings(), fetchImpl, { validator: async () => true })
-    dl.onEvent(e => { if (e.status === 'done') setTimeout(aDone.resolve, 10) })
+    dl.onEvent(e => { if (e.type === 'video:status' && e.status === 'done') setTimeout(aDone.resolve, 10) })
     for (const v of listVideos(db, taskId)) dl.enqueue(v.id)
     await vi.waitFor(() => expect(dl.isIdle()).toBe(true))
     const [a, b] = listVideos(db, taskId)
@@ -84,7 +84,7 @@ describe('B1 同名视频不能互相覆盖', () => {
     const outside = join(dir, '同名标题.mp4')
     const fetchImpl = (async () => {
       writeFileSync(outside, 'not mine')
-      return new Response(mp4(1))
+      return new Response(new Uint8Array(mp4(1)))
     }) as typeof fetch
     const dl = new Downloader(db, settings(), fetchImpl, { validator: async () => true })
     dl.enqueue(listVideos(db, taskId)[0].id)
@@ -109,7 +109,7 @@ describe('B2 下载地址不按「抓到 30 分钟」一刀切判过期', () => 
     insertVideos(db, [item('A')], taskId, 'douyin')
     const [v] = listVideos(db, taskId)
     db.prepare('UPDATE videos SET fetched_at=? WHERE id=?').run(old, v.id)
-    const dl = new Downloader(db, settings(), (async () => new Response(mp4(1))) as typeof fetch, { validator: async () => true })
+    const dl = new Downloader(db, settings(), (async () => new Response(new Uint8Array(mp4(1)))) as typeof fetch, { validator: async () => true })
     dl.enqueue(v.id)
     await vi.waitFor(() => expect(dl.isIdle()).toBe(true))
     expect(listVideos(db, taskId)[0].status).toBe('done')
@@ -191,7 +191,7 @@ describe('#11 分段下载的残片不留在下载目录里', () => {
     const [v] = listVideos(db, taskId)
     const seg = join(dir, `.video-${v.id}.download.part.mp4.segment-1.part`)
     writeFileSync(seg, 'old')
-    const dl = new Downloader(db, settings(), (async () => new Response(mp4(1))) as typeof fetch, { validator: async () => true })
+    const dl = new Downloader(db, settings(), (async () => new Response(new Uint8Array(mp4(1)))) as typeof fetch, { validator: async () => true })
     dl.enqueue(v.id)
     await vi.waitFor(() => expect(dl.isIdle()).toBe(true))
     expect(existsSync(seg)).toBe(false)

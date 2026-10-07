@@ -8,7 +8,7 @@
     "dev": "cross-env NODE_OPTIONS=--experimental-sqlite electron-vite dev",
     "build": "electron-vite build",
     "start": "cross-env NODE_OPTIONS=--experimental-sqlite electron-vite preview",
-    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
+    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json && tsc --noEmit -p tsconfig.tests.json",
     "test": "vitest run",
     "dist": "node scripts/prepare-ffmpeg.mjs && electron-vite build && npm run check:licenses && electron-builder && npm run check:packaged-licenses",
     "check:css": "node scripts/check-css.mjs",

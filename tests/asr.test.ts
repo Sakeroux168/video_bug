@@ -18,7 +18,7 @@ import type { WorkerOutput } from '../src/main/asr/asr'
 // extractAudio 换成假实现 —— 编排/缓存测试不该真调 ffmpeg。
 // findFfmpeg 也用假值顶掉（transcribeFor 用 opts.ffmpeg，其实不依赖它）。
 vi.mock('../src/main/asr/media', async (importOriginal) => {
-  const actual = await importOriginal()
+  const actual = await importOriginal<typeof import('../src/main/asr/media')>()
   return {
     ...actual,
     extractAudio: vi.fn(async () => {}),

@@ -53,7 +53,7 @@ describe('Downloader', () => {
       expect(init?.headers).toMatchObject({ referer: 'https://www.xiaohongshu.com/' })
       return new Response(mp4, { status: 200 })
     }) as unknown as typeof fetch
-    const dl = new Downloader(db, { downloadDir: dir, downloadConcurrency: 1, scrollIntervalMs: 2000, addressTtlMin: 30 }, fetchImpl, { validator: async () => true })
+    const dl = new Downloader(db, { downloadDir: dir, downloadConcurrency: 1, addressTtlMin: 30 }, fetchImpl, { validator: async () => true })
     dl.enqueue(v.id)
     await vi.waitFor(() => expect(dl.isIdle()).toBe(true))
     expect(listVideos(db, taskId)[0]).toMatchObject({ status: 'done' })
@@ -75,9 +75,9 @@ describe('Downloader', () => {
       return new Response(mp4, { status: 200, headers: { 'content-type': 'video/mp4' } })
     }) as typeof fetch
 
-    const dl = new Downloader(db, { downloadDir: dir, downloadConcurrency: 3, scrollIntervalMs: 2000, addressTtlMin: 30 }, fetchImpl, { validator: async () => true })
+    const dl = new Downloader(db, { downloadDir: dir, downloadConcurrency: 3, addressTtlMin: 30 }, fetchImpl, { validator: async () => true })
     const events: string[] = []
-    dl.onEvent(e => events.push(`${e.type}:${e.status}`))
+    dl.onEvent(e => events.push(`${e.type}:${'status' in e ? e.status : ''}`))
     dl.enqueue(v.id)
     dl.start()
     await new Promise(r => setTimeout(r, 50))
@@ -365,7 +365,7 @@ describe('Downloader', () => {
     insertVideos(db, [item()], taskId, 'douyin')
     const [v] = listVideos(db, taskId)
     const fetchImpl = (async () => new Response(new Uint8Array([1, 2, 3, 4]), { status: 200 })) as typeof fetch
-    const dl = new Downloader(db, { downloadDir: dir, downloadConcurrency: 3, scrollIntervalMs: 2000, addressTtlMin: 30 }, fetchImpl)
+    const dl = new Downloader(db, { downloadDir: dir, downloadConcurrency: 3, addressTtlMin: 30 }, fetchImpl)
     dl.enqueue(v.id)
     dl.start()
     await new Promise(r => setTimeout(r, 50))
@@ -379,7 +379,7 @@ describe('Downloader', () => {
     insertVideos(db, [item()], taskId, 'douyin')
     const [v] = listVideos(db, taskId)
     const fetchImpl = (async () => new Response('err', { status: 500 })) as typeof fetch
-    const dl = new Downloader(db, { downloadDir: dir, downloadConcurrency: 3, scrollIntervalMs: 2000, addressTtlMin: 30 }, fetchImpl)
+    const dl = new Downloader(db, { downloadDir: dir, downloadConcurrency: 3, addressTtlMin: 30 }, fetchImpl)
     dl.enqueue(v.id)
     dl.start()
     await new Promise(r => setTimeout(r, 50))
@@ -395,7 +395,7 @@ describe('Downloader', () => {
     const [v] = listVideos(db, taskId)
     db.prepare('UPDATE videos SET retry_count=2 WHERE id=?').run(v.id) // 已重试2次，本次为第3次
     const fetchImpl = (async () => new Response('err', { status: 500 })) as typeof fetch
-    const dl = new Downloader(db, { downloadDir: dir, downloadConcurrency: 3, scrollIntervalMs: 2000, addressTtlMin: 30 }, fetchImpl)
+    const dl = new Downloader(db, { downloadDir: dir, downloadConcurrency: 3, addressTtlMin: 30 }, fetchImpl)
     dl.enqueue(v.id)
     dl.start()
     await new Promise(r => setTimeout(r, 50))
@@ -415,7 +415,7 @@ describe('Downloader', () => {
     const orphanPart = join(dir, `.video-${v.id}.download.part.mp4`)
     writeFileSync(orphanPart, Buffer.alloc(2048)) // 模拟崩溃发生在写完文件、登记断点之前
     const fetchImpl = (async () => new Response('expired', { status: 403 })) as typeof fetch
-    const dl = new Downloader(db, { downloadDir: dir, downloadConcurrency: 3, scrollIntervalMs: 2000, addressTtlMin: 30 }, fetchImpl)
+    const dl = new Downloader(db, { downloadDir: dir, downloadConcurrency: 3, addressTtlMin: 30 }, fetchImpl)
     dl.enqueue(v.id)
     dl.start()
     await new Promise(r => setTimeout(r, 50))
@@ -434,7 +434,7 @@ describe('Downloader', () => {
       e.code = 'ENOENT'
       throw e
     }) as typeof fetch
-    const dl = new Downloader(db, { downloadDir: dir, downloadConcurrency: 3, scrollIntervalMs: 2000, addressTtlMin: 30 }, fetchImpl)
+    const dl = new Downloader(db, { downloadDir: dir, downloadConcurrency: 3, addressTtlMin: 30 }, fetchImpl)
     dl.enqueue(v.id)
     dl.start()
     await new Promise(r => setTimeout(r, 50))
@@ -453,7 +453,7 @@ describe('Downloader', () => {
     mp4.write('ftypisom', 4)
     let fetchCount = 0
     const fetchImpl = (async () => { fetchCount++; return new Response(mp4, { status: 200 }) }) as typeof fetch
-    const dl = new Downloader(db, { downloadDir: dir, downloadConcurrency: 3, scrollIntervalMs: 2000, addressTtlMin: 30 }, fetchImpl, { validator: async () => true })
+    const dl = new Downloader(db, { downloadDir: dir, downloadConcurrency: 3, addressTtlMin: 30 }, fetchImpl, { validator: async () => true })
     dl.pause()
     expect(dl.isPaused()).toBe(true)
     dl.enqueue(v.id)
@@ -478,8 +478,8 @@ describe('Downloader', () => {
       await new Promise((_, reject) => {
         signal.addEventListener('abort', () => reject(Object.assign(new Error('The operation was aborted.'), { name: 'AbortError' })))
       })
-    }) as typeof fetch
-    const dl = new Downloader(db, { downloadDir: dir, downloadConcurrency: 3, scrollIntervalMs: 2000, addressTtlMin: 30 }, fetchImpl)
+    }) as unknown as typeof fetch
+    const dl = new Downloader(db, { downloadDir: dir, downloadConcurrency: 3, addressTtlMin: 30 }, fetchImpl)
     dl.enqueue(v.id)
     dl.start()
     await started // fetch 已发起并阻塞在 abort 上
@@ -507,7 +507,7 @@ describe('Downloader', () => {
       return true
     }
     const fetchImpl = (async () => new Response(mp4, { status: 200 })) as typeof fetch
-    const dl = new Downloader(db, { downloadDir: dir, downloadConcurrency: 3, scrollIntervalMs: 2000, addressTtlMin: 30 }, fetchImpl, { validator })
+    const dl = new Downloader(db, { downloadDir: dir, downloadConcurrency: 3, addressTtlMin: 30 }, fetchImpl, { validator })
     dl.enqueue(v.id)
     dl.start()
     await started // 已进入校验阶段，文件已完整写盘
@@ -534,9 +534,9 @@ describe('Downloader', () => {
       await new Promise((_, reject) => {
         signal.addEventListener('abort', () => reject(Object.assign(new Error('The operation was aborted.'), { name: 'AbortError' })))
       })
-    }) as typeof fetch
+    }) as unknown as typeof fetch
     // 并发=1：v1 在途阻塞，v2 只能排队
-    const dl = new Downloader(db, { downloadDir: dir, downloadConcurrency: 1, scrollIntervalMs: 2000, addressTtlMin: 30 }, fetchImpl)
+    const dl = new Downloader(db, { downloadDir: dir, downloadConcurrency: 1, addressTtlMin: 30 }, fetchImpl)
     dl.enqueue(v1.id)
     dl.enqueue(v2.id)
     await started
@@ -559,7 +559,7 @@ describe('Downloader', () => {
     mp4.writeUInt32BE(0x18, 0)
     mp4.write('ftypisom', 4)
     const fetchImpl = (async () => new Response(mp4, { status: 200 })) as typeof fetch
-    const dl = new Downloader(db, { downloadDir: dir, downloadConcurrency: 3, scrollIntervalMs: 2000, addressTtlMin: 30 }, fetchImpl, { validator: async () => true })
+    const dl = new Downloader(db, { downloadDir: dir, downloadConcurrency: 3, addressTtlMin: 30 }, fetchImpl, { validator: async () => true })
     dl.download([v.id])
     await new Promise(r => setTimeout(r, 50))
     const row = listVideos(db, taskId)[0]
@@ -575,7 +575,7 @@ describe('Downloader', () => {
       const [v] = listVideos(db, taskId)
       let fetchCount = 0
       const fetchImpl = (async () => { fetchCount++; return new Response('err', { status: 500 }) }) as typeof fetch
-      const dl = new Downloader(db, { downloadDir: dir, downloadConcurrency: 3, scrollIntervalMs: 2000, addressTtlMin: 30 }, fetchImpl)
+      const dl = new Downloader(db, { downloadDir: dir, downloadConcurrency: 3, addressTtlMin: 30 }, fetchImpl)
       dl.enqueue(v.id)
       dl.start()
       // 让第一次下载(500)跑完 → 进入 5s 网络重试回退（status=pending, retry_count=1）
@@ -615,7 +615,7 @@ describe('Downloader', () => {
       }
       return new Response(mp4, { status: 200 })
     }) as typeof fetch
-    const dl = new Downloader(db, { downloadDir: dir, downloadConcurrency: 3, scrollIntervalMs: 2000, addressTtlMin: 30 }, fetchImpl, { validator: async () => true })
+    const dl = new Downloader(db, { downloadDir: dir, downloadConcurrency: 3, addressTtlMin: 30 }, fetchImpl, { validator: async () => true })
     dl.enqueue(v.id)
     dl.start()
     await started // fetch 已发起并阻塞在 abort 上
@@ -653,7 +653,7 @@ describe('Downloader', () => {
       }
       return new Response(mp4, { status: 200 })
     }) as typeof fetch
-    const dl = new Downloader(db, { downloadDir: dir, downloadConcurrency: 3, scrollIntervalMs: 2000, addressTtlMin: 30 }, fetchImpl, { validator: async () => true })
+    const dl = new Downloader(db, { downloadDir: dir, downloadConcurrency: 3, addressTtlMin: 30 }, fetchImpl, { validator: async () => true })
     dl.enqueue(v.id)
     dl.start()
     await started
@@ -684,9 +684,9 @@ describe('Downloader', () => {
       await new Promise((_, reject) => {
         signal.addEventListener('abort', () => reject(Object.assign(new Error('The operation was aborted.'), { name: 'AbortError' })))
       })
-    }) as typeof fetch
+    }) as unknown as typeof fetch
     // 并发=1：v1 在途阻塞，v2 只能排队
-    const dl = new Downloader(db, { downloadDir: dir, downloadConcurrency: 1, scrollIntervalMs: 2000, addressTtlMin: 30 }, fetchImpl)
+    const dl = new Downloader(db, { downloadDir: dir, downloadConcurrency: 1, addressTtlMin: 30 }, fetchImpl)
     dl.enqueue(v1.id)
     dl.enqueue(v2.id)
     await started
@@ -714,8 +714,8 @@ describe('Downloader', () => {
       await new Promise((_, reject) => {
         signal.addEventListener('abort', () => reject(Object.assign(new Error('The operation was aborted.'), { name: 'AbortError' })))
       })
-    }) as typeof fetch
-    const dl = new Downloader(db, { downloadDir: dir, downloadConcurrency: 3, scrollIntervalMs: 2000, addressTtlMin: 30 }, fetchImpl)
+    }) as unknown as typeof fetch
+    const dl = new Downloader(db, { downloadDir: dir, downloadConcurrency: 3, addressTtlMin: 30 }, fetchImpl)
     dl.enqueue(v.id)
     dl.start()
     await started
@@ -751,7 +751,7 @@ describe('Downloader', () => {
       return new Response(mp4, { status: 200 })
     }) as typeof fetch
     // 并发=1：v1 在途阻塞，v2 只能排队
-    const dl = new Downloader(db, { downloadDir: dir, downloadConcurrency: 1, scrollIntervalMs: 2000, addressTtlMin: 30 }, fetchImpl, { validator: async () => true })
+    const dl = new Downloader(db, { downloadDir: dir, downloadConcurrency: 1, addressTtlMin: 30 }, fetchImpl, { validator: async () => true })
     dl.enqueue(v1.id)
     dl.enqueue(v2.id)
     await started // v1 在途阻塞
@@ -792,7 +792,7 @@ describe('Downloader', () => {
       }
       return new Response(mp4, { status: 200 })
     }) as typeof fetch
-    const dl = new Downloader(db, { downloadDir: dir, downloadConcurrency: 3, scrollIntervalMs: 2000, addressTtlMin: 30 }, fetchImpl, { validator: async () => true })
+    const dl = new Downloader(db, { downloadDir: dir, downloadConcurrency: 3, addressTtlMin: 30 }, fetchImpl, { validator: async () => true })
     dl.enqueue(v.id)
     dl.start()
     await started // fetch 已发起并阻塞
@@ -829,7 +829,7 @@ describe('Downloader', () => {
       }
       return new Response(mp4, { status: 200 })
     }) as typeof fetch
-    const dl = new Downloader(db, { downloadDir: dir, downloadConcurrency: 3, scrollIntervalMs: 2000, addressTtlMin: 30 }, fetchImpl, { validator: async () => true })
+    const dl = new Downloader(db, { downloadDir: dir, downloadConcurrency: 3, addressTtlMin: 30 }, fetchImpl, { validator: async () => true })
     dl.enqueue(v.id)
     dl.start()
     await started
@@ -851,7 +851,7 @@ describe('Downloader', () => {
       const [v] = listVideos(db, taskId)
       let fetchCount = 0
       const fetchImpl = (async () => { fetchCount++; return new Response('err', { status: 500 }) }) as typeof fetch
-      const dl = new Downloader(db, { downloadDir: dir, downloadConcurrency: 3, scrollIntervalMs: 2000, addressTtlMin: 30 }, fetchImpl)
+      const dl = new Downloader(db, { downloadDir: dir, downloadConcurrency: 3, addressTtlMin: 30 }, fetchImpl)
       dl.enqueue(v.id)
       dl.start()
       // 让第一次下载(500)跑完 → 进入 5s 网络重试回退（status=pending, retry_count=1）
@@ -899,7 +899,7 @@ describe('R20 下载卡住：一段时间没收到数据就掐断，交给原来
     const dl = new Downloader(db, { downloadDir: dir, downloadConcurrency: 1, addressTtlMin: 30 }, fetchImpl,
       { validator: async () => true, idleTimeoutMs: 80 })
     const events: Array<{ status: string; error?: string }> = []
-    dl.onEvent(e => events.push(e))
+    dl.onEvent(e => { if (e.type === 'video:status') events.push(e) })
     dl.enqueue(v.id)
 
     await vi.waitFor(() => expect(events.some(e => e.status === 'failed')).toBe(true), { timeout: 3000 })

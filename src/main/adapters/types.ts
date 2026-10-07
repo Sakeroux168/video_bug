@@ -14,8 +14,10 @@ export interface VideoItem {
   durationSec: number
   publishTime: number // unix 秒
   likes: number
-  comments: number | null
-  sourceUrl: string
+  /** 拿不到时可以不给（入库时按 null 处理） */
+  comments?: number | null
+  /** 作品原链接；拿不到时可以不给（入库时按 null 处理） */
+  sourceUrl?: string
 }
 
 /** 平台适配器契约：核心模块只认这个接口，平台差异全部封在里面 */

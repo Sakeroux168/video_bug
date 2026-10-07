@@ -41,7 +41,7 @@ function rangeResponse(source: Buffer, range: string, contentRange = range): Res
   if (!match) throw new Error(`bad test range: ${range}`)
   const start = Number(match[1])
   const end = Number(match[2])
-  return new Response(source.subarray(start, end + 1), {
+  return new Response(new Uint8Array(source.subarray(start, end + 1)), {
     status: 206,
     headers: {
       'content-type': 'video/mp4',
@@ -108,7 +108,7 @@ describe('同一文件 Range 分段下载', () => {
     const fetchImpl = vi.fn(async (_url: unknown, init?: RequestInit) => {
       const range = requestedRange(init)
       ranges.push(range)
-      return new Response(source, { status: 200, headers: { 'content-type': 'video/mp4' } })
+      return new Response(new Uint8Array(source), { status: 200, headers: { 'content-type': 'video/mp4' } })
     }) as unknown as typeof fetch
 
     const dl = downloader(fetchImpl)
@@ -285,7 +285,7 @@ describe('同一文件 Range 分段下载', () => {
     const { taskId, id } = createVideo()
     const fetchImpl = vi.fn(async (_url: unknown, init?: RequestInit) => {
       expect(requestedRange(init)).toBeNull()
-      return new Response(source, { status: 200, headers: { 'content-type': 'video/mp4' } })
+      return new Response(new Uint8Array(source), { status: 200, headers: { 'content-type': 'video/mp4' } })
     }) as unknown as typeof fetch
 
     const dl = downloader(fetchImpl, 1)
