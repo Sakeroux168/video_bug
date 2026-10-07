@@ -6,6 +6,7 @@ import { getSettings, saveSettings } from './settings'
 import { deleteVideoRows } from './videoDelete'
 import { scanFilesTreeAsync, deleteFileDir, deleteFileVideo, locateFileDir, locateVideoFile } from './fileManager'
 import { listAdapters, getAdapter } from './adapters'
+import type { ProcessOptions } from '../shared/types'
 import type { Scheduler } from './scheduler'
 import type { Downloader } from './downloader'
 import type { VideoProcessor } from './videoProcessor'
@@ -348,7 +349,15 @@ export function registerIpc(deps: IpcDeps): void {
 
   // 视频处理（统一分辨率批处理）：start 返回能否开始的原因；暂停/继续/停止只发指令，结果经 evt:process:state 推回
   handle('process:state', () => deps.processor.getState())
-  handle('process:start', (_e, dir: string) => deps.processor.start(String(dir ?? '')))
+  handle('process:start', (_e, dir: string, options?: ProcessOptions) => {
+    // 选项只认这几个值，别的一律按默认（原地替换 / 跟原片方向 / 不严格）
+    const o = options && typeof options === 'object' ? options : {}
+    return deps.processor.start(String(dir ?? ''), {
+      mode: o.mode === 'folder' ? 'folder' : 'replace',
+      orientation: o.orientation === 'portrait' || o.orientation === 'landscape' ? o.orientation : 'auto',
+      strict: o.strict === true
+    })
+  })
   handle('process:pause', () => { deps.processor.pause() })
   handle('process:resume', () => { deps.processor.resume() })
   handle('process:stop', () => { deps.processor.stop() })

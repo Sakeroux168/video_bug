@@ -32,6 +32,8 @@ export default function App(): JSX.Element {
   const [tab, setTabRaw] = useState('overview')
   // D3：设置页有没保存的修改时，切到别的页先问一声（以前切走改动就悄悄丢了）
   const settingsDirty = useRef(false)
+  // 文件管理「统一分辨率」带过来的文件夹，切到视频处理页时填进输入框
+  const [processDir, setProcessDir] = useState<string | undefined>(undefined)
   const onSettingsDirty = useCallback((d: boolean) => { settingsDirty.current = d }, [])
   const setTab = useCallback((next: string) => {
     if (next === tab) return
@@ -161,9 +163,9 @@ export default function App(): JSX.Element {
         </div>
         {tab === 'overview' && <Overview onGoto={setTab} />}
         {tab === 'authors' && <AuthorCollection notify={notify} />}
-        {tab === 'files' && <FileManager notify={notify} />}
+        {tab === 'files' && <FileManager notify={notify} onProcessDir={d => { setProcessDir(d); setTab('process') }} />}
         {/* 处理状态住在主进程，切走再切回来只是重新拉一次快照，条件渲染即可 */}
-        {tab === 'process' && <VideoProcessPanel notify={notify} />}
+        {tab === 'process' && <VideoProcessPanel notify={notify} initialDir={processDir} />}
         {tab === 'browser' && <BrowserPanel />}
         {tab === 'settings' && <SettingsPanel onDirtyChange={onSettingsDirty} />}
         {tab === 'help' && <HelpPanel />}

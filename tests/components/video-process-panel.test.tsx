@@ -49,7 +49,8 @@ describe('VideoProcessPanel', () => {
     expect(screen.getByRole('button', { name: '停止' })).toBeDisabled()
   })
 
-  it('「浏览…」选文件夹后填入输入框，「开始处理」把该路径交给主进程；失败原因用 notify 反馈', async () => {
+  // 需求变更（2026-10-07 视频处理改进）：开始时带上输出方式 / 方向 / 严格档；失败原因（如文件夹不存在）就近显示在输入框下面，不再弹提示
+  it('「浏览…」选文件夹后填入输入框，「开始处理」把该路径和选项交给主进程；失败原因显示在输入框下面', async () => {
     vi.mocked(window.api.pickVideoDir).mockResolvedValue('D:/视频')
     vi.mocked(window.api.processStart).mockResolvedValue({ ok: false, error: '文件夹不存在' })
     const notify = vi.fn()
@@ -57,8 +58,9 @@ describe('VideoProcessPanel', () => {
     fireEvent.click(await screen.findByRole('button', { name: '浏览…' }))
     await waitFor(() => expect((screen.getByLabelText('待处理文件夹') as HTMLInputElement).value).toBe('D:/视频'))
     fireEvent.click(screen.getByRole('button', { name: '开始处理' }))
-    expect(window.api.processStart).toHaveBeenCalledWith('D:/视频')
-    await waitFor(() => expect(notify).toHaveBeenCalledWith('无法开始：文件夹不存在'))
+    expect(window.api.processStart).toHaveBeenCalledWith('D:/视频', { mode: 'folder', orientation: 'auto', strict: false })
+    expect(await screen.findByText('文件夹不存在')).toBeInTheDocument()
+    expect(notify).not.toHaveBeenCalled()
   })
 
   it('运行中：统计、当前文件与尺寸、每个文件的状态/错误、运行日志都来自状态快照', async () => {

@@ -185,13 +185,13 @@ describe('FFmpeg 标准化编排', () => {
     expect(deps.runFfmpeg).toHaveBeenCalledOnce()
     const [exe, args] = vi.mocked(deps.runFfmpeg).mock.calls[0]
     expect(exe).toBe('C:/ffmpeg/bin/ffmpeg.exe')
-    expect(args).toEqual(buildNormalizationArgs('source.mp4', 'normalized.part.mp4', { width: 1920, height: 1080 }))
+    // 需求变更（2026-10-07 视频处理改进）：原片音频已是 AAC 时直接复制，不再重编码成 192k（体积会涨）
+    expect(args).toEqual(buildNormalizationArgs('source.mp4', 'normalized.part.mp4', { width: 1920, height: 1080 }, { copyAudio: true }))
     expect(args).toContain('libx264')
     expect(args).toContain('medium')
     expect(args).toContain('20')
     expect(args).toContain('0:a:0?')
-    expect(args).toContain('aac')
-    expect(args).toContain('192k')
+    expect(args.slice(args.indexOf('-c:a'), args.indexOf('-c:a') + 2)).toEqual(['-c:a', 'copy'])
     expect(args).toContain('+faststart')
     expect(args.join(' ')).toContain('force_original_aspect_ratio=decrease')
   })

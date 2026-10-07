@@ -1,10 +1,13 @@
 import type { Dirent } from 'node:fs'
-import { existsSync, readdirSync, renameSync, rmSync, statSync } from 'node:fs'
-import { basename, dirname, extname, join } from 'node:path'
+import { existsSync, mkdirSync, readdirSync, renameSync, rmSync, statSync } from 'node:fs'
+import { basename, dirname, extname, join, relative } from 'node:path'
 import { normalizeVideo } from './videoNormalizer'
 import type { NormalizeVideoRequest, NormalizeVideoResult } from './videoNormalizer'
 import { isCountedVideo } from './fileManager'
-import type { ProcessItem, ProcessPhase, ProcessState } from '../shared/types'
+import type { ProcessItem, ProcessOptions, ProcessPhase, ProcessState } from '../shared/types'
+
+/** 「已处理」模式的输出文件夹名（放在所选文件夹下）；扫描时跳过它，免得把结果又当成待处理 */
+export const PROCESSED_DIR_NAME = '已处理'
 
 /**
  * 「视频处理」页的主进程批处理器：用户选一个文件夹 → 递归发现 .mp4 → 逐个交给现有 videoNormalizer
@@ -49,6 +52,7 @@ export function scanVideoFiles(dir: string): string[] {
     const files: string[] = []
     for (const e of entries) {
       if (isIgnoredName(e.name)) continue
+      if (e.isDirectory() && e.name === PROCESSED_DIR_NAME) continue // 上一轮的处理结果，不再当原片处理
       if (e.isDirectory()) dirs.push(e.name)
       else if (e.isFile() && isCountedVideo(e.name)) files.push(e.name)
     }
@@ -70,6 +74,9 @@ export function backupPathFor(videoPath: string): string {
 export class VideoProcessor {
   private phase: ProcessPhase = 'idle'
   private dir: string | null = null
+  private options: ProcessOptions = {}
+  /** 「已处理」模式的输出根目录；原地替换模式为 null */
+  private outputDir: string | null = null
   private items: ProcessItem[] = []
   private log: string[] = []
   private active = 0
@@ -102,12 +109,13 @@ export class VideoProcessor {
       remaining: count('pending'),
       current: processing[0] ? { name: processing[0].name, source: processing[0].source, target: processing[0].target } : null,
       items: this.items.map(i => ({ ...i })),
-      log: [...this.log]
+      log: [...this.log],
+      outputDir: this.outputDir
     }
   }
 
   /** 选定文件夹开始一轮：运行/暂停/停止中不允许再开；目录必须存在。扫描是同步 readdir，几千个文件也在毫秒级。 */
-  start(dir: string): { ok: boolean; error?: string } {
+  start(dir: string, options: ProcessOptions = {}): { ok: boolean; error?: string } {
     if (this.phase === 'running' || this.phase === 'paused' || this.phase === 'stopping') {
       return { ok: false, error: '当前还有一轮处理没结束，请先停止' }
     }
@@ -118,6 +126,8 @@ export class VideoProcessor {
     }
     this.runId++
     this.dir = dir
+    this.options = options
+    this.outputDir = options.mode === 'folder' ? join(dir, PROCESSED_DIR_NAME) : null
     this.log = []
     this.items = scanVideoFiles(dir).map(path => ({ path, name: basename(path), status: 'pending' as const }))
     if (this.items.length === 0) {
@@ -219,6 +229,8 @@ export class VideoProcessor {
   }
 
   private async runOne(item: ProcessItem): Promise<void> {
+    try { item.sizeBefore = statSync(item.path).size } catch { /* 文件刚被删掉：交给后面的探测报错 */ }
+    if (this.outputDir && this.dir) return this.runOneToFolder(item, this.outputDir, this.dir)
     const backup = backupPathFor(item.path)
     // 已有备份 = 本工具处理过（旧版下载转码或上一轮处理），不重复转码也绝不覆盖别人的备份
     if (existsSync(backup)) {
@@ -239,6 +251,8 @@ export class VideoProcessor {
         inputPath: item.path,
         outputPath: temp,
         signal: aborter.signal,
+        strict: this.options.strict,
+        orientation: this.options.orientation,
         onProbe: info => {
           item.source = info.source
           item.target = info.target
@@ -263,6 +277,7 @@ export class VideoProcessor {
       case 'normalized':
         if (this.replaceInPlace(item.path, temp, backup)) {
           item.status = 'done'
+          try { item.sizeAfter = statSync(item.path).size } catch { /* ignore */ }
           this.pushLog(`完成 ${item.name}：${size(item.source)} → ${size(item.target)}，原片已备份为 ${basename(backup)}`)
           try { this.deps.onReplaced?.({ path: item.path, backup, target: result.target }) } catch { /* 回写失败不影响文件本身 */ }
         } else {
@@ -281,6 +296,77 @@ export class VideoProcessor {
         item.status = 'stopped'
         rmSync(temp, { force: true })
         this.pushLog(`已中止 ${item.name}：临时文件已清理，源文件未改动`)
+        break
+    }
+  }
+
+  /**
+   * 「已处理」模式（2026-10-07 O07③，界面默认）：结果写到 <所选文件夹>/已处理/<原来的相对路径>，原片原名原样不动。
+   * 结果已经存在 = 上一轮处理过，跳过。临时文件放在结果所在的文件夹里（同一个盘，改名不会跨盘）。
+   */
+  private async runOneToFolder(item: ProcessItem, outRoot: string, srcRoot: string): Promise<void> {
+    const out = join(outRoot, relative(srcRoot, item.path))
+    if (existsSync(out)) {
+      item.status = 'skipped'
+      this.pushLog(`跳过 ${item.name}：「${PROCESSED_DIR_NAME}」里已经有了`)
+      return
+    }
+    item.status = 'processing'
+    this.emit()
+    try { mkdirSync(dirname(out), { recursive: true }) } catch {
+      item.status = 'failed'
+      item.error = 'output_dir_failed'
+      this.pushLog(`失败 ${item.name}：建不了输出文件夹，原片未改动`)
+      return
+    }
+    const temp = join(dirname(out), `.video-process-${this.items.indexOf(item) + 1}.part.mp4`)
+    rmSync(temp, { force: true })
+    const aborter = new AbortController()
+    this.aborters.set(item, aborter)
+    let result: NormalizeVideoResult
+    try {
+      result = await this.normalize({
+        inputPath: item.path, outputPath: temp, signal: aborter.signal,
+        strict: this.options.strict, orientation: this.options.orientation,
+        onProbe: info => { item.source = info.source; item.target = info.target; this.emit() }
+      })
+    } catch {
+      result = aborter.signal.aborted ? { status: 'aborted' } : { status: 'failed', error: 'ffmpeg_failed' }
+    } finally {
+      this.aborters.delete(item)
+    }
+    if (result.source) item.source = result.source
+    if (result.target) item.target = result.target
+    const size = (v?: { width: number; height: number }): string => (v ? `${v.width}×${v.height}` : '未知')
+    switch (result.status) {
+      case 'skipped':
+        item.status = 'skipped'
+        this.pushLog(`跳过 ${item.name}：已是 ${size(item.target)}，不用处理（原片还在原来的位置）`)
+        break
+      case 'normalized':
+        try {
+          if (!existsSync(temp) || statSync(temp).size === 0) throw new Error('empty')
+          renameSync(temp, out)
+          item.status = 'done'
+          item.sizeAfter = statSync(out).size
+          this.pushLog(`完成 ${item.name}：${size(item.source)} → ${size(item.target)}，放在「${PROCESSED_DIR_NAME}」里`)
+        } catch {
+          rmSync(temp, { force: true })
+          item.status = 'failed'
+          item.error = 'replace_failed'
+          this.pushLog(`失败 ${item.name}：保存结果失败，原片未改动`)
+        }
+        break
+      case 'failed':
+        item.status = 'failed'
+        item.error = result.error
+        rmSync(temp, { force: true })
+        this.pushLog(`失败 ${item.name}：${result.error}，原片未改动`)
+        break
+      case 'aborted':
+        item.status = 'stopped'
+        rmSync(temp, { force: true })
+        this.pushLog(`已中止 ${item.name}：临时文件已清理，原片未改动`)
         break
     }
   }

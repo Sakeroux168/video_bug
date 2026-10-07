@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { CreateTaskInput, AppSettings, TaskRow, VideoRow, AuthorRow, TaskStats, AsrStatus, AsrProgress, FilesTree, FileDeleteResult, TaskProgressEvent, DownloadProgress, GlobalStats, RecentDownload, ProcessState } from '../shared/types'
+import type { CreateTaskInput, AppSettings, TaskRow, VideoRow, AuthorRow, TaskStats, AsrStatus, AsrProgress, FilesTree, FileDeleteResult, TaskProgressEvent, DownloadProgress, ProcessOptions, GlobalStats, RecentDownload, ProcessState } from '../shared/types'
 
 const api = {
   exportCsv: (input: { csv: string; fileName: string }): Promise<import('../shared/types').CsvExportResult> => ipcRenderer.invoke('csv:export', input),
@@ -55,7 +55,7 @@ const api = {
   pickVideoDir: (): Promise<string | null> => ipcRenderer.invoke('dialog:pickDir', '选择要处理的视频文件夹'),
   // 视频处理（统一分辨率批处理）：状态住在主进程，这里只发指令 + 订阅快照
   getProcessState: (): Promise<ProcessState> => ipcRenderer.invoke('process:state'),
-  processStart: (dir: string): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke('process:start', dir),
+  processStart: (dir: string, options?: ProcessOptions): Promise<{ ok: boolean; error?: string }> => ipcRenderer.invoke('process:start', dir, options),
   processPause: (): Promise<void> => ipcRenderer.invoke('process:pause'),
   processResume: (): Promise<void> => ipcRenderer.invoke('process:resume'),
   processStop: (): Promise<void> => ipcRenderer.invoke('process:stop'),
