@@ -3,6 +3,10 @@ out/
 dist/
 *.tsbuildinfo
 *.log
+# 打包用的 ffmpeg（见 scripts/prepare-ffmpeg.mjs），太大且各人自己准备
+vendor/
+# 老测试留下的临时目录（现在测试都用系统临时目录）
+.tmp-*
 .DS_Store
 .superpowers/
 .worktrees/

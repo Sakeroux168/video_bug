@@ -7,7 +7,7 @@ import type { VideoBrowser } from '../src/main/browser'
 import type { Downloader } from '../src/main/downloader'
 import type { Filters } from '../src/shared/types'
 
-vi.mock('electron', () => ({ app: { getPath: () => process.cwd() + '/.tmp-xhs-mode-test' } }))
+vi.mock('electron', () => ({ app: { getPath: () => require('os').tmpdir() + '/vs-test-' + process.pid + '-xhs-mode-test' } }))
 
 const searchUrl = '//so.xiaohongshu.com/api/sns/web/v2/search/notes'
 const list = (ids: string[], hasMore = false) => ({ data: {

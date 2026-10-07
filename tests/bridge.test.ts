@@ -7,7 +7,7 @@ import { initDb, createTask } from '../src/main/db'
 // R18：本机 HTTP 口（给百家号发布助手指挥抓视频）。和 ipc 的 task:create 走同一条 createTaskChecked：
 // 作者链接归一化成 sec_uid、已 done 的作者去重、入库 + 入队。只绑 127.0.0.1。
 
-const mockPaths = vi.hoisted(() => ({ userData: process.cwd() + '/.tmp-bridge-test' }))
+const mockPaths = vi.hoisted(() => ({ userData: require('os').tmpdir() + '/vs-test-' + process.pid + '-bridge-test' }))
 
 vi.mock('electron', () => ({
   app: { getPath: () => mockPaths.userData, getAppPath: () => '' },

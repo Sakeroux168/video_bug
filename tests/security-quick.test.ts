@@ -6,7 +6,7 @@ import { startBridge, jobFromBody } from '../src/main/bridge'
 import { checkBridgeRequest, isNetworkPath, isAppUrl, neutralizeCsvFormula, allowedPermission } from '../src/main/security'
 import { resolveBin, type FfBinDeps } from '../src/main/ffbin'
 
-vi.mock('electron', () => ({ app: { getPath: () => process.cwd() + '/.tmp-security-quick' } }))
+vi.mock('electron', () => ({ app: { getPath: () => require('os').tmpdir() + '/vs-test-' + process.pid + '-security-quick' } }))
 
 // 2026-10-06 全面检查「安全隐私」A1–A6 的回归测试
 

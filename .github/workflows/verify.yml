@@ -1,0 +1,20 @@
+# 每次推到 master、每个 PR 都在干净的 Windows 机器上从头装依赖并跑完整检查：
+# 类型检查 + 全部测试 + 构建 + CSS 产物检查 + 第三方许可检查（等同本机 npm run verify）。
+name: verify
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run verify

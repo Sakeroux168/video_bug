@@ -7,8 +7,8 @@ import type { AppSettings } from '../src/shared/types'
 // mock electron：downloads 与 userData 指向本测试专属临时目录。
 
 const mockPaths = vi.hoisted(() => ({
-  userData: process.cwd() + '/.tmp-settings-test/userData',
-  downloads: process.cwd() + '/.tmp-settings-test/downloads'
+  userData: require('os').tmpdir() + '/vs-test-' + process.pid + '-settings-test/userData',
+  downloads: require('os').tmpdir() + '/vs-test-' + process.pid + '-settings-test/downloads'
 }))
 
 vi.mock('electron', () => ({
@@ -48,7 +48,7 @@ function fullSettings(over: Partial<AppSettings> = {}): AppSettings {
 
 describe('settings', () => {
   beforeEach(() => { mkdirSync(mockPaths.userData, { recursive: true }) })
-  afterEach(() => { rmSync(process.cwd() + '/.tmp-settings-test', { recursive: true, force: true }) })
+  afterEach(() => { rmSync(require('os').tmpdir() + '/vs-test-' + process.pid + '-settings-test', { recursive: true, force: true }) })
 
   it('无配置文件 → 返回默认值（下载目录 = downloads/爬取视频，关键参数齐全）', () => {
     const s = getSettings()

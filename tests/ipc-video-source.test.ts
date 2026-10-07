@@ -18,7 +18,7 @@ const mockElectron = vi.hoisted(() => {
 
 vi.mock('electron', () => ({
   ipcMain: mockElectron.ipcMain,
-  app: { getPath: () => process.cwd() + '/.tmp-ipc-video-source', getAppPath: () => '' },
+  app: { getPath: () => require('os').tmpdir() + '/vs-test-' + process.pid + '-ipc-video-source', getAppPath: () => '' },
   dialog: { showOpenDialog: vi.fn(async () => ({ canceled: true })) },
   shell: {
     openExternal: mockElectron.openExternal,

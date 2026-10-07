@@ -15,7 +15,7 @@ const mockIpc = vi.hoisted(() => {
   return {
     handlers,
     /** app.getPath 的返回值：settings.json 落此目录（不能引用模块顶层变量，mock factory 先于其初始化执行） */
-    userData: process.cwd() + '/.tmp-ipc-author-dedup',
+    userData: require('os').tmpdir() + '/vs-test-' + process.pid + '-ipc-author-dedup',
     ipcMain: {
       handle: (channel: string, fn: (...args: unknown[]) => unknown): void => { handlers.set(channel, fn) },
       on: () => {},

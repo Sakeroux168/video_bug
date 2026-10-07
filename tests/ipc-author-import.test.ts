@@ -9,7 +9,7 @@ const mockIpc = vi.hoisted(() => {
   const handlers = new Map<string, (...args: unknown[]) => unknown>()
   return {
     handlers,
-    userData: process.cwd() + '/.tmp-ipc-author-import',
+    userData: require('os').tmpdir() + '/vs-test-' + process.pid + '-ipc-author-import',
     ipcMain: {
       handle: (channel: string, fn: (...args: unknown[]) => unknown): void => { handlers.set(channel, fn) },
       on: () => {},

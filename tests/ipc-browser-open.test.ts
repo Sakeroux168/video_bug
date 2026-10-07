@@ -9,7 +9,7 @@ import { getAdapter } from '../src/main/adapters'
 
 const mockIpc = vi.hoisted(() => {
   const handlers = new Map<string, (...args: unknown[]) => unknown>()
-  return { handlers, userData: process.cwd() + '/.tmp-ipc-browser-open' }
+  return { handlers, userData: require('os').tmpdir() + '/vs-test-' + process.pid + '-ipc-browser-open' }
 })
 
 vi.mock('electron', () => ({
