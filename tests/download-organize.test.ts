@@ -46,7 +46,7 @@ describe('下载 → 封面 → 方向归档 → 删除联动', () => {
       // 下载链已不再转码：成品就是原视频字节，方向由平台元数据决定。
       const dl = new Downloader(db, { downloadDir: dir, downloadConcurrency: 2, addressTtlMin: 30 }, fetch, { validator: async () => true })
       dl.onEvent(event => {
-        if (event.status === 'done') org.markAuthorPending(listVideos(db, taskId)[0].author_id!)
+        if (event.type === 'video:status' && event.status === 'done') org.markAuthorPending(listVideos(db, taskId)[0].author_id!)
       })
       for (const row of listVideos(db, taskId)) dl.enqueue(row.id)
       await vi.waitFor(() => expect(dl.isIdle()).toBe(true), { timeout: 5000 })

@@ -30,7 +30,7 @@ describe('douyinAdapter.parseApiJson', () => {
   })
 
   it('评论数保留真实0与非零值，缺失或非法值归一为null', () => {
-    const parse = (comment_count: unknown, include = true): number | null => {
+    const parse = (comment_count: unknown, include = true): number | null | undefined => {
       const statistics = include ? { digg_count: 1, comment_count } : { digg_count: 1 }
       return douyinAdapter.parseApiJson('https://x/', {
         aweme_list: [{ ...AWEME, statistics }]

@@ -1,10 +1,16 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { DatabaseSync } from 'node:sqlite'
-import { buildStopDecision, Scheduler } from '../src/main/scheduler'
+import { buildStopDecision, Scheduler as RealScheduler } from '../src/main/scheduler'
 import { initDb, createTask, listAuthors, insertAuthorIfAbsent, upsertAuthor, insertVideos, setAuthorVerify } from '../src/main/db'
 import { douyinAdapter } from '../src/main/adapters/douyin'
 import type { PlatformAdapter } from '../src/main/adapters/types'
 import type { CreateTaskInput } from '../src/shared/types'
+
+// 测试里的浏览器 / 下载器 / AI 是只实现了用到那几个方法的替身；构造调度器时放宽这三个依赖的类型
+type SchedulerDepsForTest = Omit<ConstructorParameters<typeof RealScheduler>[0], 'browser' | 'downloader' | 'analyzer'> &
+  { browser: unknown; downloader: unknown; analyzer: unknown }
+const Scheduler = RealScheduler as unknown as new (deps: SchedulerDepsForTest) => RealScheduler
+type Scheduler = RealScheduler
 
 // R12：scheduler 的停滞自救读 getSettings().rescueCooldownSec（默认 10），settings.ts 顶层用
 // electron app.getPath——mock electron 指向测试目录（无配置文件 → 回落 DEFAULTS，冷却=10s）
@@ -436,7 +442,7 @@ describe('下载完成触发作者整理（Task5 替代 I7 逐视频整理）', 
     const authors = listAuthors(db, 'douyin')
     expect(authors).toHaveLength(1)
 
-    dl.emit({ type: 'video:status', id: db.prepare('SELECT id FROM videos WHERE task_id=?').get(taskId)!.id, status: 'done' })
+    dl.emit({ type: 'video:status', id: (db.prepare('SELECT id FROM videos WHERE task_id=?').get(taskId) as { id: number }).id, status: 'done' })
 
     expect(organizer.markAuthorPending).toHaveBeenCalledWith(authors[0].id)
     expect(organizer.organizePending).toHaveBeenCalled()
@@ -471,7 +477,7 @@ describe('下载完成触发作者整理（Task5 替代 I7 逐视频整理）', 
     const authors = listAuthors(db, 'douyin')
     expect(authors).toHaveLength(1)
 
-    dl.emit({ type: 'video:status', id: db.prepare('SELECT id FROM videos WHERE task_id=?').get(taskId)!.id, status: 'done' })
+    dl.emit({ type: 'video:status', id: (db.prepare('SELECT id FROM videos WHERE task_id=?').get(taskId) as { id: number }).id, status: 'done' })
 
     expect(organizer.markAuthorPending).toHaveBeenCalledWith(authors[0].id)
     expect(organizer.organizePending).toHaveBeenCalled()
@@ -682,7 +688,7 @@ describe('停滞自救重搜（R12，删筛选后唯一自救）', () => {
     const { s, events } = setup(db, new FakeDownloader(), browser)
     await s.run(taskId)
     // 第 2 次 load = 第 1 次重搜，URL 为关键词搜索页
-    const searchUrl = douyinAdapter.buildSearchUrl('测试')
+    const searchUrl = douyinAdapter.buildSearchUrl('测试', input.filters)
     expect(loadSpy).toHaveBeenNthCalledWith(2, douyinAdapter, searchUrl)
     expect(loadSpy.mock.calls.length).toBe(4) // 初始 + 重搜 3 次
     expect(events).toContainEqual({ type: 'task:notice', text: '已自动重新搜索关键词（第 1 次）' })
@@ -1446,7 +1452,7 @@ describe('导入作者的名称校验（R16）', () => {
     browser.authorNickname = '完全无关的名字'
     upsertAuthor(db, {
       awemeId: 'A', title: 't', authorSecUid: 'SEC_V', authorNickname: '原作者',
-      authorHomeUrl: 'u', playUrl: 'p', durationSec: 1, publishTime: 1, likes: 0
+      authorHomeUrl: 'u', playUrl: 'p', coverUrl: '', width: 0, height: 0, durationSec: 1, publishTime: 1, likes: 0
     }, 'douyin')
     const taskId = createTask(db, { ...input, type: 'author', query: 'SEC_V' })
     const { s } = setup(db, new FakeDownloader(), browser)

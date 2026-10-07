@@ -16,7 +16,7 @@ import type { Analyzer } from '../src/main/analyzer'
 
 // extractFrames 换成假实现 —— 编排测试不该真调 ffmpeg
 vi.mock('../src/main/asr/media', async (importOriginal) => {
-  const actual = await importOriginal()
+  const actual = await importOriginal<typeof import('../src/main/asr/media')>()
   return { ...actual, extractFrames: vi.fn() }
 })
 
@@ -25,7 +25,7 @@ import { extractFrames } from '../src/main/asr/media'
 const author: AuthorRow = {
   id: 1, platform: 'douyin', sec_uid: 'sec-1', nickname: '美食老王',
   home_url: null, video_count: 10, last_fetched_at: null, note: null,
-  category: null, organize_state: null, ai_classified_at: null
+  category: null, organize_state: null, ai_classified_at: null, verify_state: null, verify_error: null
 }
 
 function sample(awemeId: string, title: string): VideoRow {
@@ -35,7 +35,7 @@ function sample(awemeId: string, title: string): VideoRow {
     stats: '{}', ai_verdict: null, ai_tags: null, status: 'done',
     local_path: `C:\\fake\\${awemeId}.mp4`, file_size: 1, error: null,
     retry_count: 0, fetched_at: '2026-01-01T00:00:00Z', downloaded_at: '2026-01-01T00:00:00Z'
-  }
+  } as VideoRow // 只填编排要用到的字段
 }
 
 // 测试用的帧文件（extractFrames mock 返回它们，readFile 能真读到）
@@ -59,7 +59,7 @@ afterEach(() => {
 
 describe('classifyAuthor', () => {
   it('mock analyzer/asr/抽帧 → 返回品类且 prompt 含无语音标注', async () => {
-    const classifyWithMedia = vi.fn(async () => ({ category: '美食', tags: [] }))
+    const classifyWithMedia = vi.fn(async (_prompt: string, _images: Array<{ dataUrl: string }>) => ({ category: '美食', tags: [] }))
     const analyzer = { classifyWithMedia } as unknown as Analyzer
     const asr = {
       transcribeFor: vi.fn(async (row: VideoRow) => ({

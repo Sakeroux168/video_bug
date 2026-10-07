@@ -110,7 +110,7 @@ describe('downloadOne', () => {
   it('体积对 + sha256 对 → 原子写成功落地、无 .part 残留', async () => {
     const { spec, content } = smallModelSpec()
     await withFetch(
-      (async () => new Response(content, { status: 200 })) as typeof fetch,
+      (async () => new Response(new Uint8Array(content), { status: 200 })) as typeof fetch,
       async () => { await downloadOne(spec, spec.sources[0]) }
     )
     expect(readFileSync(join(dir, spec.rel))).toEqual(content)
@@ -123,7 +123,7 @@ describe('downloadOne', () => {
       sha256: '0000000000000000000000000000000000000000000000000000000000000000' // 故意填错
     }).spec
     await withFetch(
-      (async () => new Response(content, { status: 200 })) as typeof fetch,
+      (async () => new Response(new Uint8Array(content), { status: 200 })) as typeof fetch,
       async () => {
         await expect(downloadOne(spec, spec.sources[0])).rejects.toThrow(/校验和/)
       }
@@ -152,7 +152,7 @@ describe('fetchFile', () => {
     })
     const fn = (async (url: unknown) => {
       if (String(url).includes('bad.test')) return new Response('nope', { status: 404 })
-      return new Response(content, { status: 200 })
+      return new Response(new Uint8Array(content), { status: 200 })
     }) as typeof fetch
     await withFetch(fn, async () => { await fetchFile(spec) })
     expect(readFileSync(join(dir, spec.rel))).toEqual(content)

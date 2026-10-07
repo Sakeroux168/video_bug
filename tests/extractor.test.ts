@@ -7,7 +7,7 @@ import { douyinAdapter } from '../src/main/adapters/douyin'
 const NOW = 1720000000 // 基准时间
 const day = 86400
 const item = (over: Partial<VideoItem>): VideoItem => ({
-  awemeId: '1', title: 't', authorSecUid: 's', authorNickname: 'n', authorHomeUrl: 'h',
+  awemeId: '1', title: 't', authorSecUid: 's', authorNickname: 'n', authorHomeUrl: 'h', coverUrl: '', width: 0, height: 0,
   playUrl: 'p', durationSec: 120, publishTime: NOW, likes: 0, ...over
 })
 

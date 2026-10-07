@@ -7,7 +7,7 @@ import { getAdapter } from '../src/main/adapters'
 import { session } from 'electron'
 
 function setup(platform = 'douyin', title = '', url = getAdapter(platform)!.homeUrl) {
-  const execute = vi.fn(async (): Promise<unknown> => null)
+  const execute = vi.fn(async (_script?: string): Promise<unknown> => null)
   const frame = { url, framesInSubtree: [] as unknown[], executeJavaScript: execute }
   const wc = { getTitle: () => title, getURL: () => url, mainFrame: frame, executeJavaScript: execute }
   const b = new VideoBrowser({} as never)
@@ -82,9 +82,10 @@ describe('主进程页面信号与分区登录状态', () => {
     cookies.get.mockResolvedValue([{ name: 'ttwid', value: 'guest' }])
     expect(await b.getLoginStatus(getAdapter('douyin')!)).toMatchObject({ status: 'unknown' })
   })
-  it.each([
-    [], [{ name: 'did', value: 'guest' }], [{ name: 'web_session', value: '' }],
-    [{ name: 'web_session', value: 'expired', expirationDate: 1 }]
+  // 每一项是一组 Cookie（外面再包一层数组：it.each 会把每一项展开成参数）
+  it.each<[Array<{ name: string; value: string; expirationDate?: number }>]>([
+    [[]], [[{ name: 'did', value: 'guest' }]], [[{ name: 'web_session', value: '' }]],
+    [[{ name: 'web_session', value: 'expired', expirationDate: 1 }]]
   ])('Cookie 缺失、游客、空值或过期保持未知 %#', async value => {
     const { b } = setup('douyin')
     cookies.get.mockResolvedValue(value)
