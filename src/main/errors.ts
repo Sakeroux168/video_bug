@@ -15,6 +15,7 @@ export function classifyDownloadError(err: unknown): string {
   const code = (err as NodeJS.ErrnoException)?.code
   if (code === 'ENOENT' || code === 'EPERM' || code === 'ENOSPC') return ERROR.DISK
   if (err instanceof Error && err.message === 'bad_mp4') return ERROR.PARSE_ERROR
+  if (err instanceof Error && err.message === 'bad_host') return ERROR.BAD_HOST
   return ERROR.NETWORK
 }
 

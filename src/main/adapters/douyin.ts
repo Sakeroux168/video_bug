@@ -188,6 +188,8 @@ export const douyinAdapter: PlatformAdapter = {
   homeUrl: 'https://www.douyin.com/',
   authorInputPlaceholder: 'https://www.douyin.com/user/xxx',
   downloadReferer: 'https://www.douyin.com/',
+  // 视频：douyinvod / zjcdn / amemv / bytecdn；图片：douyinpic / byteimg / pstatp
+  downloadHosts: ['douyin.com', 'douyinvod.com', 'zjcdn.com', 'amemv.com', 'bytecdn.cn', 'douyincdn.com', 'douyinstatic.com', 'douyinpic.com', 'byteimg.com', 'pstatp.com', 'snssdk.com'],
   apiUrlPatterns: [/aweme\/v1\/web\//, /aweme\/v1\/app\//],
   // 与泛化前写死在注入脚本里的两条特征逐字一致，不收窄
   rawUrlHints: ['/aweme/', '/search/'],

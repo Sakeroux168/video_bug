@@ -318,6 +318,7 @@ export function clampDownloadSegments(v: unknown): number {
 export const ERROR = {
   NETWORK: 'network', ADDRESS_EXPIRED: 'address_expired', FORBIDDEN: 'forbidden',
   LOGIN_EXPIRED: 'login_expired', DISK: 'disk', PARSE_ERROR: 'parse_error',
+  BAD_HOST: 'bad_host',
   AI_AUTH: 'ai_auth', AI_QUOTA: 'ai_quota', AI_TIMEOUT: 'ai_timeout'
 } as const
 

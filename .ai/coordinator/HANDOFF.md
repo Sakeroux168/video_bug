@@ -13,8 +13,8 @@
 2. **下载提速**：小红书 CDN 单连接约 250～300 KB/s；4 路 Range 并行合计约 735 KB/s。可以做分段并行下载，或者调高「同时下载数」（测试档案被设成了 1）。
 3. 小问题：`undefined` 全文替换会改到字符串里的字样（P3）；作者 + 自定义日期的日志误报；`taskCreate` 提示文案写死；`package-lock.json` 不同步（`npm ci` 失败）。
 4. 接口模式：总控两次被安全审核拦下，不做；是否做由用户自己决定。
-5. 各工作区：`codex工作区\video_bug` 还留着旧的未提交改动（内容已在 `595e997`），开工前丢掉再 pull；`gemini工作区\video_bug` 是 DeepSeek 用的；总控在 `claude工作区\video_bug`。
-6. 测试档案 `codex工作区\小红书验收\user-data`：小红书已登录；抖音要真人过一次滑块。用本机接口建任务时，**中文关键词要按 UTF-8 发送**（Git Bash 里的 curl 会把中文弄成乱码，改用 node 脚本 `claude工作区\诊断` 那种写法）。
+5. 各工作区：Codex 的工作区还留着旧的未提交改动（内容已在 `595e997`），开工前丢掉再 pull；另有一个工作区是 DeepSeek 用的；总控有自己的工作区。具体路径在总控的本机笔记里，不写进公开仓库。
+6. 测试档案（本机，带登录信息，路径在总控本机笔记里）：小红书已登录；抖音要真人过一次滑块；快手没登录。真机测试一律复制一份来用，测完移到回收站。用本机接口建任务时，**中文关键词要按 UTF-8 发送**（Git Bash 里的 curl 会把中文弄成乱码，改用 node 脚本写）。
 
 ## 下一步
 
@@ -27,9 +27,9 @@
 - 性能剩下（C4，以后做）：视频处理全量快照、导出全部一次传太多、3 处 ffmpeg 没超时、下载重试没退避；目录树按层懒加载。
 - 体验快修第一批 ✅ PR #24（`17bb6e3`）：任务表固定列宽 + 暂停原因整行提示（D1）、删任务 / 删作者先确认（D2，还没做撤销）、设置没保存切页先提醒（D3）。
 - 体验快修第二批 ✅ PR #26（`2dac86e`）：表单回车提交 + 就近报错 + 默认 20 条（D4）、提示分级 success/info/warn/error + 红色统一 danger-600（D5）、状态灯「未确认」+ 检查 / 去登录按钮，任务没登录时同步成「未登录」（D6）。
-- 快手（2026-10-06 真机）：能爬。之前失败是系统代理（v2rayN 127.0.0.1:10808）走快手太慢 → 页面 30 秒超时；用户调整代理后正常。快手搜索必须登录。「平台网页不走代理」开关暂不做。
+- 快手（2026-10-06 真机）：能爬。之前失败是系统代理走快手太慢 → 页面 30 秒超时；用户调整代理后正常。快手搜索必须登录。「平台网页不走代理」开关暂不做。
 - 体验快修第三批 ✅ PR #28（`6f7d9b2`）：使用说明 7 处对齐（D7）；下载进度 video:progress 走单独通道 evt:download:progress、视频列表加分辨率 / 大小、标题列 ≥14rem、按钮不折行、勾选框可累加（D8）。体验快修 D1–D8 全部完成。
-- 开源准备 ✅ PR #30（`623d56c`）：锁文件补 sherpa-onnx-darwin-x64（npm ci 能过）、ffmpeg 改从 vendor/ffmpeg/bin（或 FFMPEG_BIN_DIR）、测试临时目录改到系统临时目录、GitHub Actions（windows-latest：npm ci + npm run verify，首次 1m36s 通过）。✅ PR #31（`062554e`）：README + 免责声明（按 LICENSE 称「源码可用」）、docs 只留 使用说明.md（50 份内部文档移出，本地备份在 claude工作区\内部文档备份\docs-2026-10-06，Git 历史仍在）。
+- 开源准备 ✅ PR #30（`623d56c`）：锁文件补 sherpa-onnx-darwin-x64（npm ci 能过）、ffmpeg 改从 vendor/ffmpeg/bin（或 FFMPEG_BIN_DIR）、测试临时目录改到系统临时目录、GitHub Actions（windows-latest：npm ci + npm run verify，首次 1m36s 通过）。✅ PR #31（`062554e`）：README + 免责声明（按 LICENSE 称「源码可用」）、docs 只留 使用说明.md（50 份内部文档移出，总控工作区里有本地备份，Git 历史仍在）。
 - 开源准备 ✅ PR #33（`03f97b8`）：tests/*.ts 纳入类型检查（tsconfig.tests.json，152 个错误清零，typecheck / CI 都查）。已关旧 PR #2，删掉 28 个已合并的远端分支（远端只剩 master）。
 - 只抓热门 + 补数据 ✅ PR #35（`d4b69a6`）：收藏 / 分享 / 播放进 stats（字段名真机核对：抖音 collect_count / share_count，play_count 恒 0 不存；小红书 collected_count / shared_count / share_count / collectedCount / shareCount；快手 viewCount）、再抓到时更新 + updatedAt、导出加四列、列表加收藏列；最少点赞 / 最少收藏门槛（小红书列表阶段就跳过）。
 - 按排序抓 ✅ PR #37：抖音 / 小红书「排序」下拉（真机：抖音只有 ?type=video 页的 /search/item/ 带 sort_type，最多点赞=1、最新=2，截到的地址是相对路径；小红书筛选面板「排序依据」）。抖音点上排序后只收 sort_type 对得上的结果，没点上退回综合排序。
@@ -40,9 +40,9 @@
 - 定时追更挑作者 ✅ PR #47（authors.auto_follow；设置「追更哪些作者」all / picked）。开机自动启动 ✅ PR #48（只打包版写启动项，便携版用 PORTABLE_EXECUTABLE_FILE，带 --hidden 只挂托盘；没在打包版上真写启动项 / 重启验证）。
 - Electron 35 → 44 ✅ PR #49（Node 24.21 / Chromium 152）：页面跳转后之前发出的 executeJavaScript 永不返回 → 读详情等轮询全部加超时（不加小红书一条都下不了）；postinstall `install-electron --no`（42 起 npm 不再自动下 Electron 本体）；选文件夹自己记上次位置（43）；clipboard.writeText 异步（44）。真机：小红书抓 + 下、素材库、剪贴板、视频处理、通知、打包版都过；抖音 / 快手 / 语音转写没测。Electron 45 预告：沙盒 preload 没有 Buffer / setImmediate 等。
 - 后面候选：性能 C4、A8（preload 来源校验 / 下载域名白名单）、A9（AI Key 加密）。
-- 待用户决定：本机接口 bridgeEnabled 新装默认是否改为关；`.ai/coordinator/` 里的本机路径要不要清理。
+- 用户 2026-10-07 定：本机接口新装默认关（PR #51）；`.ai/coordinator/` 里的本机路径清理掉、改记在总控本机笔记里。
 - 体验测试注意：Electron 的 `window.confirm` 是系统弹窗，会卡住整个程序、远程控制关不掉；测删除这类操作前先用 CDP 把 `window.confirm` 换成返回 true 的函数。
-- 全面检查报告和总汇总在 `E:\项目文件\视频爬取\claude工作区\全面检查\`（先看 `总汇总.md`）。
+- 全面检查报告和总汇总在总控工作区的「全面检查」文件夹（先看 `总汇总.md`）。
 - 用户认可的顺序：数据安全 bug（✅）→ 性能（✅ 主要部分）→ 体验快修（✅）→ 开源准备（✅）→ 只抓热门 + 补数据 → 视频处理 / 素材库 / 自动化；Electron 升级单独做。实现由总控来做（用户 2026-10-01 说先别用 Codex）。
 - 仓库是**公开的**：总控笔记里不写用户的个人情况。PR #11 已从当前版本删掉；用户选择不处理历史记录。
 - 体验测试的档案副本（带登录信息）已按用户同意移到回收站（2026-10-06）。以后再用 `start-tester.ps1` 复制档案，测完要清理。
