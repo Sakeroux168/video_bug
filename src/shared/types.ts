@@ -256,6 +256,8 @@ export interface AppSettings {
   autoFollowCount: number
   /** 追更哪些作者：all = 全部爬过主页的；picked = 只追作者收藏里标了「定时追更」的 */
   autoFollowScope: 'all' | 'picked'
+  /** 开机自动启动（启动后只挂托盘）；只有打包版会真的写系统启动项 */
+  openAtLogin: boolean
 }
 
 /** ASR 单个模型文件的状态（models.status() 的结果形状，跨进程用） */
