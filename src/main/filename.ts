@@ -24,6 +24,21 @@ function stripHashtags(value: string): string {
   return out
 }
 
+/** Windows 保留设备名（CON、NUL、COM1……）：当文件名 / 文件夹名用会失败或指到设备上 */
+const RESERVED_NAME_RE = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(\.|$)/i
+
+/**
+ * 一段文件名 / 文件夹名的最后一道清洗（2026-10-07 安全加固 L2）：
+ * 非法字符和控制字符换成 _，去掉开头的点、结尾的点和空格（Windows 会悄悄吃掉），
+ * 保留设备名前加 _；清完是空的（比如 `..`、`.`）就用 fallback——绝不能产出「上一级目录」。
+ */
+export function safeSegment(raw: string, maxLen: number, fallback: string): string {
+  let s = String(raw ?? '').replace(/[\\/:*?"<>|\x00-\x1f]/g, '_').trim().slice(0, maxLen)
+  s = s.replace(/^\.+/, '').replace(/[. ]+$/, '').trim()
+  if (!s) return fallback
+  return RESERVED_NAME_RE.test(s) ? `_${s}` : s
+}
+
 /** Windows 非法字符替换 + 空白收敛 */
 function sanitize(value: string): string {
   return value.replace(/[\\/:*?"<>|\r\n]/g, '_').replace(/\s+/g, ' ').trim()
@@ -50,7 +65,7 @@ export function safeFilename(title: string, author: string, awemeId: string): st
   const body = sanitize(stripHashtags(raw))
   const tagWords = sanitize([...raw.matchAll(HASHTAG_RE)].map(m => m[0].slice(1)).join(' '))
   const base = body || tagWords || sanitize(awemeId) || sanitize(author) || 'video'
-  return base.length > 80 ? base.slice(0, 80).trim() : base
+  return safeSegment(base, 80, 'video')
 }
 
 export function ensureUniqueName(dir: string, name: string): string {

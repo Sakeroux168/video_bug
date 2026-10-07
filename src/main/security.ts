@@ -40,3 +40,33 @@ export function allowedPermission(permission: string): boolean {
 }
 
 export { neutralizeCsvFormula } from '../shared/csvSafe'
+
+/**
+ * 写日志用的地址：只留站点和路径，? 后面的参数一律不要（2026-10-07 安全加固 L3）。
+ * 参数里有设备号、msToken、xsec_token 这类东西，以前只靠「截前 120 个字」挡着。
+ */
+export function logUrl(url: string): string {
+  return String(url ?? '').replace(/[?#].*$/s, '')
+}
+
+/** 平台窗口的主页面只在本平台的网站里跳（含登录、验证用的子域名）；别的网站交给系统浏览器（L1） */
+export function isPlatformNavigation(adapter: { navHosts: readonly string[] }, url: string): boolean {
+  let u: URL
+  try { u = new URL(url) } catch { return false }
+  if (u.protocol !== 'https:' && u.protocol !== 'http:') return false
+  const host = u.hostname.toLowerCase()
+  return adapter.navHosts.some(d => host === d || host.endsWith(`.${d}`))
+}
+
+/** 页面要打开的外部网页交给系统浏览器：只认 http(s)，间隔太近的不开（页面不能一直往外弹，L1） */
+export class ExternalOpener {
+  private last = -Infinity
+  constructor(private deps: { open: (url: string) => void; now?: () => number; gapMs?: number }) {}
+  open(url: string): void {
+    if (!/^https?:\/\//i.test(url)) return
+    const now = (this.deps.now ?? Date.now)()
+    if (now - this.last < (this.deps.gapMs ?? 5000)) return
+    this.last = now
+    this.deps.open(url)
+  }
+}

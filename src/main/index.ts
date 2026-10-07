@@ -1,7 +1,7 @@
 import { app, BrowserWindow, ipcMain, net, protocol, shell, type Tray } from 'electron'
 import { pathToFileURL } from 'url'
 import { coverFileFor } from './library'
-import { allowedPermission, isAppUrl } from './security'
+import { allowedPermission, isAppUrl, logUrl } from './security'
 import { join } from 'path'
 import { DatabaseSync } from 'node:sqlite'
 import { initDb, tuneDb } from './db'
@@ -444,7 +444,7 @@ ipcMain.on('platform:raw', async (_e, msg) => {
   const diags = drainDurationDiags()
   const durationZero = diags.length > 0
   rawLog.push({
-    at: new Date().toISOString().slice(11, 19), url: url.slice(0, 120), handled,
+    at: new Date().toISOString().slice(11, 19), url: logUrl(url).slice(0, 160), handled,
     stats: stats ?? undefined,
     durationZero: durationZero || undefined,
     topKeys: durationZero ? diags[0].topKeys : undefined
@@ -452,7 +452,7 @@ ipcMain.on('platform:raw', async (_e, msg) => {
   if (rawLog.length > 60) rawLog.shift()
   // R14：拦截结果同步打终端（与 [自救] 同理，排查真机「一条没抓到」时要区分
   // 「钩子没拦到接口」和「拦到了但解析/过滤掉了」——只看界面面板定位不了）
-  console.log('[拦截]', handled ? '命中' : '忽略', url.slice(0, 100), stats ? `解析${stats.items}→留${stats.kept}` : '')
+  console.log('[拦截]', handled ? '命中' : '忽略', logUrl(url).slice(0, 160), stats ? `解析${stats.items}→留${stats.kept}` : '')
 })
 ipcMain.handle('debug:rawLog', () => rawLog.slice(-60))
 

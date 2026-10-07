@@ -95,6 +95,8 @@ export interface PlatformAdapter {
   downloadReferer: string
   /** 视频 / 封面下载只认这些域名（含子域名）；别的地址一律不请求（2026-10-07 安全加固 A8） */
   downloadHosts: readonly string[]
+  /** 平台窗口的主页面只能跳到这些域名（含子域名，要包括登录、验证页）；别的交给系统浏览器（2026-10-07 L1） */
+  navHosts: readonly string[]
   /** 挂钩脚本需要转发的接口 URL 特征 */
   apiUrlPatterns: RegExp[]
   /** XHR 响应 content-type 不标准时，按 URL 子串兜底判断该响应是否值得解析。

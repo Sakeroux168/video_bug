@@ -559,6 +559,7 @@ export const xiaohongshuAdapter: PlatformAdapter = {
   homeUrl: 'https://www.xiaohongshu.com/',
   authorInputPlaceholder: 'https://www.xiaohongshu.com/user/profile/xxx',
   downloadReferer: 'https://www.xiaohongshu.com/',
+  navHosts: ['xiaohongshu.com', 'xhslink.com', 'xhscdn.com'],
   downloadHosts: ['xiaohongshu.com', 'xhscdn.com', 'xhscdn.net'],
 
   apiUrlPatterns: [SEARCH_API_RE, DETAIL_API_RE],
