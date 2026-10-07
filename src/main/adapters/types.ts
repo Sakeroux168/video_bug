@@ -18,7 +18,14 @@ export interface VideoItem {
   comments?: number | null
   /** 作品原链接；拿不到时可以不给（入库时按 null 处理） */
   sourceUrl?: string
+  /** 收藏 / 分享 / 播放数（2026-10-07 补数据）。平台不给就不填——不能当成 0 */
+  collects?: number
+  shares?: number
+  plays?: number
 }
+
+/** 平台能给哪些额外互动数（界面据此决定显示哪些门槛和列） */
+export type InteractionField = 'collects' | 'shares' | 'plays'
 
 /** 平台适配器契约：核心模块只认这个接口，平台差异全部封在里面 */
 export interface ListStub {
@@ -34,6 +41,8 @@ export interface ListStub {
   coverUrl: string
   likes: number | null
   comments: number | null
+  /** 列表卡片上的收藏数（小红书有）；用于列表阶段按收藏门槛筛 */
+  collects?: number | null
 }
 
 export interface ListStubResult {
@@ -64,6 +73,8 @@ export interface PlatformAdapter {
    *  不能建任务——避免「平台出现在下拉框里、选了却跑不通」的半成品状态。 */
   taskReady: boolean
   supportedTaskTypes?: readonly TaskType[]
+  /** 能拿到的额外互动数（真机核对过的）。没有的平台，界面不显示对应门槛 */
+  interactions?: readonly InteractionField[]
   /** 可由主进程打开的作品页精确主机白名单 */
   sourceHosts: readonly string[]
   /** 登录态分区，如 'persist:douyin' */

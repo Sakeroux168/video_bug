@@ -158,7 +158,9 @@ export function parseXiaohongshuNoteStubs(json: unknown): NoteStubResult {
       authorNickname: text(user.nickname) || text(user.nick_name),
       coverUrl: coverOf(card),
       likes: parseXiaohongshuCount(interact.liked_count),
-      comments: parseXiaohongshuCount(interact.comment_count)
+      comments: parseXiaohongshuCount(interact.comment_count),
+      // 真机核对（2026-10-07）：搜索卡片 interact_info.collected_count
+      collects: parseXiaohongshuCount(interact.collected_count)
     })
   }
   return result
@@ -371,6 +373,9 @@ export function parseXiaohongshuNoteDetail(json: unknown): VideoItem | null {
     publishTime: unixSeconds(card.time),
     likes: parseXiaohongshuCount(interact.liked_count ?? interact.likedCount) ?? 0,
     comments: parseXiaohongshuCount(interact.comment_count ?? interact.commentCount),
+    // 真机核对（2026-10-07）：/feed 是 collected_count / share_count，页面注水是 collectedCount / shareCount
+    collects: parseXiaohongshuCount(interact.collected_count ?? interact.collectedCount) ?? undefined,
+    shares: parseXiaohongshuCount(interact.share_count ?? interact.shareCount ?? interact.shared_count) ?? undefined,
     sourceUrl: buildNotePage(noteId)
   }
 }
@@ -543,6 +548,7 @@ export const xiaohongshuAdapter: PlatformAdapter = {
   displayName: '小红书',
   taskReady: true,
   supportedTaskTypes: ['keyword', 'author', 'hashtag'],
+  interactions: ['collects', 'shares'],
   sourceHosts: ['www.xiaohongshu.com'],
   sessionPartition: 'persist:xiaohongshu',
   homeUrl: 'https://www.xiaohongshu.com/',

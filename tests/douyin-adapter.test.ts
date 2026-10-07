@@ -274,3 +274,19 @@ describe('douyinAdapter 平台知识集中在适配器里', () => {
     expect(douyinAdapter.isShortLink('https://v.kuaishou.com/ABC')).toBe(false)
   })
 })
+
+// 2026-10-07 补数据（功能 N05）：收藏、分享真机核对过字段名（statistics.collect_count / share_count）；
+// 网页版 play_count 一律是 0，等于拿不到，不存
+describe('抖音互动数补全', () => {
+  it('收藏、分享读出来；播放数不存', () => {
+    const json = { data: [{ aweme_list: [{ ...AWEME, statistics: { digg_count: 9542, comment_count: 410, collect_count: 763, share_count: 860, play_count: 0 } }] }] }
+    const [item] = douyinAdapter.parseApiJson('https://www.douyin.com/aweme/v1/web/general/search/single/', json)
+    expect(item).toMatchObject({ likes: 9542, comments: 410, collects: 763, shares: 860 })
+    expect(item.plays).toBeUndefined()
+  })
+  it('没有这两个字段就不给（不当成 0）', () => {
+    const [item] = douyinAdapter.parseApiJson('https://x/', { aweme_list: [AWEME] })
+    expect(item.collects).toBeUndefined()
+    expect(item.shares).toBeUndefined()
+  })
+})

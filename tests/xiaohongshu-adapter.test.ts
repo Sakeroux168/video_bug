@@ -208,7 +208,8 @@ describe('parseXiaohongshuNoteStubs 只收视频笔记', () => {
       authorNickname: '作者N1',
       coverUrl: 'http://cover.test/N1.webp',
       likes: 1947,
-      comments: 48
+      comments: 48,
+      collects: 403 // 2026-10-07 补数据：列表卡片的收藏数
     })
   })
 
@@ -378,6 +379,7 @@ describe('parseXiaohongshuNoteDetail 组装完整条目', () => {
       publishTime: 1763540281,
       likes: 5373,
       comments: 436,
+      collects: 504, shares: 1502, // 2026-10-07 补数据：收藏、分享
       // 作品链接不带 xsec_token：那是一次性短期令牌，不能当永久身份存库
       sourceUrl: 'https://www.xiaohongshu.com/explore/NOTE1'
     })
@@ -444,5 +446,19 @@ describe('parseXiaohongshuNoteDetail 组装完整条目', () => {
     for (const json of [null, 'x', [], {}, { data: {} }, { data: { items: [] } }, { data: { items: [{}] } }]) {
       expect(parseXiaohongshuNoteDetail(json)).toBeNull()
     }
+  })
+})
+
+// 2026-10-07 补数据（功能 N05/N02）：字段名真机核对过——
+// 搜索列表 interact_info.collected_count / shared_count；详情 /feed 是 collected_count / share_count，页面注水是 collectedCount / shareCount
+describe('小红书互动数补全', () => {
+  it('列表卡片带收藏数（列表阶段就能按收藏门槛筛）', () => {
+    const [s] = parseXiaohongshuNoteStubs({ data: { items: [videoNote('N1')] } }).stubs
+    expect(s.collects).toBe(403)
+  })
+  it('详情：收藏、分享读出来（下划线和驼峰两种写法都认）', () => {
+    expect(parseXiaohongshuNoteDetail(detailResponse())).toMatchObject({ likes: 5373, comments: 436, collects: 504, shares: 1502 })
+    const camel = detailCard({ interact_info: { likedCount: '1.4万', commentCount: '697', collectedCount: '1921', shareCount: '1491' } })
+    expect(parseXiaohongshuNoteDetail(detailResponse(camel))).toMatchObject({ likes: 14000, collects: 1921, shares: 1491 })
   })
 })

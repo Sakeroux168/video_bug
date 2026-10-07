@@ -87,3 +87,11 @@ describe('D8 文件管理', () => {
     expect(within(screen.getByText('b.mp4').closest('tr')!).getByRole('checkbox')).toBeChecked()
   })
 })
+
+describe('N05 视频列表显示收藏数', () => {
+  it('有收藏列；不知道的显示 —', async () => {
+    const { table } = await openTask([video(1, { stats: '{"likes":10,"collects":12345}' }), video(2, { stats: '{"likes":3}' })])
+    expect(row(table, 1).querySelector('[data-stat="collects"]')?.textContent).toBe('1.2w')
+    expect(row(table, 2).querySelector('[data-stat="collects"]')?.textContent).toBe('—')
+  })
+})

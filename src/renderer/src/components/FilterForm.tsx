@@ -7,7 +7,7 @@ import { checkDateRange, describeDateRange } from './dateRange'
 
 export default function FilterForm({ onSubmit }: { onSubmit: (t: CreateTaskInput) => Promise<{ id: number | null; skipped: boolean; reason?: string }> }) {
   // 只列已就绪的平台：接入中的平台解析器还没写，选了也跑不通
-  const [platforms, setPlatforms] = useState<Array<{ name: string; displayName: string; authorInputPlaceholder: string; supportedTaskTypes?: readonly TaskType[] }>>([])
+  const [platforms, setPlatforms] = useState<Array<{ name: string; displayName: string; authorInputPlaceholder: string; supportedTaskTypes?: readonly TaskType[]; interactions?: readonly string[] }>>([])
   const [platform, setPlatform] = useState('douyin')
   const [type, setType] = useState<TaskType>('keyword')
   const [query, setQuery] = useState('')
@@ -20,6 +20,10 @@ export default function FilterForm({ onSubmit }: { onSubmit: (t: CreateTaskInput
   const [durationMaxSec, setDurationMaxSec] = useState('')
   // D4：默认 20 条，和作者页「爬主页」一致（先少抓一点看看效果，要多再改）
   const [target, setTarget] = useState(20)
+  // 只抓热门（2026-10-07）：点赞 / 收藏门槛，空着 = 不限
+  const [minLikes, setMinLikes] = useState('')
+  const [minCollects, setMinCollects] = useState('')
+  const [thresholdErr, setThresholdErr] = useState('')
   const [aiFilter, setAiFilter] = useState(false)
   const [aiRule, setAiRule] = useState('')
   const [aiOrganize, setAiOrganize] = useState(false)
@@ -46,6 +50,8 @@ export default function FilterForm({ onSubmit }: { onSubmit: (t: CreateTaskInput
   // 平台列表未到达时留空，不写死任何一个平台的 URL。
   const authorPlaceholder = platforms.find(p => p.name === platform)?.authorInputPlaceholder ?? ''
   const supportedTypes = platforms.find(p => p.name === platform)?.supportedTaskTypes ?? ['keyword', 'author', 'hashtag']
+  // 平台拿不到收藏数（快手）就不显示「最少收藏」——设了也只会把所有视频都筛掉
+  const hasCollects = platforms.find(p => p.name === platform)?.interactions?.includes('collects') ?? false
   useEffect(() => {
     if (!supportedTypes.includes(type)) setType('keyword')
   }, [platform, platforms, type])
@@ -69,6 +75,14 @@ export default function FilterForm({ onSubmit }: { onSubmit: (t: CreateTaskInput
     if (!targetValid) { setErr('目标数量需在 1-1000 之间'); return }
     if (!customDurationValid) { setErr('自定义时长需为正整数，且最长秒数不能小于最短秒数'); return }
     if (rangeError) { setErr(rangeError); return }
+    const parseMin = (v: string): number | undefined | null => {
+      if (v.trim() === '') return undefined
+      const n = Number(v)
+      return Number.isInteger(n) && n >= 0 ? n : null
+    }
+    const likesMin = parseMin(minLikes)
+    const collectsMin = hasCollects ? parseMin(minCollects) : undefined
+    if (likesMin === null || collectsMin === null) { setThresholdErr('门槛要填 0 以上的整数'); return }
     if (aiFilter && !aiRule.trim()) { setRuleErr('请填写筛选规则'); return }
     setErr('')
     setSubmitting(true)
@@ -89,6 +103,8 @@ export default function FilterForm({ onSubmit }: { onSubmit: (t: CreateTaskInput
           durationMinSec: duration === 'custom' ? customMin : undefined,
           durationMaxSec: duration === 'custom' ? customMax : undefined,
           targetCount: target, aiFilterRule: aiFilter ? aiRule.trim() : undefined,
+          minLikes: likesMin || undefined,
+          minCollects: collectsMin || undefined,
           detailMode: platform === 'xiaohongshu' ? detailMode : undefined
         },
         aiFilterEnabled: aiFilter, aiOrganizeEnabled: aiOrganize,
@@ -203,6 +219,23 @@ export default function FilterForm({ onSubmit }: { onSubmit: (t: CreateTaskInput
           <p className="mt-2 text-xs text-slate-500">小红书会先应用“视频”网页筛选，再逐条打开笔记获取下载地址；作者主页按卡片播放标识只收视频。近30天、自定义日期和时长会在详情阶段精确筛选，建议先试抓 3 条。</p>
         </>
       )}
+      {/* 只抓热门：点赞 / 收藏低于门槛的不要（小红书在列表阶段就跳过，不用打开详情页） */}
+      <div className="mt-3 flex flex-wrap items-end gap-4 text-sm">
+        <label htmlFor="filter-min-likes" className="flex flex-col gap-1 text-xs text-slate-500">
+          最少点赞
+          <input id="filter-min-likes" type="number" min={0} step={1} className={`${inputCls} w-28`} placeholder="不限"
+            value={minLikes} onChange={e => { setMinLikes(e.target.value); setThresholdErr('') }} />
+        </label>
+        {hasCollects && (
+          <label htmlFor="filter-min-collects" className="flex flex-col gap-1 text-xs text-slate-500">
+            最少收藏
+            <input id="filter-min-collects" type="number" min={0} step={1} className={`${inputCls} w-28`} placeholder="不限"
+              value={minCollects} onChange={e => { setMinCollects(e.target.value); setThresholdErr('') }} />
+          </label>
+        )}
+        <span className="pb-2 text-xs text-slate-400">只抓热门：低于门槛的视频不要。门槛设得太高可能抓不满。</span>
+        {thresholdErr && <span className="pb-2 text-xs text-danger-600">{thresholdErr}</span>}
+      </div>
       {customRange && (
         <p className={`mt-2 text-xs ${rangeError ? 'text-danger-600' : 'text-slate-400'}`}>
           {rangeError ?? `${describeDateRange(startDate, endDate)}（按北京时间，含当天）`}

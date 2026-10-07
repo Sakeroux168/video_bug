@@ -30,7 +30,8 @@ function video(over: Partial<VideoRow> = {}): VideoRow {
 const label = (p: string): string => (p === 'kuaishou' ? '快手' : p === 'douyin' ? '抖音' : p)
 
 describe('toVideoExportRows', () => {
-  it('从视频行取出八列：平台显示名、作者、标题、作品链接、点赞、评论、时长、文件名', () => {
+  // 需求变更（2026-10-07 补数据）：多了收藏、分享、播放、发布时间
+  it('从视频行取出导出列：平台显示名、作者、标题、作品链接、点赞、评论、收藏、分享、播放、发布时间、时长、文件名', () => {
     expect(toVideoExportRows([video()], label)).toEqual([{
       platform: '抖音',
       author: '张三',
@@ -38,6 +39,10 @@ describe('toVideoExportRows', () => {
       sourceUrl: 'https://www.douyin.com/video/AW1',
       likes: 42,
       comments: 17,
+      collects: null,
+      shares: null,
+      plays: null,
+      publishDate: '2026-09-07', // 发布时间按北京时间取日期
       durationSec: 12,
       fileName: '标题.mp4'
     }])
@@ -88,7 +93,7 @@ describe('buildVideosCsv', () => {
 
   it('表头就是用户要的列，顺序固定', () => {
     expect(buildVideosCsv(rows).split('\r\n')[0])
-      .toBe('平台,作者,标题,作品链接,点赞,评论,时长(秒),本地文件名')
+      .toBe('平台,作者,标题,作品链接,点赞,评论,收藏,分享,播放,发布时间,时长(秒),本地文件名') // 2026-10-07 补数据：加了收藏、分享、播放、发布时间四列
   })
 
   it('用 CRLF 换行（Excel 打开不粘行）', () => {
@@ -116,7 +121,7 @@ describe('buildVideosCsv', () => {
   })
 
   it('空列表只输出表头，不产出空行', () => {
-    expect(buildVideosCsv([])).toBe('平台,作者,标题,作品链接,点赞,评论,时长(秒),本地文件名')
+    expect(buildVideosCsv([])).toBe('平台,作者,标题,作品链接,点赞,评论,收藏,分享,播放,发布时间,时长(秒),本地文件名') // 2026-10-07 补数据：加了收藏、分享、播放、发布时间四列
   })
 })
 

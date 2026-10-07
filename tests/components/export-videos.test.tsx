@@ -123,9 +123,9 @@ describe('导出结果与合并任务', () => {
     fireEvent.click(screen.getByRole('button', { name: '合并导出选中任务(2)' }))
     await waitFor(() => expect(window.api.exportCsv).toHaveBeenCalledOnce())
     const csv = await cap.text()
-    expect(csv.split('\r\n')[0]).toBe('平台,作者,标题,作品链接,点赞,评论,时长(秒),本地文件名,任务（平台 / 类型 / 关键词或作者）')
-    expect(csv.split('\r\n')[1]).toBe('抖音,张三,标题1,https://www.douyin.com/video/AW1,42,17,12,标题1.mp4,"抖音 / 关键词 / 美食,选题"')
-    expect(csv.split('\r\n')[2]).toBe('快手,张三,标题2,https://www.douyin.com/video/AW2,42,17,12,标题2.mp4,快手 / 作者 / 李四')
+    expect(csv.split('\r\n')[0]).toBe('平台,作者,标题,作品链接,点赞,评论,收藏,分享,播放,发布时间,时长(秒),本地文件名,任务（平台 / 类型 / 关键词或作者）') // 2026-10-07 补数据：加了收藏、分享、播放、发布时间四列
+    expect(csv.split('\r\n')[1]).toBe('抖音,张三,标题1,https://www.douyin.com/video/AW1,42,17,,,,2026-09-08,12,标题1.mp4,"抖音 / 关键词 / 美食,选题"')
+    expect(csv.split('\r\n')[2]).toBe('快手,张三,标题2,https://www.douyin.com/video/AW2,42,17,,,,2026-09-08,12,标题2.mp4,快手 / 作者 / 李四')
     expect(csv.split('\r\n')).toHaveLength(3)
     expect(window.api.listTaskVideos).not.toHaveBeenCalledWith(3)
   })

@@ -332,6 +332,7 @@ describe('kuaishouAdapter 解析 REST 搜索 feed（真机实测结构）', () =
       durationSec: 12.5,
       publishTime: 1757850158,
       likes: 228227,
+      plays: 11484563, // 2026-10-07 补数据：播放数（这份真机样本里就有 viewCount）
       // 这个接口不返回评论数（comment.us_c 实测恒为 0，不是评论数）。
       // 按既有红线，未知必须是 null 让界面显示「—」，不能伪装成 0。
       comments: null,
@@ -441,5 +442,16 @@ describe('kuaishouAdapter 解析 REST 作者主页 feed', () => {
       playUrl: 'https://v23-3.kwaicdn.test/h264-a.mp4',
       comments: null
     })
+  })
+})
+
+// 2026-10-07 补数据（功能 N05）：快手作品有播放数 viewCount
+describe('快手互动数补全', () => {
+  it('播放数读 viewCount（数字或数字字符串）；没有就不给', () => {
+    const withView = { visionSearchPhoto: { feeds: [{ ...FEED, photo: { ...FEED.photo, viewCount: '12345' } }] } }
+    const [a] = kuaishouAdapter.parseApiJson('https://www.kuaishou.com/graphql', { data: withView })
+    expect(a.plays).toBe(12345)
+    const [b] = kuaishouAdapter.parseApiJson('https://www.kuaishou.com/graphql', { data: { visionSearchPhoto: { feeds: [FEED] } } })
+    expect(b.plays).toBeUndefined()
   })
 })
