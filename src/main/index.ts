@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, net, protocol, shell } from 'electron'
+import { app, BrowserWindow, ipcMain, net, protocol, shell, type Tray } from 'electron'
 import { pathToFileURL } from 'url'
 import { coverFileFor } from './library'
 import { allowedPermission, isAppUrl } from './security'
@@ -26,6 +26,9 @@ import { findFfmpeg } from './asr/media'
 import { startBridge, DEFAULT_BRIDGE_PORT } from './bridge'
 import { TaskQueue } from './taskQueue'
 import { onBeforeQuit } from './shutdown'
+import { AutoFollowTimer, FollowTracker, Notifier, noticeForEvent, platformNameOf, runAutoFollow, taskLabel, type AutoFollowResult, type Notice } from './automation'
+import { loadAutomationState, saveAutomationState } from './automationState'
+import { createTray, showNotice, windowInFront } from './desktop'
 import type { Server } from 'http'
 import type { VideoRow } from '../shared/types'
 
@@ -42,6 +45,41 @@ let browserShown = false
 let forceBrowserFull = false
 /** push() 里查任务所属平台用（库在 whenReady 里才打开） */
 let dbRef: DatabaseSync | null = null
+// 2026-10-07 自动化：托盘、系统通知、定时追更
+let tray: Tray | null = null
+/** 真的要退出了（托盘「退出」、系统关机等）：关窗口不再缩到托盘 */
+let quitting = false
+let trayHintShown = false
+const notifier = new Notifier({ show: n => showNotice(n, () => win) })
+const followTracker = new FollowTracker()
+
+/** 开了通知、窗口不在前台时才弹 */
+function notify(n: Notice): void {
+  if (getSettings().notifyEnabled === false || windowInFront(win)) return
+  notifier.notify(n)
+}
+
+/** 任务结束 / 暂停 → 系统通知；定时追更那批各自抓完不单独弹，最后弹一条汇总 */
+function notifyTaskEvent(evt: { type?: string; taskId?: number; fetched?: number; reason?: string }): void {
+  if (!dbRef || (evt.type !== 'task:done' && evt.type !== 'task:paused') || evt.taskId === undefined) return
+  const owned = followTracker.owns(evt.taskId)
+  const summary = followTracker.onEvent({ ...evt, type: evt.type })
+  if (!(owned && evt.type === 'task:done')) {
+    const n = noticeForEvent({ ...evt, type: evt.type }, { label: taskLabel(dbRef, evt.taskId), platformName: platformNameOf(dbRef, evt.taskId) })
+    if (n) notify(n)
+  }
+  if (summary) notify(summary)
+}
+
+/** 追更一次（定时器到点、托盘菜单、设置页按钮都走这里）；结果记下来给设置页显示 */
+function followNow(manual: boolean): AutoFollowResult | null {
+  if (!dbRef) return null
+  const count = Math.min(200, Math.max(1, Math.floor(Number(getSettings().autoFollowCount) || 20)))
+  const r = runAutoFollow(dbRef, enqueueTask, { count })
+  followTracker.start(r.taskIds)
+  saveAutomationState({ lastResult: { at: new Date().toISOString(), manual, authors: r.authors, created: r.created, skipped: r.skipped } })
+  return r
+}
 
 /** 根据任务状态与用户所在标签决定抖音窗口显示方式：
  *  任务运行中 / 验证暂停 → 显示独立抖音窗口（不盖管理面板，可拖走）；
@@ -103,7 +141,20 @@ function createWindow(): void {
   // 若不先 dispose，window-all-closed 永不触发、app 不退出、进程挂后台。关窗前先销毁子窗口。
   // createWindow 时 browser 模块变量尚为 null，用闭包引用模块级 browser —— 用户关窗时已赋值；dispose 幂等。
   // macOS 保留现状：window-all-closed 不退出、Cmd+Q 走 before-quit。
-  win.on('close', () => { if (process.platform !== 'darwin') browser?.dispose() })
+  win.on('close', e => {
+    // 2026-10-07：开了「关窗口缩到托盘」→ 只藏起来，程序在后台继续跑；第一次藏的时候说一声去哪找
+    if (!quitting && tray && process.platform !== 'darwin' && getSettings().closeToTray) {
+      e.preventDefault()
+      win?.hide()
+      if (browserShown) setBrowserVisible(false)
+      if (!trayHintShown) {
+        trayHintShown = true
+        notifier.notify({ title: '程序还在后台运行', body: '点右下角托盘图标可以打开；要退出就右键托盘图标点「退出」' })
+      }
+      return
+    }
+    if (process.platform !== 'darwin') browser?.dispose()
+  })
   if (process.env['ELECTRON_RENDERER_URL']) void win.loadURL(process.env['ELECTRON_RENDERER_URL'])
   else void win.loadFile(join(__dirname, '../renderer/index.html'))
 }
@@ -123,6 +174,7 @@ function push(evt: unknown): void {
   win?.webContents.send('evt:task:progress', evt)
   // R20：队列据此判断当前任务是否结束（完成/暂停/失败/卡住都放行下一个；验证码暂停按住）
   taskQueue.onEvent(evt)
+  if (t) notifyTaskEvent(t)
   if (t) {
     if (t.type === 'task:progress' && t.status === 'running') {
       taskRunning = true
@@ -287,8 +339,29 @@ app.whenReady().then(() => {
     enqueueTask,
     dequeueTask,
     kickQueue: () => taskQueue.kick(),
-    setBrowserVisible
+    setBrowserVisible,
+    followNow: () => followNow(true)
   })
+
+  // 2026-10-07 自动化：托盘一直在；每分钟看一眼该不该定时追更（错过了点开机补跑一次）
+  if (process.platform === 'win32') app.setAppUserModelId(app.isPackaged ? 'com.local.video-scraper' : process.execPath)
+  tray = createTray({
+    getWindow: () => win,
+    onFollowNow: () => {
+      const r = followNow(true)
+      if (r) notifier.notify(r.created ? { title: '开始追更', body: `给 ${r.created} 个作者建了追更任务，抓完会再告诉你` } : { title: '没有要追更的作者', body: '先在「作者收藏」里爬一次作者主页' })
+    },
+    onQuit: () => { quitting = true; app.quit() }
+  })
+  new AutoFollowTimer({
+    getSchedule: () => getSettings(),
+    getLastRun: () => loadAutomationState().lastFollowAt,
+    setLastRun: iso => saveAutomationState({ lastFollowAt: iso }),
+    run: async () => {
+      const r = followNow(false)
+      if (r?.created) notify({ title: '开始定时追更', body: `给 ${r.created} 个作者建了追更任务，抓完会再告诉你` })
+    }
+  }).start()
 
   // R18：本机 HTTP 口（127.0.0.1），百家号发布助手用它下「爬某作者主页 N 条」的任务；端口被占只打日志
   if (settings.bridgeEnabled !== false) {
@@ -370,6 +443,6 @@ ipcMain.on('platform:raw', async (_e, msg) => {
 ipcMain.handle('debug:rawLog', () => rawLog.slice(-60))
 
 // 退出前：停视频处理（ffmpeg）、销毁浏览器子窗口、关本机接口（见 shutdown.ts）
-app.on('before-quit', () => { onBeforeQuit({ processor, browser, bridge }); bridge = null })
+app.on('before-quit', () => { quitting = true; onBeforeQuit({ processor, browser, bridge }); bridge = null; tray?.destroy(); tray = null })
 
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit() })

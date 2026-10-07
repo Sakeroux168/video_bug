@@ -6,7 +6,9 @@ import { getSettings, saveSettings } from './settings'
 import { deleteVideoRows } from './videoDelete'
 import { scanFilesTreeAsync, deleteFileDir, deleteFileVideo, locateFileDir, locateVideoFile } from './fileManager'
 import { listAdapters, getAdapter } from './adapters'
-import type { LibraryExportResponse, LibraryQuery, ProcessOptions, VideoMark } from '../shared/types'
+import type { AutomationStatus, LibraryExportResponse, LibraryQuery, ProcessOptions, VideoMark } from '../shared/types'
+import { followAuthors, type AutoFollowResult } from './automation'
+import { loadAutomationState } from './automationState'
 import { exportLibraryVideos, listLibrary, listLibraryTasks, setVideoMark, setVideoNote, videoFileFor } from './library'
 import type { Scheduler } from './scheduler'
 import type { Downloader } from './downloader'
@@ -44,6 +46,8 @@ export interface IpcDeps {
   kickQueue: () => void
   /** 渲染层切换浏览器标签时通知主进程（主进程据此结合任务状态决定显示/小窗/隐藏） */
   setBrowserVisible: (v: boolean) => void
+  /** 2026-10-07 自动化：现在追更一次（和定时器、托盘菜单同一个入口） */
+  followNow: () => AutoFollowResult | null
 }
 
 export function registerIpc(deps: IpcDeps): void {
@@ -253,6 +257,12 @@ export function registerIpc(deps: IpcDeps): void {
   })
 
   handle('settings:get', () => getSettings())
+  // 自动化：设置页显示上次追更情况、现在有几个作者会被追更；「现在追更一次」
+  handle('automation:status', (): AutomationStatus => ({ ...loadAutomationState(), eligible: followAuthors(db).length }))
+  handle('automation:followNow', () => {
+    const r = deps.followNow()
+    return r ? { authors: r.authors, created: r.created, skipped: r.skipped } : null
+  })
   handle('settings:save', (_e, s: Parameters<typeof saveSettings>[0]) => {
     saveSettings(s)
     // I3: 保存后立即重建 Analyzer，下载参数热更新，无需重启程序

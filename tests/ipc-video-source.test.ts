@@ -77,7 +77,7 @@ function setup(): {
     getOrganizer: () => null,
     enqueueTask: () => {},
     setBrowserVisible: () => {},
-    processor: {} as never, dequeueTask: () => {}, kickQueue: () => {}
+    processor: {} as never, dequeueTask: () => {}, kickQueue: () => {}, followNow: () => null
   })
   const openHandler = mockElectron.handlers.get('video:source:open')!
   const listHandler = mockElectron.handlers.get('task:video:list')!

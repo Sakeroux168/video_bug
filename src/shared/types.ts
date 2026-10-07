@@ -242,6 +242,16 @@ export interface AppSettings {
   /** R18：本机 HTTP 口（给百家号发布助手等外部程序建抓取任务用）；只绑 127.0.0.1 */
   bridgeEnabled: boolean
   bridgePort: number
+  /** 2026-10-07 自动化：关窗口时缩到托盘、程序在后台继续跑（默认关：以前点 × 就是退出） */
+  closeToTray: boolean
+  /** 任务抓完、需要登录 / 验证时弹系统通知（窗口不在前台时才弹） */
+  notifyEnabled: boolean
+  /** 每天定时给爬过主页的作者追更 */
+  autoFollowEnabled: boolean
+  /** 几点追更，'HH:MM'（本机时间） */
+  autoFollowTime: string
+  /** 追更时每个作者最多抓几条 */
+  autoFollowCount: number
 }
 
 /** ASR 单个模型文件的状态（models.status() 的结果形状，跨进程用） */
@@ -319,3 +329,13 @@ export interface PlatformLoginStatus {
 export type CsvExportResult =
   | { ok: true; fileName: string; path: string }
   | { ok: false; error: string }
+
+/** 2026-10-07 自动化：设置页显示的定时追更状态 */
+export interface AutomationStatus {
+  /** 定时器上次跑的时间（手动「现在追更一次」不算） */
+  lastFollowAt: string | null
+  /** 上一次追更（定时或手动）的结果 */
+  lastResult: { at: string; manual: boolean; authors: number; created: number; skipped: number } | null
+  /** 现在有几个作者会被追更（爬过主页的） */
+  eligible: number
+}

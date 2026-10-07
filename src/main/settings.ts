@@ -31,7 +31,12 @@ const DEFAULTS: AppSettings = {
   organizeByOrientation: false,
   organizeByDuration: false,
   bridgeEnabled: true, // R18：本机 HTTP 口，百家号发布助手靠它下「爬某作者主页 N 条」的任务
-  bridgePort: 47321
+  bridgePort: 47321,
+  closeToTray: false,
+  notifyEnabled: true,
+  autoFollowEnabled: false,
+  autoFollowTime: '09:00',
+  autoFollowCount: 20
 }
 
 /** 升级前的老用户行为：四层全开。
