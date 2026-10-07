@@ -2,7 +2,7 @@ import { describe, it, expect } from 'vitest'
 import { render } from '@testing-library/react'
 import HelpPanel from '../../src/renderer/src/components/HelpPanel'
 
-// Task2（round15）：程序内置「使用说明」面板。纯静态展示，内容来源 docs/员工使用说明.md，
+// Task2（round15）：程序内置「使用说明」面板。纯静态展示，内容来源 docs/使用说明.md，
 // 但删掉「怎么拿到 exe」「SmartScreen 首次放行」两节（用户已经打开程序了，这两节没意义）。
 // 用整体 textContent 断言关键信息存在，避免因段落里同时含标签文本与正文文本导致
 // getByText 多重命中（同一短语既出现在小标题又出现在正文里）。
