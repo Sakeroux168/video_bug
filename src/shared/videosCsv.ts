@@ -1,5 +1,5 @@
 import { neutralizeCsvFormula } from './csvSafe'
-import type { VideoRow } from './types'
+import type { ExportVideoRow, VideoRow } from './types'
 
 /**
  * 视频数据导出表。员工要一份能交出去的表格：作者名、原视频标题、原视频链接、
@@ -57,7 +57,7 @@ function beijingDate(iso: string | null): string {
 }
 
 /** 视频行 → 导出行。platformLabel 把 douyin/kuaishou 转成中文显示名，未知平台回落原始名。 */
-export function toVideoExportRows(rows: VideoRow[], platformLabel: (name: string) => string): VideoExportRow[] {
+export function toVideoExportRows(rows: ExportVideoRow[], platformLabel: (name: string) => string): VideoExportRow[] {
   return rows.map(r => {
     const { likes, comments, collects, shares, plays } = readStats(r.stats)
     return {
@@ -119,7 +119,7 @@ function normPath(p: string): string {
  * 按路径判永远和磁盘上看到的一致。前缀后必须紧跟分隔符，
  * 否则「搞笑」会把「搞笑视频」也一起收走。
  */
-export function filterVideosUnder(rows: VideoRow[], downloadDir: string, segments: string[]): VideoRow[] {
+export function filterVideosUnder<T extends Pick<VideoRow, 'local_path'>>(rows: T[], downloadDir: string, segments: string[]): T[] {
   const prefix = normPath([downloadDir, ...segments].join('/'))
   return rows.filter(r => {
     if (!r.local_path) return false // 没下载的不算在内

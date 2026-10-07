@@ -6,13 +6,20 @@
  *
  * hints 的用途：部分接口响应的 content-type 不标准（不含 json），此时按 URL 子串兜底
  * 判断这条响应是否值得解析。抖音是 ['/aweme/', '/search/']，快手是 ['/graphql']。
+ *
+ * patterns（2026-10-07 性能 F11）：适配器的接口地址正则。给了就先按地址过滤——对不上的
+ * （埋点、评论、推荐……）只报一个地址（拦截日志里照样看得到「忽略」），不读内容、不解析；
+ * 以前每条都要在页面里解析、再序列化两次送到主进程，然后被丢掉。
  */
-export function buildInjectScript(hints: readonly string[]): string {
+export function buildInjectScript(hints: readonly string[], patterns?: readonly RegExp[]): string {
   const hintList = JSON.stringify([...hints])
+  const patternList = patterns ? JSON.stringify(patterns.map(r => [r.source, r.flags.replace(/[gy]/g, '')])) : 'null'
   return `(() => {
   if (window.__platformHookInstalled) return;
   window.__platformHookInstalled = true;
   const HINTS = ${hintList};
+  const PATTERNS = ${patternList} && ${patternList}.map(p => new RegExp(p[0], p[1]));
+  const wanted = url => !PATTERNS || PATTERNS.some(r => r.test(url));
   const post = (url, data) => {
     try { window.postMessage({ type: 'platform:raw', url, data }, '*') } catch (e) { /* ignore */ }
   };
@@ -21,7 +28,8 @@ export function buildInjectScript(hints: readonly string[]): string {
     return origFetch.apply(this, args).then(res => {
       try {
         const ct = res.headers.get('content-type') || '';
-        if (ct.includes('json')) {
+        if (ct.includes('json') && !wanted(res.url)) post(res.url, null);
+        else if (ct.includes('json')) {
           res.clone().text().then(txt => {
             try { post(res.url, JSON.parse(txt)) } catch (e) { /* ignore */ }
           }).catch(() => {});
@@ -41,6 +49,7 @@ export function buildInjectScript(hints: readonly string[]): string {
       try {
         const u = this.__platformUrl || '';
         const ct = this.getResponseHeader('content-type') || '';
+        if (!wanted(u)) { if (ct.includes('json')) post(u, null); return; }
         let txt = null;
         if (this.responseType === '' || this.responseType === 'text') txt = this.responseText;
         else if (this.responseType === 'json' && this.response != null) txt = JSON.stringify(this.response);

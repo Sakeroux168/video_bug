@@ -3,7 +3,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync, existsSync, readFileSync
 import { join } from 'path'
 import { tmpdir } from 'os'
 import {
-  buildNormalizationArgs, isGoodEnough, normalizeVideo, probeMedia, targetDimensions,
+  buildNormalizationArgs, isGoodEnough, normalizeVideo, probeMedia, targetDimensions, runFfmpegProcess,
   type MediaProbe, type VideoNormalizerDeps, type NormalizeVideoRequest, type NormalizeVideoResult
 } from '../src/main/videoNormalizer'
 import { VideoProcessor, scanVideoFiles, PROCESSED_DIR_NAME } from '../src/main/videoProcessor'
@@ -178,5 +178,50 @@ describe('③ 输出到「已处理」文件夹（原片不动）', () => {
     expect(readFileSync(join(tmp, 'mine.mp4'), 'utf8')).toBe('SRC'.repeat(1000))
     expect(readFileSync(a, 'utf8')).toBe('OUT'.repeat(500))
     expect(existsSync(join(tmp, 'a.original.mp4'))).toBe(false)
+  })
+})
+
+// 2026-10-07 性能 F8：以前每个文件状态一变就把整份快照（全部文件 + 日志）推给界面，几千个文件的文件夹
+// 重跑一遍（大多直接跳过）会在几分钟里连发几千次大快照，界面一直卡。现在最多每 250ms 推一次，
+// 开始 / 暂停 / 停止 / 完成这种阶段变化立刻推，最后一份一定是完整的结果。
+describe('⑤ 推给界面的次数有上限', () => {
+  let tmp: string
+  beforeEach(() => { tmp = mkdtempSync(join(tmpdir(), 'vp-emit-')) })
+  afterEach(() => { rmSync(tmp, { recursive: true, force: true }) })
+
+  it('300 个文件一路跳过：推送远少于文件数，最后一份是「完成」且 300 个都在', async () => {
+    for (let i = 0; i < 300; i++) writeFileSync(join(tmp, `v${i}.mp4`), 'x')
+    const states: Array<{ phase: string; total: number; skipped: number }> = []
+    const V = { width: 1080, height: 1920 }
+    const vp = new VideoProcessor({
+      normalize: async () => ({ status: 'skipped', target: V, source: V }),
+      onChange: st => states.push({ phase: st.phase, total: st.total, skipped: st.skipped })
+    })
+    vp.start(tmp, { mode: 'folder' })
+    await vi.waitFor(() => expect(vp.getState().phase).toBe('finished'))
+    await vi.waitFor(() => expect(states.at(-1)?.phase).toBe('finished'))
+    expect(states.length).toBeLessThan(60)
+    expect(states.at(-1)).toEqual({ phase: 'finished', total: 300, skipped: 300 })
+    expect(states[0].phase).toBe('running')
+  })
+})
+
+// 2026-10-07 性能 F12：ffmpeg 以前没有超时——坏文件、网络盘卡住时视频处理一直停在当前文件。
+// 现在按片长给时限（至少 2 分钟，片长 × 3），超时就结束 ffmpeg、这个文件算失败，接着处理下一个。
+describe('⑥ ffmpeg 有时限', () => {
+  it('转码时把时限传下去：至少 2 分钟，长视频按片长 × 3', async () => {
+    const d = deps(media({ width: 720, height: 1280, durationSec: 600 }))
+    await normalizeVideo({ inputPath: 'a.mp4', outputPath: 'o.mp4' }, d)
+    expect(vi.mocked(d.runFfmpeg).mock.calls[0][3]).toBe(1_800_000)
+    const short = deps(media({ width: 720, height: 1280, durationSec: 10 }))
+    await normalizeVideo({ inputPath: 'a.mp4', outputPath: 'o.mp4' }, short)
+    expect(vi.mocked(short.runFfmpeg).mock.calls[0][3]).toBe(120_000)
+  })
+
+  it('真的超时：进程被结束、报 ffmpeg_timeout', async () => {
+    const started = Date.now()
+    await expect(runFfmpegProcess(process.execPath, ['-e', 'setTimeout(() => {}, 20000)'], undefined, 300))
+      .rejects.toThrow('ffmpeg_timeout')
+    expect(Date.now() - started).toBeLessThan(5000)
   })
 })

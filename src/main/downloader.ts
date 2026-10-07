@@ -7,7 +7,7 @@ import { basename, extname, join } from 'path'
 import { execFile } from 'child_process'
 import { findBin } from './ffbin'
 import type { AppSettings, VideoRow, VideoStatus } from '../shared/types'
-import { clampDownloadSegments, ERROR } from '../shared/types'
+import { clampDownloadConcurrency, clampDownloadSegments, ERROR } from '../shared/types'
 import { classifyDownloadError, AddressPolicy } from './errors'
 import { safeFilename, ensureUniqueStem } from './filename'
 import { downloadCover } from './cover'
@@ -46,6 +46,21 @@ const STEM_EXTENSIONS = ['.mp4', '.original.mp4', '.jpg', '.jpeg', '.png', '.web
 function stemKey(dir: string, stem: string): string { return join(dir, stem).toLowerCase() }
 /** 每段最多尝试 3 次（首次 + 2 次重试）；不做无限重试。 */
 export const SEGMENT_MAX_ATTEMPTS = 3
+
+/** 2026-10-07 性能 F13：整条视频网络重试的等待——第 1 次 5 秒、第 2 次 15 秒（以前固定 5 秒） */
+export function networkRetryDelayMs(retry: number): number {
+  return 5000 * 3 ** Math.max(0, retry - 1)
+}
+
+/** 等 ms 毫秒；signal 取消时立刻结束 */
+function sleepAbortable(ms: number, signal: AbortSignal): Promise<void> {
+  if (ms <= 0 || signal.aborted) return Promise.resolve()
+  return new Promise(resolve => {
+    const t = setTimeout(done, ms)
+    function done(): void { clearTimeout(t); signal.removeEventListener('abort', done); resolve() }
+    signal.addEventListener('abort', done, { once: true })
+  })
+}
 
 interface ByteRange {
   start: number
@@ -117,6 +132,7 @@ export class Downloader {
   private listeners: Array<(e: DlEvent) => void> = []
   private fetching: Record<number, boolean> = {}
   private validator: ((file: string) => Promise<boolean>) | null
+  private segmentRetryBaseMs: number
   /** R20：无数据超时毫秒（测试可调小） */
   private idleTimeoutMs: number
   /** 会话级分段断点；只承诺同一次程序运行内暂停后继续，不跨重启。 */
@@ -130,11 +146,16 @@ export class Downloader {
     private db: DatabaseSync,
     private settings: DlSettings,
     private fetchImpl: typeof fetch = fetch,
-    opts?: { validator?: (file: string) => Promise<boolean>; idleTimeoutMs?: number; progressIntervalMs?: number }
+    opts?: {
+      validator?: (file: string) => Promise<boolean>; idleTimeoutMs?: number; progressIntervalMs?: number
+      /** 分段重试之间的基础等待（第 n 次等 base × 2^(n-1)），默认 500ms（2026-10-07 性能 F13） */
+      segmentRetryBaseMs?: number
+    }
   ) {
     // C1: 确保下载目录存在（recursive 幂等）；目录不可写时由下载错误分类兜底为 ERROR.DISK
     try { mkdirSync(this.settings.downloadDir, { recursive: true }) } catch { /* ignore */ }
     this.validator = opts?.validator ?? null
+    this.segmentRetryBaseMs = opts?.segmentRetryBaseMs ?? 500
     this.idleTimeoutMs = opts?.idleTimeoutMs ?? DOWNLOAD_IDLE_TIMEOUT_MS
     this.progressIntervalMs = opts?.progressIntervalMs ?? PROGRESS_INTERVAL_MS
   }
@@ -474,6 +495,11 @@ export class Downloader {
       armIdle()
       try {
         const response = await this.fetchImpl(url, { signal, headers: { ...headers, Range: requestRange } })
+        // F13：平台明确拒绝（403 / 429）→ 这一段不再重试，交给外层按「平台拒绝 / 链接过期」处理
+        if (response.status === 403 || response.status === 429) {
+          await response.body?.cancel().catch(() => {})
+          throw Object.assign(new Error(`http_${response.status}`), { noRetry: true })
+        }
         if (blockedMediaType(response)) {
           await response.body?.cancel().catch(() => {})
           throw new Error('bad_mp4')
@@ -504,10 +530,13 @@ export class Downloader {
         const failure = idle.signal.aborted
           ? new Error(`download_idle_timeout：${Math.round(this.idleTimeoutMs / 1000)} 秒没收到数据`)
           : err
-        if (attempt === SEGMENT_MAX_ATTEMPTS) throw failure
+        if (attempt === SEGMENT_MAX_ATTEMPTS || (err as { noRetry?: boolean })?.noRetry) throw failure
       } finally {
         if (idleTimer !== null) clearTimeout(idleTimer)
       }
+      // F13：别马上重试（CDN 限流时一口气打几轮只会更糟）：0.5s、1s……
+      await sleepAbortable(this.segmentRetryBaseMs * 2 ** (attempt - 1), AbortSignal.any([aborter.signal, group.signal]))
+      if (aborter.signal.aborted || group.signal.aborted) throw new Error('aborted')
     }
   }
 
@@ -591,7 +620,7 @@ export class Downloader {
   }
 
   private drain(): void {
-    const concurrency = this.settings.downloadConcurrency || 3
+    const concurrency = clampDownloadConcurrency(this.settings.downloadConcurrency)
     while (this.active < concurrency && this.queue.length > 0 && !this.paused) {
       const id = this.queue.shift()!
       void this.runOne(id).finally(() => {
@@ -797,7 +826,7 @@ export class Downloader {
       if (retry <= 2 && code === ERROR.NETWORK) {
         this.db.prepare("UPDATE videos SET status='pending', retry_count=?, error=NULL, local_path=NULL, original_path=NULL, normalization_error=NULL WHERE id=?").run(retry, id)
         // 回退定时器入 map，cancel(ids) 可 clearTimeout 防止已取消项被重新下载
-        const t = setTimeout(() => { this.retryTimers.delete(id); this.enqueue(id) }, 5000)
+        const t = setTimeout(() => { this.retryTimers.delete(id); this.enqueue(id) }, networkRetryDelayMs(retry))
         this.retryTimers.set(id, t)
       } else {
         this.db.prepare("UPDATE videos SET status='failed', error=?, retry_count=?, local_path=NULL, original_path=NULL, normalization_error=NULL WHERE id=?").run(code, retry, id)

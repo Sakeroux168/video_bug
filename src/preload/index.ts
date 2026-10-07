@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
-import type { CreateTaskInput, AppSettings, TaskRow, VideoRow, AuthorRow, TaskStats, AsrStatus, AsrProgress, FilesTree, FileDeleteResult, TaskProgressEvent, DownloadProgress, ProcessOptions, LibraryQuery, LibraryRow, LibraryExportOptions, LibraryExportResponse, AutomationStatus, VideoMark, GlobalStats, RecentDownload, ProcessState } from '../shared/types'
+import type { ExportVideoRow, CreateTaskInput, AppSettings, TaskRow, VideoRow, AuthorRow, TaskStats, AsrStatus, AsrProgress, FilesTree, FileDeleteResult, TaskProgressEvent, DownloadProgress, ProcessOptions, LibraryQuery, LibraryRow, LibraryExportOptions, LibraryExportResponse, AutomationStatus, VideoMark, GlobalStats, RecentDownload, ProcessState } from '../shared/types'
 
 const api = {
   exportCsv: (input: { csv: string; fileName: string }): Promise<import('../shared/types').CsvExportResult> => ipcRenderer.invoke('csv:export', input),
@@ -41,7 +41,7 @@ const api = {
   deleteAuthors: (ids: number[]): Promise<boolean> => ipcRenderer.invoke('authors:delete', ids),
   setAuthorsAutoFollow: (ids: number[], on: boolean): Promise<boolean> => ipcRenderer.invoke('authors:autoFollow', ids, on),
   getGlobalStats: (): Promise<GlobalStats> => ipcRenderer.invoke('stats:global'),
-  listDownloadedVideos: (): Promise<VideoRow[]> => ipcRenderer.invoke('videos:downloaded'),
+  listDownloadedVideos: (): Promise<ExportVideoRow[]> => ipcRenderer.invoke('videos:downloaded'),
   getRecentDownloads: (limit?: number): Promise<RecentDownload[]> => ipcRenderer.invoke('stats:recent', limit),
   writeClipboard: (text: string): Promise<void> => ipcRenderer.invoke('clipboard:write', text),
   openVideoSource: (id: number): Promise<{ ok: boolean; url?: string; error?: string }> => ipcRenderer.invoke('video:source:open', id),

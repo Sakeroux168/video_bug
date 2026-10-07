@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import { api } from '../api'
 import type { AppSettings, AsrStatus, AsrProgress, AutomationStatus } from '../../../shared/types'
-import { clampDownloadSegments, clampStuckTimeoutMin } from '../../../shared/types'
+import { clampDownloadConcurrency, clampDownloadSegments, clampStuckTimeoutMin } from '../../../shared/types'
 import { Card, btn, btnPrimary, inputCls } from './ui'
 
 /** 字节数格式化成可读体积 */
@@ -98,9 +98,10 @@ export default function SettingsPanel({ onDirtyChange }: { onDirtyChange?: (dirt
     const stuck = clampStuckTimeoutMin(s.stuckTimeoutMin)
     const segments = clampDownloadSegments(s.downloadSegments)
     const followCount = clampFollowCount(s.autoFollowCount)
-    const toSave = stuck === s.stuckTimeoutMin && segments === s.downloadSegments && followCount === s.autoFollowCount
+    const concurrency = clampDownloadConcurrency(s.downloadConcurrency)
+    const toSave = stuck === s.stuckTimeoutMin && segments === s.downloadSegments && followCount === s.autoFollowCount && concurrency === s.downloadConcurrency
       ? s
-      : { ...s, stuckTimeoutMin: stuck, downloadSegments: segments, autoFollowCount: followCount }
+      : { ...s, stuckTimeoutMin: stuck, downloadSegments: segments, autoFollowCount: followCount, downloadConcurrency: concurrency }
     if (toSave !== s) setS(toSave)
     await api.saveSettings(toSave)
     setSaved(JSON.stringify(toSave))

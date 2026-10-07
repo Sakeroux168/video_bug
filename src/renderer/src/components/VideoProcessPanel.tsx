@@ -55,6 +55,17 @@ const PHASE_TEXT: Record<ProcessState['phase'], string> = {
  * initialDir：从文件管理「统一分辨率」跳过来时带的文件夹。
  */
 // 和输入框有关的错误（文件夹不存在）就近显示在框下面，不再弹提示（界面 P3）；notify 参数留着兼容调用方
+/** 2026-10-07 性能 F8：文件很多时最多画这么多行（几千行每次推送都重画会卡） */
+const ROW_LIMIT = 200
+
+/** 要画的行：不多就全画；多了就失败的、正在处理的排前面，其余按原顺序，截到 ROW_LIMIT */
+function visibleItems(items: ProcessItem[]): ProcessItem[] {
+  if (items.length <= ROW_LIMIT) return items
+  const first = items.filter(i => i.status === 'failed' || i.status === 'processing')
+  const rest = items.filter(i => i.status !== 'failed' && i.status !== 'processing')
+  return [...first, ...rest].slice(0, ROW_LIMIT)
+}
+
 export default function VideoProcessPanel({ initialDir }: { notify?: (text: string) => void; initialDir?: string }): React.ReactElement {
   const [s, setS] = useState<ProcessState>(EMPTY)
   const [dir, setDir] = useState(initialDir ?? '')
@@ -210,6 +221,9 @@ export default function VideoProcessPanel({ initialDir }: { notify?: (text: stri
 
       {s.items.length > 0 && (
         <Card title={`文件（${s.items.length}）`}>
+          {s.items.length > ROW_LIMIT && (
+            <p className="mb-2 text-xs text-slate-400">只显示 {ROW_LIMIT} 条（失败的、正在处理的排在前面），一共 {s.items.length} 条；全部结果看上面的汇总和日志。</p>
+          )}
           <div className="max-h-80 overflow-auto">
             <table className="w-full text-left text-xs">
               <thead>
@@ -223,7 +237,7 @@ export default function VideoProcessPanel({ initialDir }: { notify?: (text: stri
                 </tr>
               </thead>
               <tbody>
-                {s.items.map(item => {
+                {visibleItems(s.items).map(item => {
                   const bigger = item.sizeBefore !== undefined && item.sizeAfter !== undefined && item.sizeAfter > item.sizeBefore
                   return (
                     <tr key={item.path} className="border-b border-slate-100">

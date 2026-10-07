@@ -25,8 +25,11 @@ export const PROCESSED_DIR_NAME = '已处理'
 
 export interface VideoProcessorDeps {
   normalize?: (request: NormalizeVideoRequest) => Promise<NormalizeVideoResult>
-  /** 状态每变一次推一次完整快照（渲染层据此刷新，没有增量协议要维护） */
+  /** 状态变了推一份完整快照（渲染层据此刷新，没有增量协议要维护）。
+   *  2026-10-07 性能 F8：最多每 emitIntervalMs 推一次（阶段变化立刻推），最后一份一定是最新的 */
   onChange?: (state: ProcessState) => void
+  /** 两次推送的最短间隔，默认 250ms */
+  emitIntervalMs?: number
   /** 某个文件原地替换成功后回调：主进程用它把 .original.mp4 路径与新尺寸回写 videos 行，
    *  之后归档移动 / 程序内删除仍能把备份成对带走，不留孤儿文件。处理器本身不碰数据库。 */
   onReplaced?: (info: { path: string; backup: string; target: { width: number; height: number } }) => void
@@ -182,7 +185,26 @@ export class VideoProcessor {
     this.emit()
   }
 
+  private lastEmitAt = 0
+  private lastEmittedPhase: ProcessPhase | null = null
+  private emitTimer: ReturnType<typeof setTimeout> | null = null
+
+  /** 推快照：阶段变了立刻推；否则离上次不到 emitIntervalMs 就攒着，到点推一份最新的 */
   private emit(): void {
+    if (!this.deps.onChange) return
+    const interval = this.deps.emitIntervalMs ?? 250
+    const wait = this.lastEmitAt + interval - Date.now()
+    if (this.phase !== this.lastEmittedPhase || wait <= 0) {
+      this.flushEmit()
+      return
+    }
+    if (!this.emitTimer) this.emitTimer = setTimeout(() => this.flushEmit(), wait)
+  }
+
+  private flushEmit(): void {
+    if (this.emitTimer) { clearTimeout(this.emitTimer); this.emitTimer = null }
+    this.lastEmitAt = Date.now()
+    this.lastEmittedPhase = this.phase
     this.deps.onChange?.(this.getState())
   }
 

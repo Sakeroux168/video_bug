@@ -42,7 +42,8 @@ function fakeNormalize(over: Partial<Record<string, Normalize>> = {}): Normalize
 function make(normalize: Normalize): { vp: VideoProcessor; states: ProcessState[]; replaced: Array<{ path: string; backup: string; target: { width: number; height: number } }> } {
   const states: ProcessState[] = []
   const replaced: Array<{ path: string; backup: string; target: { width: number; height: number } }> = []
-  const vp = new VideoProcessor({ normalize, onChange: s => states.push(structuredClone(s)), onReplaced: info => replaced.push(info) })
+  // 2026-10-07 性能 F8 起推送默认节流（最多每 250ms 一次）；这里测的是每一步的状态，所以关掉节流（间隔 0）
+  const vp = new VideoProcessor({ normalize, emitIntervalMs: 0, onChange: s => states.push(structuredClone(s)), onReplaced: info => replaced.push(info) })
   return { vp, states, replaced }
 }
 

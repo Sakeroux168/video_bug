@@ -129,7 +129,8 @@ export async function extractAudio(
   if (maxSec > 0) args.push('-t', String(maxSec))
 
   await audioSem.run(() => atomicOutput(dest, tmp =>
-    execFileAsync(ffmpeg, [...args, '-f', 'wav', '-y', tmp])
+    // 2026-10-07 性能 F12：坏文件 / 网络盘卡住时不让 ffmpeg 一直占着（以前归档会永远停在这里）
+    execFileAsync(ffmpeg, [...args, '-f', 'wav', '-y', tmp], { timeout: 180_000, windowsHide: true })
   ))
 }
 
@@ -155,7 +156,7 @@ async function probeDuration(ffmpeg: string, src: string): Promise<number> {
       '-v', 'error', '-print_format', 'json',
       '-show_entries', 'format=duration',
       src
-    ])
+    ], { timeout: 30_000, windowsHide: true })
     const data = JSON.parse(stdout) as { format?: { duration?: string } }
     const dur = Number(data.format?.duration ?? 0)
     return Number.isFinite(dur) && dur > 0 ? dur : 0
@@ -203,7 +204,7 @@ export async function extractFrames(
         '-f', 'image2',
         '-y',
         out
-      ]))
+      ], { timeout: 60_000, windowsHide: true }))
       results.push(out)
     } catch (e) {
       // 单帧失败不影响整体：少一帧模型照样能判断内容。整批失败才是真问题。

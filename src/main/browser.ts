@@ -123,7 +123,7 @@ export class VideoBrowser {
 
   private createWindow(adapter: PlatformAdapter, previous: { bounds: Rectangle; visible: boolean } | null): void {
     this.current = adapter
-    this.inject = buildInjectScript(adapter.rawUrlHints)
+    this.inject = buildInjectScript(adapter.rawUrlHints, adapter.apiUrlPatterns)
     this.forceClose = false
     // 新窗口从未显示过：everShown 必须跟着复位，否则 setVisible(true) 只会调 showInactive()，
     // 而它对从未显示过的窗口是空操作 —— 表现为「切平台后浏览器窗口再也打不开」。
