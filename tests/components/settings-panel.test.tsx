@@ -43,7 +43,8 @@ const SETTING_LABELS: Record<keyof AppSettings, string> = {
   notifyEnabled: '抓完、需要登录或验证时弹系统通知',
   autoFollowEnabled: '每天定时追更',
   autoFollowTime: '追更时间',
-  autoFollowCount: '每个作者最多抓'
+  autoFollowCount: '每个作者最多抓',
+  autoFollowScope: '追更哪些作者'
 }
 
 describe('SettingsPanel 消息的成功/失败配色', () => {

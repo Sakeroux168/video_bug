@@ -39,6 +39,7 @@ const api = {
   listAuthors: (): Promise<AuthorRow[]> => ipcRenderer.invoke('authors:list'),
   updateAuthorCategory: (id: number, category: string): Promise<boolean> => ipcRenderer.invoke('authors:updateCategory', id, category),
   deleteAuthors: (ids: number[]): Promise<boolean> => ipcRenderer.invoke('authors:delete', ids),
+  setAuthorsAutoFollow: (ids: number[], on: boolean): Promise<boolean> => ipcRenderer.invoke('authors:autoFollow', ids, on),
   getGlobalStats: (): Promise<GlobalStats> => ipcRenderer.invoke('stats:global'),
   listDownloadedVideos: (): Promise<VideoRow[]> => ipcRenderer.invoke('videos:downloaded'),
   getRecentDownloads: (limit?: number): Promise<RecentDownload[]> => ipcRenderer.invoke('stats:recent', limit),

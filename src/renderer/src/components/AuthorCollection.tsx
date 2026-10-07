@@ -246,6 +246,14 @@ export default function AuthorCollection({ notify }: { notify: Notify }) {
     notify(`已建 ${created} 个任务${tail}${created > 0 ? '，会按顺序一个个爬，可在任务列表查看进度' : ''}`, { duration: 10000 })
   }
 
+  /** 2026-10-07：把勾选的作者加入 / 移出定时追更名单（设置里选「只追标了的作者」时才用这个名单） */
+  async function setAutoFollow(on: boolean): Promise<void> {
+    const ids = selectedRows.map(a => a.id)
+    await api.setAuthorsAutoFollow(ids, on)
+    setAuthors(prev => prev.map(a => (ids.includes(a.id) ? { ...a, auto_follow: on ? 1 : null } : a)))
+    notify(on ? `已把 ${ids.length} 个作者加入定时追更` : `已把 ${ids.length} 个作者移出定时追更`)
+  }
+
   async function saveCategory(a: AuthorRow): Promise<void> {
     const v = editVal.trim()
     if (v !== (a.category ?? '')) {
@@ -386,6 +394,12 @@ export default function AuthorCollection({ notify }: { notify: Notify }) {
           >
             只复制链接
           </button>
+        )}
+        {selectedRows.length > 0 && (
+          <>
+            <button className="rounded-md px-2 py-1 text-slate-600 hover:bg-slate-100" onClick={() => void setAutoFollow(true)}>加入定时追更</button>
+            <button className="rounded-md px-2 py-1 text-slate-600 hover:bg-slate-100" onClick={() => void setAutoFollow(false)}>移出定时追更</button>
+          </>
         )}
         {selectedRows.length > 0 && (
           <button
@@ -631,6 +645,9 @@ export default function AuthorCollection({ notify }: { notify: Notify }) {
                     {a.nickname}
                     {/* R16：导入的作者需要校验名称与链接是否对得上。
                         verify_state 为 null = 抓取时自动收录，数据来自真实接口，不显示任何标识。 */}
+                    {a.auto_follow === 1 && (
+                      <span className="ml-1.5 rounded bg-brand-50 px-1 py-0.5 text-[10px] text-brand-700" title="设置里选了「只追标了的作者」时，每天到点会追更他">定时追更</span>
+                    )}
                     {a.verify_state === 'pending' && (
                       <span className="ml-1.5 rounded bg-amber-50 px-1 py-0.5 text-[10px] text-amber-600" title="导入的作者尚未核实，首次「爬主页」时会自动校验">待校验</span>
                     )}

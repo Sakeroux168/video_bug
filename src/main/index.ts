@@ -75,7 +75,7 @@ function notifyTaskEvent(evt: { type?: string; taskId?: number; fetched?: number
 function followNow(manual: boolean): AutoFollowResult | null {
   if (!dbRef) return null
   const count = Math.min(200, Math.max(1, Math.floor(Number(getSettings().autoFollowCount) || 20)))
-  const r = runAutoFollow(dbRef, enqueueTask, { count })
+  const r = runAutoFollow(dbRef, enqueueTask, { count, scope: getSettings().autoFollowScope === 'picked' ? 'picked' : 'all' })
   followTracker.start(r.taskIds)
   saveAutomationState({ lastResult: { at: new Date().toISOString(), manual, authors: r.authors, created: r.created, skipped: r.skipped } })
   return r

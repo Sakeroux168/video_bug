@@ -36,7 +36,8 @@ const DEFAULTS: AppSettings = {
   notifyEnabled: true,
   autoFollowEnabled: false,
   autoFollowTime: '09:00',
-  autoFollowCount: 20
+  autoFollowCount: 20,
+  autoFollowScope: 'all'
 }
 
 /** 升级前的老用户行为：四层全开。
