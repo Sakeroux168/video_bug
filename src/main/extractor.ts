@@ -64,8 +64,19 @@ export function matchDuration(durSec: number, d: DurationFilter, minSec?: number
 export function filterVideos(items: VideoItem[], filters: Filters, now: number = Date.now() / 1000): VideoItem[] {
   return items.filter(i =>
     matchTimeRange(i.publishTime, filters.timeRange, filters.startDate, filters.endDate, now) &&
-    matchDuration(i.durationSec, filters.duration, filters.durationMinSec, filters.durationMaxSec)
+    matchDuration(i.durationSec, filters.duration, filters.durationMinSec, filters.durationMaxSec) &&
+    meetsThreshold(i.likes, i.collects, filters)
   )
+}
+
+/**
+ * 只抓热门（2026-10-07）：点赞 / 收藏门槛。设了收藏门槛而这条不知道收藏数 → 算没达到
+ * （宁可少抓，不能把不知道的当成达标）。likes / collects 传 null 或 undefined 表示不知道。
+ */
+export function meetsThreshold(likes: number | null | undefined, collects: number | null | undefined, filters: Pick<Filters, 'minLikes' | 'minCollects'>): boolean {
+  if (filters.minLikes && filters.minLikes > 0 && !(typeof likes === 'number' && likes >= filters.minLikes)) return false
+  if (filters.minCollects && filters.minCollects > 0 && !(typeof collects === 'number' && collects >= filters.minCollects)) return false
+  return true
 }
 
 export function dedupeVideos(items: VideoItem[], seen: Set<string>): VideoItem[] {

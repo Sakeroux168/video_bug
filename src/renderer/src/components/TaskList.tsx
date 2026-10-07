@@ -62,7 +62,7 @@ const rowBar = (status: string): string => `border-l-2 ${ROW_BAR[status] ?? 'bor
 
 const PAGE_SIZE = 50
 
-type SortKey = 'title' | 'author' | 'duration' | 'publish_time' | 'likes' | 'comments'
+type SortKey = 'title' | 'author' | 'duration' | 'publish_time' | 'likes' | 'comments' | 'collects'
 
 interface Derived {
   filtered: VideoRow[]
@@ -88,6 +88,8 @@ const btnSmall = 'whitespace-nowrap rounded-md border border-slate-300 px-2 py-1
 interface VideoStats {
   likes: number
   comments: number | null
+  /** 2026-10-07 补数据：收藏数，平台不给就是 null */
+  collects: number | null
 }
 
 function getVideoStats(v: VideoRow): VideoStats {
@@ -97,10 +99,11 @@ function getVideoStats(v: VideoRow): VideoStats {
       likes: typeof o.likes === 'number' && Number.isFinite(o.likes) ? o.likes : 0,
       comments: typeof o.comments === 'number' && Number.isInteger(o.comments) && o.comments >= 0
         ? o.comments
-        : null
+        : null,
+      collects: typeof o.collects === 'number' && Number.isFinite(o.collects) && o.collects >= 0 ? o.collects : null
     }
   } catch {
-    return { likes: 0, comments: null }
+    return { likes: 0, comments: null, collects: null }
   }
 }
 
@@ -355,9 +358,10 @@ export default function TaskList({ notify, refreshVersion = 0 }: { notify: Notif
             case 'duration': r = a.duration - b.duration; break
             case 'publish_time': r = (a.publish_time ?? '').localeCompare(b.publish_time ?? ''); break
             case 'likes': r = getVideoStats(a).likes - getVideoStats(b).likes; break
-            case 'comments': {
-              const ac = getVideoStats(a).comments
-              const bc = getVideoStats(b).comments
+            case 'comments':
+            case 'collects': {
+              const ac = getVideoStats(a)[srt.key]
+              const bc = getVideoStats(b)[srt.key]
               if (ac === null) return bc === null ? 0 : 1
               if (bc === null) return -1
               r = ac - bc
@@ -798,6 +802,7 @@ function TaskVideoTable({
               {sortHeader('publish_time', '发布')}
               {sortHeader('likes', '点赞')}
               {sortHeader('comments', '评论')}
+              {sortHeader('collects', '收藏')}
               <th className="whitespace-nowrap py-1 px-1 font-normal">分辨率</th>
               <th className="whitespace-nowrap py-1 px-1 font-normal">大小</th>
               <th className="w-28 py-1 px-1 font-normal">状态</th>
@@ -841,6 +846,9 @@ function TaskVideoTable({
                   <td className="whitespace-nowrap py-1 pr-2 tabular-nums">{formatCount(videoStats.likes)}</td>
                   <td data-stat="comments" className="whitespace-nowrap py-1 pr-2 tabular-nums">
                     {videoStats.comments === null ? '—' : formatCount(videoStats.comments)}
+                  </td>
+                  <td data-stat="collects" className="whitespace-nowrap py-1 pr-2 tabular-nums">
+                    {videoStats.collects === null ? '—' : formatCount(videoStats.collects)}
                   </td>
                   <td data-col="resolution" className="whitespace-nowrap py-1 pr-2 tabular-nums text-slate-500">
                     {v.video_width > 0 && v.video_height > 0 ? `${v.video_width}×${v.video_height}` : '—'}

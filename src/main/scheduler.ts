@@ -2,9 +2,9 @@ import type { DatabaseSync } from 'node:sqlite'
 import type { PlatformAdapter, ListStub, VideoItem, FastDetailOutcome } from './adapters/types'
 import type { AppSettings, TaskRow, TaskStatus, Filters } from '../shared/types'
 import { ERROR, clampStuckTimeoutMin } from '../shared/types'
-import { filterVideos, dedupeVideos, extractCategory, chinaDayStartSec, chinaDayEndSec } from './extractor'
+import { filterVideos, dedupeVideos, extractCategory, chinaDayStartSec, chinaDayEndSec, meetsThreshold } from './extractor'
 import { isRiskSignal } from './errors'
-import { upsertAuthor, setAuthorVerify, refreshSeenVideo, inTransaction } from './db'
+import { upsertAuthor, setAuthorVerify, refreshSeenVideo, inTransaction, statsJson } from './db'
 import { looseNicknameMatch } from './nicknameMatch'
 import type { Analyzer } from './analyzer'
 import type { Downloader } from './downloader'
@@ -161,6 +161,9 @@ export class Scheduler {
   /** R20：第几次 run。看门狗/强制暂停会把它 +1，让卡在半路的旧 run 醒来后认出「我已经被接管了」，
    *  不再写库、不再发事件、不再动调度器状态（否则会把下一个任务的状态搅乱）。 */
   private runGen = 0
+  /** 只抓热门：这次 run 里因为点赞 / 收藏没达到门槛被跳过的作品（去重计数，任务结束时告诉用户） */
+  private thresholdSkippedIds = new Set<string>()
+  get thresholdSkipped(): number { return this.thresholdSkippedIds.size }
   /** R20：看门狗计时器（run 开始即启动，run 收尾/强制停止时清掉） */
   private watchdog: ReturnType<typeof setInterval> | null = null
   /** R20：距上次「有进展」过了几次看门狗检查（抓到一批数据 / 滚完一轮 / 页面加载完都会清零） */
@@ -352,6 +355,7 @@ export class Scheduler {
       this.verifyTick = 0
       this.lastFetchedAt = Date.now() // T4/R11：X 秒无新视频计时的起点
       this.pastRange = false // R18：每次 run 重置
+      this.thresholdSkippedIds = new Set<string>()
       this.skippingNewerLogged = false
       this.scrolledIds = new Set<string>()
       this.abortReason = null
@@ -548,6 +552,10 @@ export class Scheduler {
       } else {
         db.prepare("UPDATE tasks SET status='done', finished_at=? WHERE id=?").run(new Date().toISOString(), taskId)
         this.deps.emit({ type: 'task:done', taskId, fetched: this.fetched })
+        // 只抓热门：门槛设高了可能抓不满，说清楚不是软件没抓到
+        if (this.thresholdSkipped > 0) {
+          this.deps.emit({ type: 'task:notice', text: `有 ${this.thresholdSkipped} 条没达到点赞 / 收藏门槛，已跳过（共抓到 ${this.fetched} 条）` })
+        }
         // I-1：任务以 done 结束时做一次最终归档 flush。小任务可能在去抖窗口内就结束，
         // 最后一批 video:done 设的 timer 会被 finally 的 clearOrganizeTimer 清掉 → 该批视频永不自动归档。
         // organizePending 只处理 organize_state='pending' 的作者，幂等；organizer 缺失时无副作用。
@@ -686,7 +694,8 @@ export class Scheduler {
 
   private listCandidateTarget(target: number): number {
     const filters = this.filters
-    if (!filters || (filters.timeRange === 'all' && filters.duration === 'all')) return target
+    const hasThreshold = (filters?.minLikes ?? 0) > 0 || (filters?.minCollects ?? 0) > 0
+    if (!filters || (filters.timeRange === 'all' && filters.duration === 'all' && !hasThreshold)) return target
     return Math.min(1000, Math.max(target * 3, target + 20))
   }
 
@@ -695,6 +704,12 @@ export class Scheduler {
     let added = 0
     for (const stub of result.stubs) {
       if (this.fetched + this.listStubs.size >= limit) break
+      // 只抓热门：卡片上已经知道点赞 / 收藏没达到门槛的，不进候选（不用打开详情页，也少一次被风控的机会）；
+      // 卡片上不知道的留到详情阶段再判
+      if (this.filters && !meetsThreshold(stub.likes ?? Infinity, stub.collects ?? Infinity, this.filters)) {
+        this.thresholdSkippedIds.add(stub.noteId)
+        continue
+      }
       if (!this.seen.has(stub.noteId) && !this.listStubs.has(stub.noteId)) {
         this.listStubs.set(stub.noteId, stub)
         added++
@@ -1067,6 +1082,8 @@ export class Scheduler {
         return { items: items.length, kept: 0 }
       }
     }
+    // 只抓热门：记下没达到门槛被筛掉的（库里已有的不算），任务结束时告诉用户
+    for (const i of items) if (!this.seen.has(i.awemeId) && !meetsThreshold(i.likes, i.collects, filters)) this.thresholdSkippedIds.add(i.awemeId)
     const kept = dedupeVideos(filterVideos(items, filters), this.seen)
     // R20 复查：作者主页按日期段抓——这一批里有没见过的作品就说明页面确实往下翻了
     const freshIds = authorRange ? items.filter(i => !this.scrolledIds.has(i.awemeId)) : items
@@ -1125,7 +1142,7 @@ export class Scheduler {
               "INSERT OR IGNORE INTO videos (platform,task_id,aweme_id,title,play_addr,source_url,cover_url,video_width,video_height,duration,publish_time,stats,status,ai_verdict,fetched_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,'filtered','filtered',?)"
             ).run(adapter.name, this.taskId, item.awemeId, item.title, item.playUrl,
                  item.sourceUrl || null, item.coverUrl || null, item.width, item.height, item.durationSec,
-                 new Date(item.publishTime * 1000).toISOString(), JSON.stringify({ likes: item.likes, comments: item.comments }),
+                 new Date(item.publishTime * 1000).toISOString(), statsJson(item),
                  new Date().toISOString())
             if (insertedId.changes > 0) {
               this.fetched++
@@ -1151,7 +1168,7 @@ export class Scheduler {
            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`
         ).run(adapter.name, this.taskId, item.awemeId, item.title, author.id, item.playUrl,
              item.sourceUrl || null, item.coverUrl || null, item.width, item.height, item.durationSec,
-             new Date(item.publishTime * 1000).toISOString(), JSON.stringify({ likes: item.likes, comments: item.comments }),
+             new Date(item.publishTime * 1000).toISOString(), statsJson(item),
              status, 'pass', new Date().toISOString())
         if (r.changes > 0) {
           if (!author.created) db.prepare('UPDATE authors SET video_count = video_count + 1 WHERE id = ?').run(author.id)

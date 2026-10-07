@@ -325,11 +325,25 @@ export function listAuthors(db: DatabaseSync, platform?: string): AuthorRow[] {
  *    以前重新爬会被去重跳过，失败的视频永远拿不到新地址
  *  - 这次没拿到地址（如小红书列表页只有卡片）就不动地址
  */
+/**
+ * 入库时的 stats JSON：点赞、评论，加上 2026-10-07 补的收藏 / 分享 / 播放。
+ * 平台不给的字段不写（评论沿用以前的约定：null = 不知道）。
+ */
+export function statsJson(item: VideoItem): string {
+  return JSON.stringify({
+    likes: item.likes, comments: item.comments,
+    collects: item.collects, shares: item.shares, plays: item.plays
+  })
+}
+
 export function refreshSeenVideo(db: DatabaseSync, platform: string, item: VideoItem): void {
-  const patch: Record<string, number> = {}
-  if (typeof item.likes === 'number') patch.likes = item.likes
-  if (typeof item.comments === 'number') patch.comments = item.comments
+  const patch: Record<string, number | string> = {}
+  for (const k of ['likes', 'comments', 'collects', 'shares', 'plays'] as const) {
+    const v = item[k]
+    if (typeof v === 'number') patch[k] = v
+  }
   if (Object.keys(patch).length > 0) {
+    patch.updatedAt = new Date().toISOString() // 互动数是什么时候的（选题看最新数据）
     db.prepare('UPDATE videos SET stats = json_patch(stats, ?) WHERE platform = ? AND aweme_id = ? AND json_valid(stats)')
       .run(JSON.stringify(patch), platform, item.awemeId)
   }
@@ -356,7 +370,7 @@ export function insertVideos(db: DatabaseSync, items: VideoItem[], taskId: numbe
       const info = stmt.run(
         platform, taskId, it.awemeId, it.title, authorId, it.playUrl,
         it.sourceUrl || null, it.coverUrl || null, it.width || 0, it.height || 0, it.durationSec,
-        new Date(it.publishTime * 1000).toISOString(), JSON.stringify({ likes: it.likes, comments: it.comments }), now
+        new Date(it.publishTime * 1000).toISOString(), statsJson(it), now
       )
       if (info.changes > 0) {
         inserted++

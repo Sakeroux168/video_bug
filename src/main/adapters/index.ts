@@ -22,6 +22,7 @@ export interface PlatformInfo {
   /** false 的平台只在「内置浏览器」页出现（登录/抓包用），不进建任务与导入作者的下拉框 */
   taskReady: boolean
   supportedTaskTypes?: PlatformAdapter['supportedTaskTypes']
+  interactions?: PlatformAdapter['interactions']
 }
 
 export function listAdapters(): PlatformInfo[] {
@@ -30,6 +31,7 @@ export function listAdapters(): PlatformInfo[] {
     displayName: a.displayName,
     authorInputPlaceholder: a.authorInputPlaceholder,
     taskReady: a.taskReady,
-    supportedTaskTypes: a.supportedTaskTypes
+    supportedTaskTypes: a.supportedTaskTypes,
+    interactions: a.interactions
   }))
 }

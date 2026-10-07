@@ -3,7 +3,7 @@ import type { VideoRow } from '../../../shared/types'
 
 /**
  * 视频数据导出表。员工要一份能交出去的表格：作者名、原视频标题、原视频链接、
- * 点赞、评论，外加平台、时长、本地文件名。
+ * 点赞、评论、收藏、分享、播放、发布时间，外加平台、时长、本地文件名。
  *
  * 用 CSV 而不是 xlsx：仓库里已有同款轮子（作者表导出），零新依赖，
  * 也就不用为一个导出功能去过第三方许可检查。
@@ -17,6 +17,12 @@ export interface VideoExportRow {
   likes: number | null
   /** null = 未知。快手搜索接口不返回评论数，这一列对快手就是空的 */
   comments: number | null
+  /** 2026-10-07 补数据：收藏 / 分享 / 播放，平台不给就是 null（导出空单元格） */
+  collects?: number | null
+  shares?: number | null
+  plays?: number | null
+  /** 发布日期（北京时间 YYYY-MM-DD），不知道就空 */
+  publishDate?: string
   durationSec: number
   fileName: string
   task?: string
@@ -30,21 +36,30 @@ function baseName(path: string | null): string {
 }
 
 /** stats 是入库时序列化的 JSON 字符串；坏数据一律按未知处理，不让导出整个失败 */
-function readStats(stats: string): { likes: number | null; comments: number | null } {
+type ReadStats = Record<'likes' | 'comments' | 'collects' | 'shares' | 'plays', number | null>
+const UNKNOWN_STATS: ReadStats = { likes: null, comments: null, collects: null, shares: null, plays: null }
+function readStats(stats: string): ReadStats {
   try {
-    const parsed = JSON.parse(stats) as { likes?: unknown; comments?: unknown } | null
-    if (!parsed || typeof parsed !== 'object') return { likes: null, comments: null }
+    const parsed = JSON.parse(stats) as Record<string, unknown> | null
+    if (!parsed || typeof parsed !== 'object') return UNKNOWN_STATS
     const num = (v: unknown): number | null => (typeof v === 'number' && Number.isFinite(v) ? v : null)
-    return { likes: num(parsed.likes), comments: num(parsed.comments) }
+    return { likes: num(parsed.likes), comments: num(parsed.comments), collects: num(parsed.collects), shares: num(parsed.shares), plays: num(parsed.plays) }
   } catch {
-    return { likes: null, comments: null }
+    return UNKNOWN_STATS
   }
+}
+
+/** 发布时间 → 北京时间日期（和软件里其它地方一致） */
+function beijingDate(iso: string | null): string {
+  if (!iso) return ''
+  const t = Date.parse(iso)
+  return Number.isFinite(t) ? new Date(t + 8 * 3600 * 1000).toISOString().slice(0, 10) : ''
 }
 
 /** 视频行 → 导出行。platformLabel 把 douyin/kuaishou 转成中文显示名，未知平台回落原始名。 */
 export function toVideoExportRows(rows: VideoRow[], platformLabel: (name: string) => string): VideoExportRow[] {
   return rows.map(r => {
-    const { likes, comments } = readStats(r.stats)
+    const { likes, comments, collects, shares, plays } = readStats(r.stats)
     return {
       platform: platformLabel(r.platform),
       author: r.author_nickname ?? '',
@@ -53,13 +68,17 @@ export function toVideoExportRows(rows: VideoRow[], platformLabel: (name: string
       sourceUrl: r.source_url ?? '',
       likes,
       comments,
+      collects,
+      shares,
+      plays,
+      publishDate: beijingDate(r.publish_time),
       durationSec: r.duration,
       fileName: baseName(r.local_path)
     }
   })
 }
 
-const HEADER = '平台,作者,标题,作品链接,点赞,评论,时长(秒),本地文件名'
+const HEADER = '平台,作者,标题,作品链接,点赞,评论,收藏,分享,播放,发布时间,时长(秒),本地文件名'
 
 function esc(raw: string): string {
   // 先防公式注入（Excel 会执行 = + - @ 开头的单元格，抖音标题常以 @ 开头），再按 CSV 规则加引号
@@ -68,15 +87,16 @@ function esc(raw: string): string {
 }
 
 /** 未知计数导出成空单元格。写 0 会让人以为真的零评论——既有红线。 */
-function num(v: number | null): string {
-  return v === null ? '' : String(v)
+function num(v: number | null | undefined): string {
+  return v === null || v === undefined ? '' : String(v)
 }
 
 /** CRLF 换行：Excel 打开 LF 的 CSV 会把整张表挤成一行 */
 export function buildVideosCsv(rows: VideoExportRow[], includeTask = false): string {
   const lines = [HEADER + (includeTask ? ',任务（平台 / 类型 / 关键词或作者）' : ''), ...rows.map(r => [
     esc(r.platform), esc(r.author), esc(r.title), esc(r.sourceUrl),
-    num(r.likes), num(r.comments), String(r.durationSec), esc(r.fileName),
+    num(r.likes), num(r.comments), num(r.collects), num(r.shares), num(r.plays), esc(r.publishDate ?? ''),
+    String(r.durationSec), esc(r.fileName),
     ...(includeTask ? [esc(r.task ?? '')] : [])
   ].join(','))]
   return lines.join('\r\n')

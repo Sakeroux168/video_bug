@@ -245,6 +245,7 @@ function parsePhoto(context: PhotoContext): VideoItem | null {
       : 0,
     likes: count(photo.likeCount) ?? 0,
     comments,
+    plays: count(photo.viewCount) ?? undefined,
     sourceUrl: buildVideoUrl(id)
   }
 }
@@ -268,6 +269,7 @@ export const kuaishouAdapter: PlatformAdapter = {
   name: 'kuaishou',
   displayName: '快手',
   taskReady: true,
+  interactions: ['plays'],
   sourceHosts: ['www.kuaishou.com'],
   sessionPartition: 'persist:kuaishou',
   homeUrl: 'https://www.kuaishou.com/',

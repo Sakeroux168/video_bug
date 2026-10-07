@@ -18,6 +18,9 @@ export interface Filters {
   /** 详情取数模式，缺省视为 'safe'；随 filters JSON 落库，不改表结构 */
   detailMode?: DetailMode
   aiFilterRule?: string
+  /** 只抓热门（2026-10-07）：点赞 / 收藏低于这个数的不要；不填 = 不限 */
+  minLikes?: number
+  minCollects?: number
   aiFilterEnabled?: boolean // createTask 会把它序列化进 filters JSON 列（Task 6）
   aiOrganizeEnabled?: boolean // 同上，任务级开关随 filters 落库
 }

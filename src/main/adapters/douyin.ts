@@ -115,6 +115,9 @@ function parseAweme(a: unknown, diags: DurationDiag[]): VideoItem | null {
     publishTime: Number(o.create_time ?? 0),
     likes: Number(stats.digg_count ?? 0),
     comments: nonNegativeIntegerOrNull(stats.comment_count),
+    // 真机核对（2026-10-07）：statistics.collect_count / share_count；网页版 play_count 恒为 0，等于拿不到，不存
+    collects: nonNegativeIntegerOrNull(stats.collect_count) ?? undefined,
+    shares: nonNegativeIntegerOrNull(stats.share_count) ?? undefined,
     sourceUrl: buildVideoUrl(id)
   }
 }
@@ -163,6 +166,7 @@ export const douyinAdapter: PlatformAdapter = {
   name: 'douyin',
   displayName: '抖音',
   taskReady: true,
+  interactions: ['collects', 'shares'],
   sourceHosts: ['www.douyin.com'],
   sessionPartition: 'persist:douyin',
   homeUrl: 'https://www.douyin.com/',
