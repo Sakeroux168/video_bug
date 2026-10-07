@@ -80,7 +80,7 @@ describe('Downloader', () => {
     dl.onEvent(e => events.push(`${e.type}:${'status' in e ? e.status : ''}`))
     dl.enqueue(v.id)
     dl.start()
-    await new Promise(r => setTimeout(r, 50))
+    await vi.waitFor(() => expect(listVideos(db, taskId)[0].status).toBe('done'), { timeout: 10_000 }) // 等到真的结束（以前固定等几十毫秒，CI 机器慢时误报）
 
     const row = listVideos(db, taskId)[0]
     expect(row.status).toBe('done')
@@ -220,7 +220,7 @@ describe('Downloader', () => {
     const dl = new Downloader(db, { downloadDir: dir, downloadConcurrency: 1, addressTtlMin: 30 }, fetchImpl, { validator: async () => true })
 
     dl.enqueue(v.id)
-    await new Promise(r => setTimeout(r, 80))
+    await vi.waitFor(() => expect(listVideos(db, taskId)[0].status).toBe('done'), { timeout: 10_000 }) // 等到真的结束（以前固定等几十毫秒，CI 机器慢时误报）
 
     const row = listVideos(db, taskId)[0]
     expect(row.status).toBe('done')
@@ -273,7 +273,8 @@ describe('Downloader', () => {
     const dl = new Downloader(db, { downloadDir: dir, downloadConcurrency: 1, addressTtlMin: 30 }, fetchImpl, { validator: async () => true })
 
     dl.enqueue(v.id)
-    await new Promise(r => setTimeout(r, 80))
+    // 等下载真的完成（以前固定等 80ms，CI 机器慢时还没下完就断言）
+    await vi.waitFor(() => expect(listVideos(db, taskId)[0].status).toBe('done'), { timeout: 10_000 })
 
     const row = listVideos(db, taskId)[0]
     expect(basename(row.local_path!)).toBe('标题_1.mp4')
@@ -318,7 +319,7 @@ describe('Downloader', () => {
     const dl = new Downloader(db, { downloadDir: dir, downloadConcurrency: 1, addressTtlMin: 30 }, fetchImpl, { validator: async () => true })
 
     dl.enqueue(v.id)
-    await new Promise(r => setTimeout(r, 80))
+    await vi.waitFor(() => expect(listVideos(db, taskId)[0].status).toBe('done'), { timeout: 10_000 }) // 等到真的结束（以前固定等几十毫秒，CI 机器慢时误报）
 
     const row = listVideos(db, taskId)[0]
     expect(row.status).toBe('done')
@@ -352,7 +353,11 @@ describe('Downloader', () => {
     dl.enqueue(v.id)
     await started
     dl.cancel([v.id])
-    await new Promise(r => setTimeout(r, 50))
+    // 取消时状态马上变 cancelled，清理半成品在后面：等清理也做完（以前固定等 50ms，CI 机器慢时误报）
+    await vi.waitFor(() => {
+      expect(listVideos(db, taskId)[0].local_path).toBeNull()
+      expect(readdirSync(dir)).toHaveLength(0)
+    }, { timeout: 10_000 })
 
     const row = listVideos(db, taskId)[0]
     expect(row.status).toBe('cancelled')
@@ -368,7 +373,7 @@ describe('Downloader', () => {
     const dl = new Downloader(db, { downloadDir: dir, downloadConcurrency: 3, addressTtlMin: 30 }, fetchImpl)
     dl.enqueue(v.id)
     dl.start()
-    await new Promise(r => setTimeout(r, 50))
+    await vi.waitFor(() => expect(listVideos(db, taskId)[0].status).toBe('failed'), { timeout: 10_000 }) // 等到真的结束（以前固定等几十毫秒，CI 机器慢时误报）
     const row = listVideos(db, taskId)[0]
     expect(row.status).toBe('failed')
     expect(row.error).toBe('parse_error')
@@ -382,7 +387,7 @@ describe('Downloader', () => {
     const dl = new Downloader(db, { downloadDir: dir, downloadConcurrency: 3, addressTtlMin: 30 }, fetchImpl)
     dl.enqueue(v.id)
     dl.start()
-    await new Promise(r => setTimeout(r, 50))
+    await vi.waitFor(() => expect(listVideos(db, taskId)[0].retry_count).toBe(1), { timeout: 10_000 }) // 等到真的结束（以前固定等几十毫秒，CI 机器慢时误报）
     const row = listVideos(db, taskId)[0]
     expect(row.status).toBe('pending') // 等待 5s 重试，未直接失败
     expect(row.retry_count).toBe(1)
@@ -398,7 +403,7 @@ describe('Downloader', () => {
     const dl = new Downloader(db, { downloadDir: dir, downloadConcurrency: 3, addressTtlMin: 30 }, fetchImpl)
     dl.enqueue(v.id)
     dl.start()
-    await new Promise(r => setTimeout(r, 50))
+    await vi.waitFor(() => expect(listVideos(db, taskId)[0].status).toBe('failed'), { timeout: 10_000 }) // 等到真的结束（以前固定等几十毫秒，CI 机器慢时误报）
     const row = listVideos(db, taskId)[0]
     expect(row.status).toBe('failed')
     expect(row.error).toBe('network')
@@ -418,7 +423,7 @@ describe('Downloader', () => {
     const dl = new Downloader(db, { downloadDir: dir, downloadConcurrency: 3, addressTtlMin: 30 }, fetchImpl)
     dl.enqueue(v.id)
     dl.start()
-    await new Promise(r => setTimeout(r, 50))
+    await vi.waitFor(() => expect(listVideos(db, taskId)[0].status).toBe('failed'), { timeout: 10_000 }) // 等到真的结束（以前固定等几十毫秒，CI 机器慢时误报）
     const row = listVideos(db, taskId)[0]
     expect(row.status).toBe('failed')
     expect(row.error).toBe('address_expired')
@@ -437,7 +442,7 @@ describe('Downloader', () => {
     const dl = new Downloader(db, { downloadDir: dir, downloadConcurrency: 3, addressTtlMin: 30 }, fetchImpl)
     dl.enqueue(v.id)
     dl.start()
-    await new Promise(r => setTimeout(r, 50))
+    await vi.waitFor(() => expect(listVideos(db, taskId)[0].status).toBe('failed'), { timeout: 10_000 }) // 等到真的结束（以前固定等几十毫秒，CI 机器慢时误报）
     const row = listVideos(db, taskId)[0]
     expect(row.status).toBe('failed') // 磁盘错误不进入 5s 重试，直接失败
     expect(row.error).toBe('disk')
@@ -460,9 +465,9 @@ describe('Downloader', () => {
     await new Promise(r => setTimeout(r, 30))
     expect(fetchCount).toBe(0) // 暂停中 drain 不拉取
     dl.resume()
-    await new Promise(r => setTimeout(r, 50))
+    // 等下载真的完成（以前固定等 50ms，CI 机器慢时会误报）
+    await vi.waitFor(() => expect(listVideos(db, taskId)[0].status).toBe('done'), { timeout: 10_000 })
     const row = listVideos(db, taskId)[0]
-    expect(row.status).toBe('done')
     expect(fetchCount).toBe(1)
   })
 
@@ -561,7 +566,7 @@ describe('Downloader', () => {
     const fetchImpl = (async () => new Response(mp4, { status: 200 })) as typeof fetch
     const dl = new Downloader(db, { downloadDir: dir, downloadConcurrency: 3, addressTtlMin: 30 }, fetchImpl, { validator: async () => true })
     dl.download([v.id])
-    await new Promise(r => setTimeout(r, 50))
+    await vi.waitFor(() => expect(listVideos(db, taskId)[0].status).toBe('done'), { timeout: 10_000 }) // 等到真的结束（以前固定等几十毫秒，CI 机器慢时误报）
     const row = listVideos(db, taskId)[0]
     expect(row.status).toBe('done')
   })
@@ -626,7 +631,7 @@ describe('Downloader', () => {
     expect(row.error).toBeNull()
     expect(fetchCount).toBe(1) // 暂停中不重新拉取
     dl.resume()
-    await new Promise(r => setTimeout(r, 50))
+    await vi.waitFor(() => expect(listVideos(db, taskId)[0].status).toBe('done'), { timeout: 10_000 }) // 等到真的结束（以前固定等几十毫秒，CI 机器慢时误报）
     row = listVideos(db, taskId)[0]
     expect(row.status).toBe('done') // resume 后重新下载成功
     expect(fetchCount).toBe(2)
@@ -664,7 +669,7 @@ describe('Downloader', () => {
     expect(row.error).toBeNull()
     expect(fetchCount).toBe(1) // 暂停后不重新拉取
     dl.resumeVideo([v.id]) // 单条继续
-    await new Promise(r => setTimeout(r, 50))
+    await vi.waitFor(() => expect(listVideos(db, taskId)[0].status).toBe('done'), { timeout: 10_000 }) // 等到真的结束（以前固定等几十毫秒，CI 机器慢时误报）
     row = listVideos(db, taskId)[0]
     expect(row.status).toBe('done')
     expect(fetchCount).toBe(2)
