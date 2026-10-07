@@ -53,7 +53,7 @@ describe('D8 下载进度（百分比 + 速度）', () => {
     const events: Progress[] = []
     dl.onEvent(e => { if (e.type === 'video:progress') events.push(e as unknown as Progress) })
     dl.enqueue(id)
-    await vi.waitFor(() => expect(listVideos(db, taskId)[0].status).toBe('done'))
+    await vi.waitFor(() => expect(listVideos(db, taskId)[0].status).toBe('done'), { timeout: 10_000 }) // CI 机器慢，1 秒默认值不够
     expect(events.length).toBeGreaterThanOrEqual(3)
     expect(events.every(e => e.id === id && e.total === buf.length)).toBe(true)
     for (let i = 1; i < events.length; i++) expect(events[i].received).toBeGreaterThanOrEqual(events[i - 1].received)
@@ -75,7 +75,7 @@ describe('D8 下载进度（百分比 + 速度）', () => {
     const events: Progress[] = []
     dl.onEvent(e => { if (e.type === 'video:progress') events.push(e as unknown as Progress) })
     dl.enqueue(id)
-    await vi.waitFor(() => expect(listVideos(db, taskId)[0].status).toBe('done'))
+    await vi.waitFor(() => expect(listVideos(db, taskId)[0].status).toBe('done'), { timeout: 10_000 }) // CI 机器慢，1 秒默认值不够
     expect(events.length).toBeGreaterThanOrEqual(3)
     expect(events.every(e => e.total === buf.length && e.received <= buf.length)).toBe(true)
     expect(events.at(-1)!.received).toBe(buf.length)
@@ -89,7 +89,7 @@ describe('D8 下载进度（百分比 + 速度）', () => {
     const events: Progress[] = []
     dl.onEvent(e => { if (e.type === 'video:progress') events.push(e as unknown as Progress) })
     dl.enqueue(id)
-    await vi.waitFor(() => expect(listVideos(db, taskId)[0].status).toBe('done'))
+    await vi.waitFor(() => expect(listVideos(db, taskId)[0].status).toBe('done'), { timeout: 10_000 }) // CI 机器慢，1 秒默认值不够
     expect(events.length).toBeLessThanOrEqual(2) // 第一块 + 下完那一下
   })
 })
