@@ -61,6 +61,15 @@ export class VideoBrowser {
   private current: PlatformAdapter | null = null
   // 注入脚本按平台构建（URL 兜底特征来自适配器），load 时刷新
   private inject = ''
+  private busy = false
+
+  get isBusy(): boolean { return this.busy }
+
+  /** 有任务在跑 → 关掉后台节流（抓取要页面一直发请求）；没任务 → 恢复节流，省 CPU / 网络（F7） */
+  setBusy(busy: boolean): void {
+    this.busy = busy
+    if (this.win && !this.win.isDestroyed()) this.win.webContents.setBackgroundThrottling(!busy)
+  }
   private externalOpener = new ExternalOpener({ open: url => { void import('electron').then(({ shell }) => shell.openExternal(url)) } })
   private loginEvidence = new Map<string, { status: PlatformLoginStatus['status']; cookies: string }>()
 
@@ -158,8 +167,9 @@ export class VideoBrowser {
     // 安全检查 A3：平台网页申请摄像头、麦克风、定位、通知等权限一律拒绝（以前没有处理器，默认全部放行），
     // 只留全屏（看视频）和写剪贴板。处理器挂在这个平台的登录分区上。
     wc.session?.setPermissionRequestHandler?.((_wc, permission, callback) => callback(allowedPermission(permission)))
-    // 关键：隐藏/切后台时不被 Chromium 节流，否则切到管理面板后页面停止发请求，爬取到一页就停
-    wc.setBackgroundThrottling(false)
+    // 关键：任务进行中，隐藏/切后台时不能被 Chromium 节流，否则切到管理面板后页面停止发请求，爬取到一页就停。
+    // 2026-10-07 性能 F7：没任务时交还给 Chromium 正常节流（见 setBusy），不让藏起来的推荐流一直全速跑
+    wc.setBackgroundThrottling(!this.busy)
     // 拦截自定义协议（bytedance:// 等）：不走 Windows 协议处理，避免弹微软商店。
     // 三层防护：
     //  1. 主框架导航 will-navigate —— 主页跳转自定义协议；

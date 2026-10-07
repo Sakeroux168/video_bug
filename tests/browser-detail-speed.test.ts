@@ -107,3 +107,23 @@ describe('VideoBrowser.fetchDetailHtml（快速模式 session fetch）', () => {
     expect(r).toBeNull()
   })
 })
+
+// 2026-10-07 性能 F7：平台窗口以前一直关着后台节流——没任务时藏起来的抖音首页推荐流也在全速跑
+// （定时器、动画、自动播放、轮询）。现在只有任务在跑时才关节流，没任务时交给 Chromium 正常节流。
+describe('VideoBrowser.setBusy：只在任务进行中关掉后台节流', () => {
+  it('开始任务 → 关节流；任务结束 → 恢复节流', () => {
+    const b = new VideoBrowser({} as never)
+    const setBackgroundThrottling = vi.fn()
+    ;(b as unknown as { win: unknown }).win = { isDestroyed: () => false, webContents: { setBackgroundThrottling } }
+    b.setBusy(true)
+    expect(setBackgroundThrottling).toHaveBeenLastCalledWith(false)
+    b.setBusy(false)
+    expect(setBackgroundThrottling).toHaveBeenLastCalledWith(true)
+  })
+
+  it('窗口还没建 → 不报错，记住状态', () => {
+    const b = new VideoBrowser({} as never)
+    expect(() => b.setBusy(true)).not.toThrow()
+    expect(b.isBusy).toBe(true)
+  })
+})

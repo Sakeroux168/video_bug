@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react'
+import { fileTreeCache } from './fileTreeCache'
 import { api } from '../api'
 import type { FilesTree, FilesDirNode } from '../../../shared/types'
 import { Card, btn } from './ui'
@@ -54,14 +55,24 @@ function entriesOf(node: FilesDirNode): Entry[] {
  */
 /** onProcessDir：文件夹行「统一分辨率」——把这个文件夹的完整路径交给「视频处理」页（App 负责切页） */
 export default function FileManager({ notify, onProcessDir }: { notify: Notify; onProcessDir?: (dir: string) => void }) {
-  const [tree, setTree] = useState<FilesTree | null>(null)
-  const [cwd, setCwd] = useState<string[]>([]) // 当前文件夹的相对段落（[] = 下载目录根）
+  // F3：先显示上次扫到的（见 fileTreeCache），后台再扫
+  const [tree, setTree] = useState<FilesTree | null>(fileTreeCache.tree)
+  const [cwd, setCwdState] = useState<string[]>(fileTreeCache.cwd) // 当前文件夹的相对段落（[] = 下载目录根）
+  const [refreshing, setRefreshing] = useState(false)
+  const setCwd: typeof setCwdState = v => setCwdState(prev => {
+    const next = typeof v === 'function' ? v(prev) : v
+    fileTreeCache.cwd = next
+    return next
+  })
   const [selected, setSelected] = useState<Set<string>>(new Set())
 
   useEffect(() => { void refresh() }, [])
 
   async function refresh(): Promise<void> {
-    const next = await api.getFilesTree()
+    setRefreshing(true)
+    let next: FilesTree
+    try { next = await api.getFilesTree() } finally { setRefreshing(false) }
+    fileTreeCache.tree = next
     setTree(next)
     // 当前文件夹可能已被删掉（本页删除或外部删除）：退回最近仍存在的上级，而不是停在一张空表上
     setCwd(prev => {
@@ -201,6 +212,7 @@ export default function FileManager({ notify, onProcessDir }: { notify: Notify; 
         <span className="text-xs tabular-nums text-slate-500">
           {atRoot ? `总大小：${formatSize(tree?.totalSize ?? 0)}` : `当前文件夹共 ${formatSize(node?.size ?? 0)}`}
         </span>
+        {refreshing && tree !== null && <span data-testid="files-refreshing" className="text-xs text-slate-400">正在刷新…</span>}
       </div>
       <div className="mb-2 flex flex-wrap items-center gap-3 text-xs">
         <button

@@ -1,7 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react'
 import { api } from '../api'
 import type { TaskRow, VideoRow, TaskStats, DownloadProgress } from '../../../shared/types'
-import { Card, inputClsSm, btn } from './ui'
+import { Card, inputClsSm, btn, Pager } from './ui'
 import { useMarqueeSelect } from './useMarqueeSelect'
 import { useTableSelection } from './useTableSelection'
 import { useCoalescedRefresh } from './useCoalescedRefresh'
@@ -61,6 +61,8 @@ const ROW_BAR: Record<string, string> = {
 const rowBar = (status: string): string => `border-l-2 ${ROW_BAR[status] ?? 'border-transparent'}`
 
 const PAGE_SIZE = 50
+/** F14：任务表每页多少个 */
+const TASK_PAGE_SIZE = 100
 
 type SortKey = 'title' | 'author' | 'duration' | 'publish_time' | 'likes' | 'comments' | 'collects'
 
@@ -164,6 +166,11 @@ function formatDate(iso: string | null): string {
 
 export default function TaskList({ notify, refreshVersion = 0 }: { notify: Notify; refreshVersion?: number }): React.ReactElement {
   const [tasks, setTasks] = useState<TaskRow[]>([])
+  // F14：任务多了分页画，每页 100 个
+  const [taskPage, setTaskPage] = useState(1)
+  const taskPageCount = Math.max(1, Math.ceil(tasks.length / TASK_PAGE_SIZE))
+  const curTaskPage = Math.min(taskPage, taskPageCount)
+  const pageTasks = tasks.length > TASK_PAGE_SIZE ? tasks.slice((curTaskPage - 1) * TASK_PAGE_SIZE, curTaskPage * TASK_PAGE_SIZE) : tasks
   const [videos, setVideos] = useState<Record<number, VideoRow[]>>({})
   const [expanded, setExpanded] = useState<Set<number>>(new Set())
   const [selected, setSelected] = useState<Set<number>>(new Set())
@@ -450,7 +457,9 @@ export default function TaskList({ notify, refreshVersion = 0 }: { notify: Notif
           <thead>
             <tr className="border-b border-slate-200 text-left text-xs text-slate-500">
               <th className="whitespace-nowrap py-2 pr-3 font-normal">
-                <input type="checkbox" aria-label="全选任务" className="mr-2" checked={tasks.length > 0 && pickedTasks.length === tasks.length} onChange={() => setSelectedTasks(pickedTasks.length === tasks.length ? new Set() : new Set(tasks.map(t => t.id)))} />平台/类型
+                <input type="checkbox" aria-label="全选任务" className="mr-2"
+                  checked={pageTasks.length > 0 && pageTasks.every(t => selectedTasks.has(t.id))}
+                  onChange={() => setSelectedTasks(pageTasks.every(t => selectedTasks.has(t.id)) ? new Set() : new Set(pageTasks.map(t => t.id)))} />平台/类型
               </th>
               <th className="py-2 pr-3 font-normal">关键词</th>
               <th className="py-2 pr-3 font-normal">进度</th>
@@ -460,7 +469,7 @@ export default function TaskList({ notify, refreshVersion = 0 }: { notify: Notif
             </tr>
           </thead>
           <tbody>
-            {tasks.map(t => {
+            {pageTasks.map(t => {
               const pct = t.target_count ? Math.min(100, Math.round((t.fetched_count / t.target_count) * 100)) : 0
               const s = stats[t.id]
               const d = derived[t.id]
@@ -671,6 +680,9 @@ export default function TaskList({ notify, refreshVersion = 0 }: { notify: Notif
             })}
           </tbody>
         </table>
+      )}
+      {tasks.length > TASK_PAGE_SIZE && (
+        <Pager page={curTaskPage} pageCount={taskPageCount} onPage={setTaskPage} what="任务" total={tasks.length} />
       )}
     </Card>
   )

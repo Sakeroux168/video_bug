@@ -197,3 +197,19 @@ export function EmptyState({ children }: { children: React.ReactNode }): React.R
 export function LoadingState({ children = '加载中…' }: { children?: React.ReactNode }): React.ReactElement {
   return <div className="py-8 text-center text-sm text-slate-400">{children}</div>
 }
+
+/** 表格翻页（2026-10-07 性能 F14：任务表、作者表每页 100 条）。只有一页时不显示。
+ *  what 是按钮的读屏名后缀（「下一页任务」），一个页面上有两个翻页时分得清 */
+export function Pager({ page, pageCount, onPage, what, total }: {
+  page: number; pageCount: number; onPage: (p: number) => void; what: string; total?: number
+}): React.ReactElement | null {
+  if (pageCount <= 1) return null
+  return (
+    <div className="mt-2 flex items-center justify-end gap-2 text-xs">
+      {total !== undefined && <span className="mr-auto tabular-nums text-slate-400">共 {total} 条</span>}
+      <button type="button" aria-label={`上一页${what}`} className={btn('secondary', 'sm')} disabled={page <= 1} onClick={() => onPage(page - 1)}>上一页</button>
+      <span className="tabular-nums text-slate-500">第 {page} / {pageCount} 页</span>
+      <button type="button" aria-label={`下一页${what}`} className={btn('secondary', 'sm')} disabled={page >= pageCount} onClick={() => onPage(page + 1)}>下一页</button>
+    </div>
+  )
+}
