@@ -22,13 +22,13 @@ asarUnpack:
 
 # ffmpeg 随包，落到 <resourcesPath>/ffmpeg/bin/。
 # 该布局正好命中 src/main/ffbin.ts 里 findInRoots 的 <root>/ffmpeg<版本>/bin/ 规则，
-# 且 defaultRoots() 把 resourcesPath 排在最前 —— 包内这份优先于员工机器上的任意版本。
-# 不带 ffplay.exe（用不到，省 97MB）。
-# 注意：源路径是本构建机上的绝对路径，换构建机需要同步调整。
+# 且随包的这份优先于机器上的任意版本。不带 ffplay.exe（用不到，省 97MB）。
+# 打包前先把 ffmpeg.exe / ffprobe.exe 放进 vendor/ffmpeg/bin/（不进 git），
+# `npm run dist` 会先跑 scripts/prepare-ffmpeg.mjs 检查；也可以设环境变量 FFMPEG_BIN_DIR 让脚本自动复制。
 extraResources:
-  - from: E:/123/ffmpeg-8.0.1-essentials_build/bin/ffmpeg.exe
+  - from: vendor/ffmpeg/bin/ffmpeg.exe
     to: ffmpeg/bin/ffmpeg.exe
-  - from: E:/123/ffmpeg-8.0.1-essentials_build/bin/ffprobe.exe
+  - from: vendor/ffmpeg/bin/ffprobe.exe
     to: ffmpeg/bin/ffprobe.exe
   # 项目许可与第三方许可独立放在 resources/licenses，运行时组件仍遵守各自条款。
   - from: third_party/licenses
@@ -44,7 +44,7 @@ extraResources:
 
 win:
   # 应用图标。不设时 electron-builder 用 Electron 默认图标（构建日志会提示
-  # "default Electron icon is used"），员工在任务栏/桌面上看到的是 Electron 的原子标。
+  # "default Electron icon is used"），任务栏/桌面上看到的是 Electron 的原子标。
   # 源文件是 1254x1254 PNG，electron-builder 自行转成多尺寸 .ico 嵌进 EXE。
   icon: build/icon.png
   target:

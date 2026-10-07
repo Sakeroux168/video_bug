@@ -6,7 +6,7 @@ import { xiaohongshuAdapter as adapter } from '../src/main/adapters/xiaohongshu'
 import type { VideoBrowser } from '../src/main/browser'
 import type { Downloader } from '../src/main/downloader'
 
-vi.mock('electron', () => ({ app: { getPath: () => process.cwd() + '/.tmp-xhs-test' } }))
+vi.mock('electron', () => ({ app: { getPath: () => require('os').tmpdir() + '/vs-test-' + process.pid + '-xhs-test' } }))
 const searchUrl = '//so.xiaohongshu.com/api/sns/web/v2/search/notes'
 const detailUrl = '//edith.xiaohongshu.com/api/sns/web/v1/feed'
 const list = (ids: string[], hasMore = false, type = 'video') => ({ data: {

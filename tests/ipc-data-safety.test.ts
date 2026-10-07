@@ -9,7 +9,7 @@ import type { CreateTaskInput } from '../src/shared/types'
 const mockIpc = vi.hoisted(() => ({ handlers: new Map<string, (...args: unknown[]) => unknown>(), trashItem: vi.fn(async () => {}) }))
 vi.mock('electron', () => ({
   ipcMain: { handle: (c: string, fn: (...args: unknown[]) => unknown): void => { mockIpc.handlers.set(c, fn) }, on: () => {}, removeHandler: () => {} },
-  app: { getPath: () => process.cwd() + '/.tmp-ipc-data-safety', getAppPath: () => '' },
+  app: { getPath: () => require('os').tmpdir() + '/vs-test-' + process.pid + '-ipc-data-safety', getAppPath: () => '' },
   dialog: {}, clipboard: {},
   shell: { openExternal: vi.fn(), openPath: vi.fn(), showItemInFolder: vi.fn(), trashItem: mockIpc.trashItem }
 }))

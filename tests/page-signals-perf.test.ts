@@ -4,7 +4,7 @@ import { buildLoginScript, buildVerifyScript } from '../src/main/browser'
 import { buildLoginStatusScript } from '../src/main/pageSignals'
 
 // scheduler 顶层会读设置（settings.ts 用 electron app.getPath）；指向不存在的目录 → 用默认设置
-vi.mock('electron', () => ({ app: { getPath: () => process.cwd() + '/.tmp-page-signals-perf' } }))
+vi.mock('electron', () => ({ app: { getPath: () => require('os').tmpdir() + '/vs-test-' + process.pid + '-page-signals-perf' } }))
 
 // 2026-10-06 全面检查「性能」F6：检测脚本以前先对每段文字判断「看不看得见」（每段都往上逐层 getComputedStyle），
 // 再匹配文字；3000 张卡片时一次要 0.3 秒，每 2 秒跑一次。现在先匹配文字，命中了才判断看不看得见。

@@ -12,7 +12,7 @@ import type { CreateTaskInput } from '../src/shared/types'
 
 const mockIpc = vi.hoisted(() => {
   const handlers = new Map<string, (...args: unknown[]) => unknown>()
-  return { handlers, userData: process.cwd() + '/.tmp-ipc-task-delete' }
+  return { handlers, userData: require('os').tmpdir() + '/vs-test-' + process.pid + '-ipc-task-delete' }
 })
 
 vi.mock('electron', () => ({

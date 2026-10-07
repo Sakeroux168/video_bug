@@ -6,7 +6,7 @@ import { initDb } from '../src/main/db'
 
 // detailMode（safe/fast）经本机接口 POST /job 传入并随 filters JSON 落库
 
-const mockPaths = vi.hoisted(() => ({ userData: process.cwd() + '/.tmp-bridge-mode-test' }))
+const mockPaths = vi.hoisted(() => ({ userData: require('os').tmpdir() + '/vs-test-' + process.pid + '-bridge-mode-test' }))
 
 vi.mock('electron', () => ({
   app: { getPath: () => mockPaths.userData, getAppPath: () => '' },

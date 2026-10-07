@@ -4,7 +4,7 @@ import { initDb, createTask, setTaskStatus } from '../src/main/db'
 import { createTaskChecked } from '../src/main/taskCreate'
 import type { CreateTaskInput } from '../src/shared/types'
 
-vi.mock('electron', () => ({ app: { getPath: () => process.cwd() + '/.tmp-author-task-dedupe' } }))
+vi.mock('electron', () => ({ app: { getPath: () => require('os').tmpdir() + '/vs-test-' + process.pid + '-author-task-dedupe' } }))
 
 // 全面检查（老陈复测 🟠）：同一个博主已经在排队 / 正在爬，再点一次（尤其是批量）不能又建一个一样的任务
 let db: DatabaseSync

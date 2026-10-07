@@ -9,7 +9,7 @@ import type { CreateTaskInput } from '../src/shared/types'
 // R12：scheduler 的停滞自救读 getSettings().rescueCooldownSec（默认 10），settings.ts 顶层用
 // electron app.getPath——mock electron 指向测试目录（无配置文件 → 回落 DEFAULTS，冷却=10s）
 vi.mock('electron', () => ({
-  app: { getPath: () => process.cwd() + '/.tmp-scheduler-test' }
+  app: { getPath: () => require('os').tmpdir() + '/vs-test-' + process.pid + '-scheduler-test' }
 }))
 
 describe('buildStopDecision', () => {
