@@ -48,6 +48,17 @@ const SETTING_LABELS: Record<keyof AppSettings, string> = {
   openAtLogin: '开机自动启动（启动后缩在托盘，不弹窗口）'
 }
 
+// 2026-10-07 安全加固 A9 / L7：AI 配置写明会把什么发出去
+describe('SettingsPanel AI 隐私说明', () => {
+  it('写明会发标题、截图、语音文字，Key 加密保存', async () => {
+    installFakeApi()
+    render(<SettingsPanel />)
+    const p = await screen.findByTestId('ai-privacy')
+    expect(p.textContent).toMatch(/标题.*截图.*语音/)
+    expect(p.textContent).toContain('加密保存')
+  })
+})
+
 describe('SettingsPanel 消息的成功/失败配色', () => {
   it('AI 连接失败 → 用危险色，不能是成功色', async () => {
     installFakeApi()

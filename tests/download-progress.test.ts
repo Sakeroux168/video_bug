@@ -39,7 +39,7 @@ type Progress = { type: string; id: number; received: number; total: number | nu
 
 function setup(segments: number) {
   const taskId = createTask(db, input)
-  insertVideos(db, [{ awemeId: 'P1', title: '进度', authorSecUid: 'S', authorNickname: 'a', authorHomeUrl: 'h', playUrl: 'https://cdn.test/p.mp4', coverUrl: '', width: 0, height: 0, durationSec: 10, publishTime: 1710000000, likes: 0 }], taskId, 'douyin')
+  insertVideos(db, [{ awemeId: 'P1', title: '进度', authorSecUid: 'S', authorNickname: 'a', authorHomeUrl: 'h', playUrl: 'https://v26.douyinvod.com/p.mp4', coverUrl: '', width: 0, height: 0, durationSec: 10, publishTime: 1710000000, likes: 0 }], taskId, 'douyin')
   const id = listVideos(db, taskId)[0].id
   return { taskId, id }
 }

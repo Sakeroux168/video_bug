@@ -30,7 +30,7 @@ const input: CreateTaskInput = {
 }
 const item = (awemeId: string, over: Partial<VideoItem> = {}): VideoItem => ({
   awemeId, title: '同名标题', authorSecUid: 'SEC', authorNickname: '作者',
-  authorHomeUrl: 'h', playUrl: `https://cdn.test/${awemeId}.mp4`, coverUrl: '', width: 0, height: 0,
+  authorHomeUrl: 'h', playUrl: `https://v26.douyinvod.com/${awemeId}.mp4`, coverUrl: '', width: 0, height: 0,
   durationSec: 10, publishTime: 1710000000, likes: 0, ...over
 })
 const mp4 = (fill: number): Buffer => { const b = Buffer.alloc(2048, fill); b.writeUInt32BE(0x18, 0); b.write('ftypisom', 4); return b }
@@ -144,12 +144,12 @@ describe('B2 下载地址不按「抓到 30 分钟」一刀切判过期', () => 
     insertVideos(db, [item('A'), item('B')], taskId, 'douyin')
     db.prepare("UPDATE videos SET status='failed', error='address_expired', fetched_at=? WHERE aweme_id='A'").run(old)
     db.prepare("UPDATE videos SET status='done', fetched_at=? WHERE aweme_id='B'").run(old)
-    refreshSeenVideo(db, 'douyin', item('A', { playUrl: 'https://cdn.test/A-new.mp4', likes: 99 }))
-    refreshSeenVideo(db, 'douyin', item('B', { playUrl: 'https://cdn.test/B-new.mp4', likes: 7 }))
+    refreshSeenVideo(db, 'douyin', item('A', { playUrl: 'https://v26.douyinvod.com/A-new.mp4', likes: 99 }))
+    refreshSeenVideo(db, 'douyin', item('B', { playUrl: 'https://v26.douyinvod.com/B-new.mp4', likes: 7 }))
     const [a, b] = listVideos(db, taskId)
-    expect(a.play_addr).toBe('https://cdn.test/A-new.mp4')
+    expect(a.play_addr).toBe('https://v26.douyinvod.com/A-new.mp4')
     expect(a.fetched_at > old).toBe(true)
-    expect(b.play_addr).toBe('https://cdn.test/B.mp4')
+    expect(b.play_addr).toBe('https://v26.douyinvod.com/B.mp4')
     expect(b.fetched_at).toBe(old)
     // B8：点赞等数据每次再抓到都更新
     expect(JSON.parse(a.stats!).likes).toBe(99)
@@ -160,7 +160,7 @@ describe('B2 下载地址不按「抓到 30 分钟」一刀切判过期', () => 
     const taskId = createTask(db, input)
     insertVideos(db, [item('A')], taskId, 'douyin')
     refreshSeenVideo(db, 'douyin', item('A', { playUrl: '' }))
-    expect(listVideos(db, taskId)[0].play_addr).toBe('https://cdn.test/A.mp4')
+    expect(listVideos(db, taskId)[0].play_addr).toBe('https://v26.douyinvod.com/A.mp4')
   })
 })
 
