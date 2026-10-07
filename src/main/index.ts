@@ -384,7 +384,8 @@ app.whenReady().then(() => {
   if (settings.bridgeEnabled !== false) {
     void startBridge({
       db, enqueueTask, isRunning: () => Boolean(scheduler?.isRunning),
-      port: Number(settings.bridgePort) || DEFAULT_BRIDGE_PORT
+      port: Number(settings.bridgePort) || DEFAULT_BRIDGE_PORT,
+      getSettings
     }).then(r => { bridge = r?.server ?? null })
   }
 
