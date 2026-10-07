@@ -3,12 +3,15 @@ import { useCallback, useState } from 'react'
 export interface RowClickMods {
   ctrlKey?: boolean
   shiftKey?: boolean
+  /** 点的是行首勾选框：切换该行（累加，不清其它），并把锚点设到这一行（之后 shift 点行从这里起算） */
+  checkbox?: boolean
 }
 
 /**
  * 表格行选择终版语义（需求 2026-08-02d ③，视频表格与作者表格共用）：
  * - 普通点击（无修饰键）：排他——未选中 → 只选该行；已选中 → 清空全部；并更新锚点
  * - ctrl+点击：切换该行选中（不清其它）；不改锚点
+ * - 点勾选框（D8）：同样切换该行、不清其它，但更新锚点（勾选框本来就该能一条条累加）
  * - shift+点击：范围选中——从锚点到当前行全部选中；锚点为 null 或不在当前可见行
  *   （visibleIds，跨页/被搜索过滤即视为不在当前视图）→ 退化为普通排他点击；并更新锚点
  * 锚点 = 最近一次普通点击或 shift 点击的行（ctrl 点击与框选不改锚点）。
@@ -25,6 +28,14 @@ export function useTableSelection<T>(): {
 
   const rowClick = useCallback(
     (id: T, visibleIds: readonly T[], prev: ReadonlySet<T>, mods: RowClickMods): Set<T> => {
+      // 勾选框：切换该行，不清其它，锚点移到这里
+      if (mods.checkbox) {
+        const next = new Set(prev)
+        if (next.has(id)) next.delete(id)
+        else next.add(id)
+        setAnchor(id)
+        return next
+      }
       // ctrl：切换该行，不清其它，不改锚点
       if (mods.ctrlKey) {
         const next = new Set(prev)

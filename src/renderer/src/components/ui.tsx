@@ -84,7 +84,7 @@ export const inputCls = `${INPUT_BASE} px-3 py-1.5 text-sm`
 /** 小号输入框（表格内搜索框等）。此前靠 `${inputCls} !py-1 !text-xs` 覆盖——
  *  `!important` 的出现就是在说共享层缺一个 size 维度。 */
 export const inputClsSm = `${INPUT_BASE} px-2 py-1 text-xs`
-export const btnPrimary = 'rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-brand-700 disabled:opacity-40'
+export const btnPrimary = 'whitespace-nowrap rounded-md bg-brand-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-brand-700 disabled:opacity-40'
 // 注：btnPrimary 等价于 btn('primary', 'md')，保留具名导出以免改动面过大
 
 // ==========================
@@ -106,7 +106,7 @@ const BTN_SIZE: Record<BtnSize, string> = {
   md: 'px-4 py-2 text-sm'
 }
 
-const BTN_BASE = 'rounded-md font-medium transition-colors disabled:opacity-40'
+const BTN_BASE = 'whitespace-nowrap rounded-md font-medium transition-colors disabled:opacity-40'
 
 /**
  * 按钮类字符串（与 Btn 组件同一真源）。

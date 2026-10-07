@@ -113,6 +113,11 @@ function push(evt: unknown): void {
     win?.webContents.send('evt:task:notice', t)
     return
   }
+  // D8：下载进度单独一条通道——每秒都有，走任务通道会让任务列表 / 概览 / 作者页跟着反复重拉
+  if (t?.type === 'video:progress') {
+    win?.webContents.send('evt:download:progress', t)
+    return
+  }
   win?.webContents.send('evt:task:progress', evt)
   // R20：队列据此判断当前任务是否结束（完成/暂停/失败/卡住都放行下一个；验证码暂停按住）
   taskQueue.onEvent(evt)

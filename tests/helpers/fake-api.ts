@@ -88,6 +88,7 @@ function freshApi(): Api {
     locateFileDir: vi.fn(async () => ({ ok: true })),
     locateVideoFile: vi.fn(async () => ({ ok: true })),
     onTaskProgress: vi.fn(() => () => {}),
+    onDownloadProgress: vi.fn(() => () => {}),
     onTaskNotice: vi.fn(() => () => {})
   }
 }

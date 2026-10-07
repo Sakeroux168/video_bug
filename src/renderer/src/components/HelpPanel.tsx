@@ -25,20 +25,20 @@ const situations: Array<{ scene: string; note: string; action: string }> = [
     action: '点任务行的「打开平台窗口」，登录后回到任务页点「继续」；各平台登录状态独立'
   },
   {
-    scene: '任务显示「已暂停」，错误是 stalled',
+    scene: '任务状态是「没有新结果」',
     note: '页面卡住不出新内容',
     action: '先在平台窗口确认是否没登录 / 有验证，处理后点「继续」；没有这些提示再换关键词'
   },
   {
     scene: '顶部「查看拦截日志」',
-    note: '排查用的，能看到程序在干什么',
-    action: '出问题时先看这里，截图给技术'
+    note: '排查问题用的，能看到程序在干什么',
+    action: '平时不用管；遇到解决不了的问题，可以把里面的内容截图，连同问题描述一起反馈'
   }
 ]
 
 const runParams: Array<{ label: string; value: string }> = [
   { label: '滚动间隔', value: '3500' },
-  { label: '每页等待(秒)', value: '8' },
+  { label: '每页最大等待(秒)', value: '8' },
   { label: '停滞检测(秒)', value: '25' }
 ]
 
@@ -56,7 +56,7 @@ export default function HelpPanel(): React.ReactElement {
     <div className="max-w-3xl space-y-4 pb-6 text-sm text-slate-600">
       <div className="mb-1">
         <h2 className="text-base font-semibold text-slate-800">使用说明</h2>
-        <p className="mt-1 text-xs text-slate-400">给同事看的操作指南，遇到问题先看这里</p>
+        <p className="mt-1 text-xs text-slate-400">操作指南，遇到问题先看这里</p>
       </div>
 
       <Card>
@@ -70,7 +70,7 @@ export default function HelpPanel(): React.ReactElement {
             </p>
           </div>
           <div>
-            <div className="text-xs font-medium text-slate-700">扫码登录抖音</div>
+            <div className="text-xs font-medium text-slate-700">扫码登录平台账号</div>
             <p className="mt-1 text-xs leading-5 text-slate-500">
               在「内置浏览器」打开要使用的平台窗口，按正常方式扫码登录你自己的账号。
               以平台登录状态灯显示「已登录」为准；「未知」时在平台窗口确认。看到首页不代表已经登录。
@@ -84,7 +84,7 @@ export default function HelpPanel(): React.ReactElement {
         <ol className="list-inside list-decimal space-y-1 text-xs leading-5 text-slate-500">
           <li>填关键词（或作者、话题）</li>
           <li>填目标数量——建议先填 20 试一次，跑通了再加大</li>
-          <li>点「开始」</li>
+          <li>点「开始抓取」（或者在输入框里直接按回车）</li>
         </ol>
         <p className="mt-3 rounded-md bg-slate-50 px-3 py-2 text-xs leading-5 text-slate-500">
           爬取过程中程序会自己滚动页面加载更多，不用你手动操作。爬完会自动下载到你设的下载目录里。
@@ -174,9 +174,10 @@ export default function HelpPanel(): React.ReactElement {
         <SectionTitle index="6">暂时用不了的功能</SectionTitle>
         <p className="text-xs leading-5 text-slate-500">
           <span className="font-medium text-slate-700">AI 自动判断品类</span>
-          （听语音 + 看画面识别作者属于哪个品类）目前没有开启，因为需要配置 API Key。
-          现在的归档规则是：作者已有品类 → 沿用；没有 → 归到「未分类」。
-          需要开启的话找技术在设置页填 Key。
+          （听语音 + 看画面识别作者属于哪个品类）默认没有开启，因为需要 API Key。
+          勾了「按品类分文件夹」时的规则是：作者已有品类 → 沿用；没有 → 放进「未分类」。
+          一项都不勾的话，视频直接放在下载目录里，不分文件夹。
+          想开启 AI 判断，在「设置 → AI 配置」里填好 API Key 就行。
         </p>
       </Card>
 
@@ -189,7 +190,7 @@ export default function HelpPanel(): React.ReactElement {
           </p>
           <p>
             「设置 → 和百家号发布助手打通」里的本机接口开着时，发布助手（或它的助手）可以直接让本程序去抓某几个作者的主页。
-            <span className="font-medium text-slate-700">「统一输出分辨率」建议关掉</span>：每条视频都重新编码，下载会慢好几倍，发布助手处理时反正还会再编码。
+            下载的都是平台上的原视频，不会重新编码；需要统一分辨率时，去「视频处理」页对整个文件夹处理一遍。
           </p>
         </div>
       </Card>

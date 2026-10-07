@@ -54,6 +54,9 @@ export interface TaskStats {
   deleted?: number
 }
 
+/** D8：一条视频的下载进度（main → 渲染层 evt:download:progress，最多每秒一条） */
+export interface DownloadProgress { type: 'video:progress'; id: number; received: number; total: number | null; speed: number }
+
 /** 任务进度瞬时推送（main → 渲染层 evt:task:progress；R11 Task1 起带 reSearchCount，Task2 用于界面显示「已重搜 N 次」） */
 export interface TaskProgressEvent {
   type: 'task:progress'

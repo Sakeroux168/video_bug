@@ -62,3 +62,32 @@ describe('HelpPanel（使用说明面板）', () => {
     expect(text).toContain('按现状提供')
   })
 })
+
+// 2026-10-06 全面检查「界面」D7：使用说明有 7 处和软件对不上，照着找不到按钮
+describe('D7 使用说明和软件对得上', () => {
+  const text = (): string => render(<HelpPanel />).container.textContent ?? ''
+
+  it('按钮、设置项用软件里真实的名字', () => {
+    const t = text()
+    expect(t).toContain('点「开始抓取」')
+    expect(t).not.toContain('点「开始」')
+    expect(t).toContain('每页最大等待(秒)') // 设置页的叫法
+    expect(t).not.toContain('每页等待(秒)')
+    expect(t).toContain('没有新结果') // 任务行现在显示的中文
+    expect(t).not.toContain('stalled')
+  })
+
+  it('不再教关掉已经删掉的「统一输出分辨率」；说清楚下载的是原视频', () => {
+    const t = text()
+    expect(t).not.toContain('统一输出分辨率')
+    expect(t).toContain('视频处理')
+  })
+
+  it('「未分类」只在勾了按品类分文件夹时才有；登录不只说抖音；不再叫人截图给技术', () => {
+    const t = text()
+    expect(t).toMatch(/勾了「按品类分文件夹」[^。]*未分类/)
+    expect(t).not.toContain('扫码登录抖音')
+    expect(t).not.toContain('截图给技术')
+    expect(t).not.toContain('找技术')
+  })
+})
