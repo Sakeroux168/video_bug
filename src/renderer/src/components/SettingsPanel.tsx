@@ -343,7 +343,12 @@ export default function SettingsPanel({ onDirtyChange }: { onDirtyChange?: (dirt
         </Card>
 
         <Card title="AI 配置">
-          <p className="mb-3 text-xs text-slate-400">支持 OpenAI 兼容接口，用于内容分析。</p>
+          <p className="mb-1 text-xs text-slate-400">支持 OpenAI 兼容接口，用于内容分析。</p>
+          {/* 2026-10-07 安全加固 A9 / L7：说清楚开了 AI 会把什么发出去、Key 怎么存 */}
+          <p data-testid="ai-privacy" className="mb-3 text-xs leading-5 text-slate-400">
+            开了 AI 筛选或按品类分文件夹后，视频标题、几张截图和语音转出来的文字会发给上面填的 AI 服务。
+            Key 加密保存在这台电脑上，换电脑或换 Windows 账号要重新填。
+          </p>
           <div className="space-y-3 text-xs text-slate-500">
             <label className="flex flex-col gap-1">
               API 地址

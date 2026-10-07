@@ -17,7 +17,7 @@ const taskInput: CreateTaskInput = {
   aiFilterEnabled: false, aiOrganizeEnabled: false, autoDownload: true
 }
 
-function video(playUrl = 'https://cdn.test/video.mp4'): VideoItem {
+function video(playUrl = 'https://sns-video-zl.xhscdn.com/video.mp4'): VideoItem {
   return {
     awemeId: 'SEG-1', title: '分段测试', authorSecUid: 'SEC', authorNickname: '作者',
     authorHomeUrl: '', playUrl, coverUrl: '', width: 1080, height: 1920,
@@ -145,7 +145,7 @@ describe('同一文件 Range 分段下载', () => {
 
   it('某段超过重试上限后放弃当前候选，只回退 playwm→play 候选', async () => {
     const source = sourceBytes()
-    const { taskId, id } = createVideo('https://cdn.test/playwm/video.mp4')
+    const { taskId, id } = createVideo('https://sns-video-zl.xhscdn.com/playwm/video.mp4')
     let badAttempts = 0
     const urls: string[] = []
     const fetchImpl = vi.fn(async (url: unknown, init?: RequestInit) => {

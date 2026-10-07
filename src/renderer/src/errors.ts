@@ -17,6 +17,7 @@ export function describeError(code: string | null | undefined): string {
     case 'ai_quota': return 'AI额度用尽'
     case 'ai_timeout': return 'AI超时'
     case 'bad_mp4': return '文件校验失败（非视频）'
+    case 'bad_host': return '下载地址不是平台的网站，已拦下'
     default: return code
   }
 }

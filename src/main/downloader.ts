@@ -11,6 +11,7 @@ import { clampDownloadSegments, ERROR } from '../shared/types'
 import { classifyDownloadError, AddressPolicy } from './errors'
 import { safeFilename, ensureUniqueStem } from './filename'
 import { downloadCover } from './cover'
+import { isAllowedMediaUrl } from './downloadHosts'
 import { setVideoStatus } from './db'
 import { getAdapter } from './adapters'
 
@@ -117,6 +118,7 @@ export class Downloader {
   private listeners: Array<(e: DlEvent) => void> = []
   private fetching: Record<number, boolean> = {}
   private validator: ((file: string) => Promise<boolean>) | null
+  private allowUrl: (platform: string, url: string | null | undefined) => boolean
   /** R20：无数据超时毫秒（测试可调小） */
   private idleTimeoutMs: number
   /** 会话级分段断点；只承诺同一次程序运行内暂停后继续，不跨重启。 */
@@ -130,11 +132,16 @@ export class Downloader {
     private db: DatabaseSync,
     private settings: DlSettings,
     private fetchImpl: typeof fetch = fetch,
-    opts?: { validator?: (file: string) => Promise<boolean>; idleTimeoutMs?: number; progressIntervalMs?: number }
+    opts?: {
+      validator?: (file: string) => Promise<boolean>; idleTimeoutMs?: number; progressIntervalMs?: number
+      /** 下载地址白名单（A8），默认只认平台域名；只有起本机服务器的集成测试才换掉它 */
+      allowUrl?: (platform: string, url: string | null | undefined) => boolean
+    }
   ) {
     // C1: 确保下载目录存在（recursive 幂等）；目录不可写时由下载错误分类兜底为 ERROR.DISK
     try { mkdirSync(this.settings.downloadDir, { recursive: true }) } catch { /* ignore */ }
     this.validator = opts?.validator ?? null
+    this.allowUrl = opts?.allowUrl ?? isAllowedMediaUrl
     this.idleTimeoutMs = opts?.idleTimeoutMs ?? DOWNLOAD_IDLE_TIMEOUT_MS
     this.progressIntervalMs = opts?.progressIntervalMs ?? PROGRESS_INTERVAL_MS
   }
@@ -661,6 +668,8 @@ export class Downloader {
 
       if (!sourceValidated) {
         // 候选下载地址：原始地址优先；失败/坏文件则回退 playwm→play 无水印变体。
+        // A8：地址不是平台自己的域名 → 一个请求都不发，直接失败（不走网络重试）
+        if (!this.allowUrl(row.platform, row.play_addr)) throw new Error('bad_host')
         const candidates = [row.play_addr]
         if (row.play_addr && row.play_addr.includes('playwm')) candidates.push(row.play_addr.replace('playwm', 'play'))
         let lastErr: unknown = new Error('bad_mp4')
@@ -703,7 +712,7 @@ export class Downloader {
       const coverPart = join(downloadDir, `${stem}.cover.part`)
       cleanupPaths.push(coverPart)
       // R19：下到达人暂存的不要封面（暂存里只放视频）
-      const coverResult = row.cover_url && !jobDir
+      const coverResult = row.cover_url && !jobDir && this.allowUrl(row.platform, row.cover_url)
         ? await downloadCover({
             url: row.cover_url,
             dir: downloadDir,

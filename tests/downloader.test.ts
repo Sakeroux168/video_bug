@@ -32,7 +32,7 @@ const input: CreateTaskInput = {
 }
 const item = (awemeId = 'AW001', over: Partial<VideoItem> = {}): VideoItem => ({
   awemeId, title: '标题', authorSecUid: 'SEC', authorNickname: '作者',
-  authorHomeUrl: 'h', playUrl: 'https://cdn.test/v.mp4', coverUrl: '', width: 0, height: 0,
+  authorHomeUrl: 'h', playUrl: 'https://v26.douyinvod.com/v.mp4', coverUrl: '', width: 0, height: 0,
   durationSec: 10, publishTime: 1710000000, likes: 0, ...over
 })
 
@@ -71,7 +71,7 @@ describe('Downloader', () => {
     mp4.write('ftypisom', 4)
 
     const fetchImpl = (async (url: unknown) => {
-      expect(String(url)).toContain('cdn.test')
+      expect(String(url)).toContain('v26.douyinvod.com')
       return new Response(mp4, { status: 200, headers: { 'content-type': 'video/mp4' } })
     }) as typeof fetch
 
@@ -141,7 +141,7 @@ describe('Downloader', () => {
 
   it('封面下载期间全局暂停：保留已验证下载断点，继续后不重复请求视频', async () => {
     const taskId = createTask(db, input)
-    insertVideos(db, [item('PAUSE-COVER', { coverUrl: 'https://img.test/c' })], taskId, 'douyin')
+    insertVideos(db, [item('PAUSE-COVER', { coverUrl: 'https://p3.douyinpic.com/c' })], taskId, 'douyin')
     const [v] = listVideos(db, taskId)
     const source = Buffer.alloc(2048, 7)
     source.write('ftypisom', 4)
@@ -150,7 +150,7 @@ describe('Downloader', () => {
     let coverStarted!: () => void
     const started = new Promise<void>(resolve => { coverStarted = resolve })
     const fetchImpl = (async (url: unknown, init?: RequestInit) => {
-      if (!String(url).includes('img.test')) { videoFetchCount++; return new Response(source) }
+      if (!String(url).includes('p3.douyinpic.com')) { videoFetchCount++; return new Response(source) }
       coverFetchCount++
       if (coverFetchCount === 1) {
         coverStarted()
@@ -208,13 +208,13 @@ describe('Downloader', () => {
 
   it('视频与封面下载成功：保存为完全相同的文件名主体', async () => {
     const taskId = createTask(db, input)
-    insertVideos(db, [item('PAIR1', { coverUrl: 'https://img.test/c' })], taskId, 'douyin')
+    insertVideos(db, [item('PAIR1', { coverUrl: 'https://p3.douyinpic.com/c' })], taskId, 'douyin')
     const [v] = listVideos(db, taskId)
     const mp4 = Buffer.alloc(2048)
     mp4.writeUInt32BE(0x18, 0)
     mp4.write('ftypisom', 4)
     const cover = new Uint8Array([9, 8, 7])
-    const fetchImpl = (async (url: unknown) => String(url).includes('img.test')
+    const fetchImpl = (async (url: unknown) => String(url).includes('p3.douyinpic.com')
       ? new Response(cover, { status: 200, headers: { 'content-type': 'image/webp' } })
       : new Response(mp4, { status: 200, headers: { 'content-type': 'video/mp4' } })) as typeof fetch
     const dl = new Downloader(db, { downloadDir: dir, downloadConcurrency: 1, addressTtlMin: 30 }, fetchImpl, { validator: async () => true })
@@ -233,7 +233,7 @@ describe('Downloader', () => {
     const target = join(dir, '达人', '暂存')            // 还不存在，下载器自己建
     const other = join(dir, '下载目录')
     const taskId = createTask(db, { ...input, outputDir: target })
-    insertVideos(db, [item('JOB1', { title: '他用手把湿土捏成仕女', coverUrl: 'https://img.test/c' }),
+    insertVideos(db, [item('JOB1', { title: '他用手把湿土捏成仕女', coverUrl: 'https://p3.douyinpic.com/c' }),
       item('JOB2', { title: '', authorNickname: '奶龙' })], taskId, 'douyin')
     const vids = listVideos(db, taskId)
     const mp4 = Buffer.alloc(2048)
@@ -251,13 +251,13 @@ describe('Downloader', () => {
     expect(dirname(rows[0].local_path!)).toBe(target)
     expect(readdirSync(target).sort()).toEqual(['JOB2.mp4', '他用手把湿土捏成仕女.mp4'])
     expect(rows[0].cover_path).toBeNull()
-    expect(hits.some(u => u.includes('img.test'))).toBe(false)
+    expect(hits.some(u => u.includes('p3.douyinpic.com'))).toBe(false)
     expect(existsSync(other) ? readdirSync(other) : []).toEqual([])
   })
 
   it('孤立旧封面占名时，视频与新封面共同使用 _1 后缀', async () => {
     const taskId = createTask(db, input)
-    insertVideos(db, [item('AW001', { coverUrl: 'https://img.test/c' })], taskId, 'douyin')
+    insertVideos(db, [item('AW001', { coverUrl: 'https://p3.douyinpic.com/c' })], taskId, 'douyin')
     const [v] = listVideos(db, taskId)
     // 文件名主体现在只用标题（不再拼作者名和作品 ID），预占名跟着改；
 
@@ -267,7 +267,7 @@ describe('Downloader', () => {
     const mp4 = Buffer.alloc(2048)
     mp4.writeUInt32BE(0x18, 0)
     mp4.write('ftypisom', 4)
-    const fetchImpl = (async (url: unknown) => String(url).includes('img.test')
+    const fetchImpl = (async (url: unknown) => String(url).includes('p3.douyinpic.com')
       ? new Response(new Uint8Array([1]), { status: 200, headers: { 'content-type': 'image/jpeg' } })
       : new Response(mp4, { status: 200 })) as typeof fetch
     const dl = new Downloader(db, { downloadDir: dir, downloadConcurrency: 1, addressTtlMin: 30 }, fetchImpl, { validator: async () => true })
@@ -283,12 +283,12 @@ describe('Downloader', () => {
 
   it('下载中修改目录时，当前视频与封面仍使用启动目录且不覆盖新目录旧封面', async () => {
     const taskId = createTask(db, input)
-    insertVideos(db, [item('SWITCH', { coverUrl: 'https://img.test/c' })], taskId, 'douyin')
+    insertVideos(db, [item('SWITCH', { coverUrl: 'https://p3.douyinpic.com/c' })], taskId, 'douyin')
     const [v] = listVideos(db, taskId)
     const newDir = mkdtempSync(join(dir, 'switched-'))
     const orphan = join(newDir, '标题.jpg')
     writeFileSync(orphan, 'old cover')
-    const fetchImpl = (async (url: unknown) => String(url).includes('img.test')
+    const fetchImpl = (async (url: unknown) => String(url).includes('p3.douyinpic.com')
       ? new Response(new Uint8Array([1]), { headers: { 'content-type': 'image/jpeg' } })
       : new Response(Buffer.alloc(2048))) as typeof fetch
     const dl = new Downloader(db, { downloadDir: dir, downloadConcurrency: 1, addressTtlMin: 30 }, fetchImpl, {
@@ -308,12 +308,12 @@ describe('Downloader', () => {
 
   it('封面 HTTP 失败不阻断视频完成，cover_path 保持空', async () => {
     const taskId = createTask(db, input)
-    insertVideos(db, [item('PAIR2', { coverUrl: 'https://img.test/missing' })], taskId, 'douyin')
+    insertVideos(db, [item('PAIR2', { coverUrl: 'https://p3.douyinpic.com/missing' })], taskId, 'douyin')
     const [v] = listVideos(db, taskId)
     const mp4 = Buffer.alloc(2048)
     mp4.writeUInt32BE(0x18, 0)
     mp4.write('ftypisom', 4)
-    const fetchImpl = (async (url: unknown) => String(url).includes('img.test')
+    const fetchImpl = (async (url: unknown) => String(url).includes('p3.douyinpic.com')
       ? new Response(null, { status: 503 })
       : new Response(mp4, { status: 200 })) as typeof fetch
     const dl = new Downloader(db, { downloadDir: dir, downloadConcurrency: 1, addressTtlMin: 30 }, fetchImpl, { validator: async () => true })
@@ -329,7 +329,7 @@ describe('Downloader', () => {
 
   it('封面下载途中取消：状态 cancelled，并清理 MP4 与封面半成品', async () => {
     const taskId = createTask(db, input)
-    insertVideos(db, [item('PAIR3', { coverUrl: 'https://img.test/slow' })], taskId, 'douyin')
+    insertVideos(db, [item('PAIR3', { coverUrl: 'https://p3.douyinpic.com/slow' })], taskId, 'douyin')
     const [v] = listVideos(db, taskId)
     const mp4 = Buffer.alloc(2048)
     mp4.writeUInt32BE(0x18, 0)
@@ -337,7 +337,7 @@ describe('Downloader', () => {
     let coverStarted!: () => void
     const started = new Promise<void>(resolve => { coverStarted = resolve })
     const fetchImpl = (async (url: unknown, init?: RequestInit) => {
-      if (!String(url).includes('img.test')) return new Response(mp4, { status: 200 })
+      if (!String(url).includes('p3.douyinpic.com')) return new Response(mp4, { status: 200 })
       const signal = init?.signal!
       const stream = new ReadableStream<Uint8Array>({
         start(controller) {
@@ -936,5 +936,20 @@ describe('R20 下载卡住：一段时间没收到数据就掐断，交给原来
     dl.enqueue(v.id)
     await vi.waitFor(() => expect(listVideos(db, taskId)[0].status).toBe('done'), { timeout: 3000 })
     expect(listVideos(db, taskId)[0].file_size).toBe(256 * 8)
+  })
+})
+
+// 2026-10-07 安全加固 A8：下载地址不是平台域名 → 不发请求，直接失败（不重试），原因写清楚；封面同理不下
+describe('Downloader 下载地址白名单', () => {
+  it('视频地址不是平台域名：一个请求都不发，失败原因 bad_host', async () => {
+    const taskId = createTask(db, input)
+    insertVideos(db, [item('EVIL', { playUrl: 'http://127.0.0.1:8080/steal', coverUrl: 'http://192.168.1.1/c.jpg' })], taskId, 'douyin')
+    const [v] = listVideos(db, taskId)
+    const fetchImpl = vi.fn(async () => new Response('x')) as unknown as typeof fetch
+    const dl = new Downloader(db, { downloadDir: dir, downloadConcurrency: 1, addressTtlMin: 30 }, fetchImpl, { validator: async () => true })
+    dl.enqueue(v.id)
+    await vi.waitFor(() => expect(listVideos(db, taskId)[0].status).toBe('failed'), { timeout: 10_000 })
+    expect(listVideos(db, taskId)[0].error).toBe('bad_host')
+    expect(fetchImpl).not.toHaveBeenCalled()
   })
 })

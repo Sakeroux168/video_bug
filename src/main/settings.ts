@@ -1,4 +1,4 @@
-import { app } from 'electron'
+import { app, safeStorage } from 'electron'
 import { readFileSync, writeFileSync, mkdirSync } from 'fs'
 import { join } from 'path'
 import type { AppSettings } from '../shared/types'
@@ -30,7 +30,9 @@ const DEFAULTS: AppSettings = {
   organizeByAuthor: false,
   organizeByOrientation: false,
   organizeByDuration: false,
-  bridgeEnabled: true, // R18：本机 HTTP 口，百家号发布助手靠它下「爬某作者主页 N 条」的任务
+  // R18：本机 HTTP 口，百家号发布助手靠它下「爬某作者主页 N 条」的任务。
+  // 2026-10-07：新装默认关（用不上的人不必开着一个本机端口）；老用户没写过这一项的保持开（见 getSettings）
+  bridgeEnabled: false,
   bridgePort: 47321,
   closeToTray: false,
   notifyEnabled: true,
@@ -59,6 +61,23 @@ const LEGACY_ORGANIZE_LEVELS: Pick<
  *  读取时直接丢弃，既不进 AppSettings 也不会在下次保存时被写回，老配置文件不用手工清理。 */
 const RETIRED_KEYS = ['normalizeVideo', 'keepOriginalVideo'] as const
 
+/**
+ * AI Key 加密存（2026-10-07 安全加固 A9）：用 Electron safeStorage（Windows 上是 DPAPI，
+ * 只有这台电脑的这个 Windows 账号能解开），文件里只留 aiApiKeyEnc 密文。
+ * 系统不支持加密时退回明文（总比存不了强）；解不开（换了电脑 / 账号）当作没填。
+ * 单测里 electron 被 mock、没有 safeStorage，访问会抛错 → 一律按「不支持」处理。
+ */
+function canEncrypt(): boolean {
+  try { return safeStorage.isEncryptionAvailable() } catch { return false }
+}
+function encryptKey(key: string): string | null {
+  if (!key || !canEncrypt()) return null
+  try { return safeStorage.encryptString(key).toString('base64') } catch { return null }
+}
+function decryptKey(enc: string): string {
+  try { return safeStorage.decryptString(Buffer.from(enc, 'base64')) } catch { return '' }
+}
+
 export function settingsFile(): string {
   return join(app.getPath('userData'), 'settings.json')
 }
@@ -68,8 +87,11 @@ export function getSettings(): AppSettings {
     const raw = readFileSync(settingsFile(), 'utf-8')
     const stored = JSON.parse(raw) as Record<string, unknown>
     for (const key of RETIRED_KEYS) delete stored[key]
-    // 配置文件存在 = 老用户升级：归档层级缺失键按升级前行为（全开）兜底，再让文件里的显式值覆盖
-    const merged = { ...DEFAULTS, ...LEGACY_ORGANIZE_LEVELS, ...(stored as Partial<AppSettings>) }
+    if (typeof stored.aiApiKeyEnc === 'string') stored.aiApiKey = decryptKey(stored.aiApiKeyEnc)
+    delete stored.aiApiKeyEnc
+    // 配置文件存在 = 老用户升级：归档层级缺失键按升级前行为（全开）兜底，本机接口没写过的保持开（以前的默认），
+    // 再让文件里的显式值覆盖
+    const merged = { ...DEFAULTS, ...LEGACY_ORGANIZE_LEVELS, bridgeEnabled: true, ...(stored as Partial<AppSettings>) }
     return { ...merged, downloadSegments: clampDownloadSegments(merged.downloadSegments) }
   } catch { return { ...DEFAULTS } }
 }
@@ -77,5 +99,8 @@ export function getSettings(): AppSettings {
 export function saveSettings(s: AppSettings): void {
   const f = settingsFile()
   mkdirSync(join(app.getPath('userData')), { recursive: true })
-  writeFileSync(f, JSON.stringify({ ...s, downloadSegments: clampDownloadSegments(s.downloadSegments) }, null, 2), 'utf-8')
+  const enc = encryptKey(s.aiApiKey)
+  const toWrite: Record<string, unknown> = { ...s, downloadSegments: clampDownloadSegments(s.downloadSegments) }
+  if (enc) { toWrite.aiApiKey = ''; toWrite.aiApiKeyEnc = enc }
+  writeFileSync(f, JSON.stringify(toWrite, null, 2), 'utf-8')
 }
