@@ -31,6 +31,11 @@ export const SCROLL_TIMEOUT_MS = 60000
  *  页面卡死、正在跳转或渲染进程无响应时 executeJavaScript 可能永远不返回——
  *  以前调度器就卡在这一步：任务一直「进行中」、一动不动，后面排队的全都等着。 */
 export const JS_EVAL_TIMEOUT_MS = 15000
+
+/** 去掉浏览器标识里的「程序名/版本」和「Electron/版本」，剩下的就是同版本普通 Chrome 的标识 */
+export function plainChromeUserAgent(ua: string): string {
+  return ua.replace(/ video-scraper\/\S+/gi, '').replace(/ Electron\/\S+/gi, '')
+}
 /** 读详情 / 读页面元素这种轮询用的短超时。Electron 44 起页面一跳转，跳转前发出的 executeJavaScript
  *  永远不返回（旧版会报错返回）；不设超时，轮询就卡在那一次上，再也不读了（真机：每条笔记都「详情超时」） */
 export const JS_POLL_TIMEOUT_MS = 3000
@@ -114,8 +119,8 @@ export class VideoBrowser {
       this.current = adapter // 同分区不同适配器实例（理论上不会有）也认新的
       return
     }
-    // 先把这个平台的分区设成直连 / 系统代理，再建窗口加载页面
-    await this.applyProxy(adapter.sessionPartition)
+    // 先把这个平台的分区设成直连 / 系统代理、定好浏览器标识，再建窗口加载页面
+    await this.applyProxy(adapter.sessionPartition, adapter.plainUserAgent === true)
     const previous = this.teardownWindow()
     this.createWindow(adapter, previous)
   }
@@ -131,17 +136,19 @@ export class VideoBrowser {
    */
   async setDirect(direct: boolean): Promise<void> {
     this.direct = direct
-    if (this.current) await this.applyProxy(this.current.sessionPartition)
+    if (this.current) await this.applyProxy(this.current.sessionPartition, this.current.plainUserAgent === true)
   }
 
-  private async applyProxy(partition: string): Promise<void> {
+  private async applyProxy(partition: string, plainUa: boolean): Promise<void> {
     try {
       const { session } = await import('electron')
       const ses = session.fromPartition(partition)
-      // 浏览器标识里去掉程序名：快手会拒绝带「video-scraper/版本号」的请求（只回 {"result":2}，页面空白）
-      if (typeof ses.getUserAgent === 'function') {
+      // 需要的平台（目前只有快手）浏览器标识用普通 Chrome 的：快手会拒绝标识里带「Electron/…」或「video-scraper/…」的请求
+      // （只回一行 {"result":2}，页面空白；2026-10-07 用两台电脑实测，跟网络、代理无关）。
+      // 小红书不改：它的登录跟浏览器标识绑着，改了就要重新登录
+      if (plainUa && typeof ses.getUserAgent === 'function') {
         const ua = ses.getUserAgent()
-        const clean = ua.replace(/ video-scraper\/\S+/i, '')
+        const clean = plainChromeUserAgent(ua)
         if (clean !== ua) ses.setUserAgent(clean)
       }
       await ses.setProxy(this.direct ? { mode: 'direct' } : { mode: 'system' })

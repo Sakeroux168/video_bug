@@ -1,6 +1,7 @@
 import { describe, expect, it, vi, beforeEach } from 'vitest'
 import { VideoBrowser } from '../src/main/browser'
 import { xiaohongshuAdapter } from '../src/main/adapters/xiaohongshu'
+import { kuaishouAdapter } from '../src/main/adapters/kuaishou'
 import type { PlatformAdapter } from '../src/main/adapters/types'
 
 // 稳妥模式提速：详情注水状态改用 webContents.mainFrame.executeJavaScript 读取
@@ -156,12 +157,21 @@ describe('VideoBrowser.setDirect：平台网页直连，不走系统代理', () 
   })
 })
 
-// 2026-10-07 再查：快手还会拒绝浏览器标识里带程序名「video-scraper/x.y.z」的请求（同样只回 {"result":2}），
-// 去掉程序名就正常（Electron 字样留着也没事）。平台窗口的标识里不再带程序名。
-describe('平台窗口的浏览器标识不带程序名', () => {
+// 2026-10-07 再查：快手还会拒绝浏览器标识里带「video-scraper/x.y.z」或「Electron/x.y.z」的请求
+// （同样只回 {"result":2}；用户换了台电脑也一样）。平台窗口改用同版本普通 Chrome 的标识。
+describe('快手窗口的浏览器标识是普通 Chrome 的（别的平台不动）', () => {
+  it('小红书不改标识（它的登录跟标识绑着，改了要重新登录）', async () => {
+    const setUserAgent = vi.fn()
+    sessionFromPartition.mockReturnValue({ setProxy: vi.fn(async () => {}), getUserAgent: () => 'X Electron/44.6.0 Y', setUserAgent })
+    const b = new VideoBrowser({} as never)
+    ;(b as unknown as { current: unknown }).current = xiaohongshuAdapter
+    await b.setDirect(true)
+    expect(setUserAgent).not.toHaveBeenCalled()
+  })
+
   beforeEach(() => { sessionFromPartition.mockReset() })
 
-  it('去掉 video-scraper/版本号，其余照旧', async () => {
+  it('去掉 video-scraper/版本号 和 Electron/版本号，其余照旧', async () => {
     const setUserAgent = vi.fn()
     sessionFromPartition.mockReturnValue({
       setProxy: vi.fn(async () => {}),
@@ -169,8 +179,8 @@ describe('平台窗口的浏览器标识不带程序名', () => {
       setUserAgent
     })
     const b = new VideoBrowser({} as never)
-    ;(b as unknown as { current: unknown }).current = xiaohongshuAdapter
+    ;(b as unknown as { current: unknown }).current = kuaishouAdapter
     await b.setDirect(true)
-    expect(setUserAgent).toHaveBeenCalledWith('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.7977.130 Electron/44.6.0 Safari/537.36')
+    expect(setUserAgent).toHaveBeenCalledWith('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.7977.130 Safari/537.36')
   })
 })

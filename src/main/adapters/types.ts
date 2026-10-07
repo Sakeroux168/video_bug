@@ -95,6 +95,9 @@ export interface PlatformAdapter {
   downloadReferer: string
   /** 视频 / 封面下载只认这些域名（含子域名）；别的地址一律不请求（2026-10-07 安全加固 A8） */
   downloadHosts: readonly string[]
+  /** 平台窗口用普通 Chrome 的浏览器标识（去掉 Electron / 程序名）。2026-10-07：快手拒绝带 Electron 字样的请求。
+   *  只给需要的平台开——小红书的登录跟浏览器标识绑着，一改就要重新登录 */
+  plainUserAgent?: boolean
   /** 平台窗口的主页面只能跳到这些域名（含子域名，要包括登录、验证页）；别的交给系统浏览器（2026-10-07 L1） */
   navHosts: readonly string[]
   /** 挂钩脚本需要转发的接口 URL 特征 */
