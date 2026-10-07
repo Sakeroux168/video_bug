@@ -208,8 +208,10 @@ export default function HelpPanel(): React.ReactElement {
         <div className="space-y-2 text-xs leading-5 text-slate-500">
           <p>
             这是项目维护者提供的<span className="font-medium text-emerald-600">官方免费版本</span>。
-            项目采用 MIT + Commons Clause 的<span className="font-medium text-slate-700">源码可用</span>许可：
-            允许利用软件输出赚钱，但禁止出售软件本身、换皮版或把软件本体做成主要收费服务。
+            项目采用 PolyForm 非商业许可证（<span className="font-medium text-slate-700">源码可用</span>，不是开源）：
+            个人学习、研究、兴趣项目等<span className="font-medium text-slate-700">非商业用途免费</span>；
+            公司或个人拿来做生意（包括只在内部用）、出售、换皮，要先向作者购买<span className="font-medium text-slate-700">商业授权</span>，
+            在源码仓库开一个标题为「商业授权」的 Issue 联系。
           </p>
           <p>
             源码地址：

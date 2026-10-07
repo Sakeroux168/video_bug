@@ -15,10 +15,11 @@ const requireFile = (file, phrases = []) => {
   for (const phrase of phrases) if (!contents.includes(phrase)) errors.push(`${file} 缺少关键内容: ${phrase}`)
 }
 
-requireFile('LICENSE', ['Commons Clause', 'right to Sell the Software', 'MIT License', 'Licensor: Sakeroux168'])
-requireFile('LICENSE.zh-CN.md', ['源码可用', '禁止出售软件本身', '允许利用软件输出赚钱'])
+// 2026-10-07 许可改成 PolyForm Noncommercial 1.0.0（非商业免费，商用买授权）
+requireFile('LICENSE', ['PolyForm Noncommercial License 1.0.0', 'Required Notice: Copyright 2026 Sakeroux168', 'Any noncommercial purpose is a permitted purpose.'])
+requireFile('LICENSE.zh-CN.md', ['源码可用', '非商业用途免费', '商业授权'])
 requireFile('NOTICE', [
-  'FFmpeg 8.0.1', '894da5ca7d', 'Electron 35.7.5', 'sherpa-onnx-node',
+  'FFmpeg 8.0.1', '894da5ca7d', 'Electron 44.6.0', 'sherpa-onnx-node',
   'HFrost0/bilix', 'bilix/download/base_downloader_part.py', 'bb5b234cdfe3fafc4db9d992b91091f2edf791e5'
 ])
 requireFile('TRADEMARKS.md', ['不授予商标权'])

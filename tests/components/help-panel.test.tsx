@@ -50,12 +50,13 @@ describe('HelpPanel（使用说明面板）', () => {
     expect(text).not.toContain('已保护你的电脑')
   })
 
+  // 2026-10-07 许可改成 PolyForm Noncommercial：非商业免费，商用要买授权（以前是「允许靠输出赚钱、只禁止出售」）
   it('显示官方免费版本、源码可用许可边界和第三方许可位置', () => {
     const { container } = render(<HelpPanel />)
     const text = container.textContent ?? ''
     expect(text).toContain('官方免费版本')
-    expect(text).toContain('允许利用软件输出赚钱')
-    expect(text).toContain('禁止出售软件本身')
+    expect(text).toContain('非商业用途免费')
+    expect(text).toContain('商业授权')
     expect(text).toContain('源码可用')
     expect(text).toContain('https://github.com/Sakeroux168/video_bug')
     expect(text).toContain('resources\\licenses')

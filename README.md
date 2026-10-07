@@ -23,11 +23,13 @@
 
 ## 许可
 
-**源码可用（Source Available）**，不是 OSI 定义的开源：采用 MIT License + Commons Clause。
+**源码可用（Source Available）**，不是 OSI 定义的开源：采用 [PolyForm Noncommercial License 1.0.0](https://polyformproject.org/licenses/noncommercial/1.0.0)。
 
-- 可以免费使用、修改、免费分享源码或构建版本，也可以靠使用结果赚钱。
-- **禁止出售软件本身**（包括换皮、收费托管 / 出租）。
+- **非商业用途免费**：个人学习、研究、兴趣项目，学校、公益机构使用，都可以免费用、改、分享（保留许可和署名）。
+- **商业用途要买商业授权**：公司或个人在业务里使用（包括只在内部用）、接单、出售、换皮、做成收费服务，都要先向作者购买授权。
+  联系方式：在本仓库开一个 Issue，标题写「商业授权」。
 - 第三方组件（FFmpeg、Electron、React、sherpa-onnx 等）按各自许可证使用。
+- 2026-10-07 之前发布的版本用的是 MIT + Commons Clause。
 
 详见 [LICENSE](LICENSE)、[中文说明](LICENSE.zh-CN.md)、[NOTICE](NOTICE)、[TRADEMARKS.md](TRADEMARKS.md)。
 

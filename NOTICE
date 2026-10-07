@@ -5,9 +5,10 @@ Project-owned code
 ------------------
 
 Copyright (c) 2026 Sakeroux168.
-Licensed under the MIT License with Commons Clause License Condition v1.0.
+Licensed under the PolyForm Noncommercial License 1.0.0 (see LICENSE). Commercial use requires a separate commercial license from the author.
 This makes the project source available, not OSI-approved open source.
-The Commons Clause condition applies only to project-owned code and does not relicense any component listed below.
+The project license applies only to project-owned code and does not relicense any component listed below.
+Versions released before 2026-10-07 were licensed under the MIT License with Commons Clause License Condition v1.0.
 
 Source repository: https://github.com/Sakeroux168/video_bug
 
@@ -22,7 +23,7 @@ Runtime components
    - The distributed build enables GPL/version3 and libx264. It remains a separate executable invoked by video-scraper; it is not relicensed under the project license.
    - Full license and build configuration: resources/licenses/FFmpeg-GPLv3.txt and FFmpeg-BUILD-INFO.txt
 
-2. Electron 35.7.5
+2. Electron 44.6.0
    - Project: https://www.electronjs.org/
    - License: MIT
    - Electron also contains Chromium, Node.js, and other components. electron-builder provides LICENSE.electron.txt and LICENSES.chromium.html in the packaged application.
