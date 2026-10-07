@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { DatabaseSync } from 'node:sqlite'
 import { initDb, createTask, insertVideos, setTaskStatus } from '../src/main/db'
 import {
-  shouldRunFollow, runAutoFollow, noticeForEvent, FollowTracker, Notifier, AutoFollowTimer, taskLabel
+  shouldRunFollow, runAutoFollow, noticeForEvent, FollowTracker, Notifier, AutoFollowTimer, taskLabel, loginItemFor, startHidden
 } from '../src/main/automation'
 import type { VideoItem } from '../src/main/adapters/types'
 import type { CreateTaskInput } from '../src/shared/types'
@@ -72,6 +72,17 @@ describe('定时追更建任务', () => {
     runAutoFollow(db, () => {}, { count: 20 })
     const r = runAutoFollow(db, () => {}, { count: 20 })
     expect(r).toMatchObject({ created: 0, skipped: 1 })
+  })
+
+  // 2026-10-07 挑作者：「只追标了定时追更的」——只给标了的建；标了但没爬过主页的也建（按全部抓，条数照设置）
+  it('只追标了的作者：没标的不建；标了没爬过的按全部抓', () => {
+    seed()
+    db.prepare("UPDATE authors SET auto_follow = 1 WHERE sec_uid LIKE '%bbbb%'").run()
+    const r = runAutoFollow(db, () => {}, { count: 5, scope: 'picked' })
+    expect(r).toMatchObject({ authors: 1, created: 1 })
+    const row = db.prepare('SELECT query, filters FROM tasks WHERE id = ?').get(r.taskIds[0]) as { query: string; filters: string }
+    expect(row.query).toContain('bbbb')
+    expect(JSON.parse(row.filters)).toMatchObject({ timeRange: 'all', targetCount: 5 })
   })
 
   it('没有爬过主页的作者 → 什么都不建', () => {
@@ -147,5 +158,26 @@ describe('定时器', () => {
     await timer.tick()
     expect(run).toHaveBeenCalledTimes(1)
     expect(last).not.toBeNull()
+  })
+})
+
+// 2026-10-07 开机自动启动：打包版才写系统启动项；便携版要写原 exe 的路径（运行时的 exe 在临时目录，下次开机就没了）
+describe('开机自动启动', () => {
+  it('打包版：开 → 写启动项，带 --hidden（开机后缩在托盘）；关 → 撤掉', () => {
+    expect(loginItemFor(true, { isPackaged: true, execPath: 'C:/tmp/x/视频爬取工具.exe' })).toEqual({
+      openAtLogin: true, path: 'C:/tmp/x/视频爬取工具.exe', args: ['--hidden']
+    })
+    expect(loginItemFor(false, { isPackaged: true, execPath: 'C:/a.exe' })).toEqual({ openAtLogin: false, path: 'C:/a.exe', args: ['--hidden'] })
+  })
+  it('便携版：用原来那个 exe 的路径', () => {
+    expect(loginItemFor(true, { isPackaged: true, execPath: 'C:/Temp/2abc/视频爬取工具.exe', portableFile: 'D:/工具/视频爬取工具.exe' })?.path)
+      .toBe('D:/工具/视频爬取工具.exe')
+  })
+  it('开发版不碰系统启动项', () => {
+    expect(loginItemFor(true, { isPackaged: false, execPath: 'electron.exe' })).toBeNull()
+  })
+  it('带 --hidden 启动 → 不弹主窗口', () => {
+    expect(startHidden(['app.exe', '--hidden'])).toBe(true)
+    expect(startHidden(['app.exe'])).toBe(false)
   })
 })

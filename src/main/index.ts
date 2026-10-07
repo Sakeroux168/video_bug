@@ -26,7 +26,7 @@ import { findFfmpeg } from './asr/media'
 import { startBridge, DEFAULT_BRIDGE_PORT } from './bridge'
 import { TaskQueue } from './taskQueue'
 import { onBeforeQuit } from './shutdown'
-import { AutoFollowTimer, FollowTracker, Notifier, noticeForEvent, platformNameOf, runAutoFollow, taskLabel, type AutoFollowResult, type Notice } from './automation'
+import { AutoFollowTimer, FollowTracker, Notifier, loginItemFor, noticeForEvent, platformNameOf, runAutoFollow, startHidden, taskLabel, type AutoFollowResult, type Notice } from './automation'
 import { loadAutomationState, saveAutomationState } from './automationState'
 import { createTray, showNotice, windowInFront } from './desktop'
 import type { Server } from 'http'
@@ -71,11 +71,21 @@ function notifyTaskEvent(evt: { type?: string; taskId?: number; fetched?: number
   if (summary) notify(summary)
 }
 
+/** 开机自动启动：按设置写 / 撤系统启动项（开发版不碰）。启动时和保存设置后各调一次 */
+function applyLoginItem(): void {
+  if (process.platform !== 'win32') return
+  const item = loginItemFor(getSettings().openAtLogin === true, {
+    isPackaged: app.isPackaged, execPath: process.execPath, portableFile: process.env['PORTABLE_EXECUTABLE_FILE']
+  })
+  if (!item) return
+  try { app.setLoginItemSettings(item) } catch (e) { console.error('[开机启动] 设置失败：', e) }
+}
+
 /** 追更一次（定时器到点、托盘菜单、设置页按钮都走这里）；结果记下来给设置页显示 */
 function followNow(manual: boolean): AutoFollowResult | null {
   if (!dbRef) return null
   const count = Math.min(200, Math.max(1, Math.floor(Number(getSettings().autoFollowCount) || 20)))
-  const r = runAutoFollow(dbRef, enqueueTask, { count })
+  const r = runAutoFollow(dbRef, enqueueTask, { count, scope: getSettings().autoFollowScope === 'picked' ? 'picked' : 'all' })
   followTracker.start(r.taskIds)
   saveAutomationState({ lastResult: { at: new Date().toISOString(), manual, authors: r.authors, created: r.created, skipped: r.skipped } })
   return r
@@ -122,6 +132,8 @@ function dequeueTask(id: number): void { taskQueue.remove(id) }
 function createWindow(): void {
   win = new BrowserWindow({
     width: 1280, height: 820, title: '视频爬取工具',
+    // 开机自动启动时带 --hidden：只挂托盘，点托盘图标再打开
+    show: !startHidden(process.argv),
     webPreferences: { preload: join(__dirname, '../preload/index.js'), contextIsolation: true, nodeIntegration: false }
   })
   installDownloadFallback(win.webContents, () => app.getPath('downloads'))
@@ -340,10 +352,12 @@ app.whenReady().then(() => {
     dequeueTask,
     kickQueue: () => taskQueue.kick(),
     setBrowserVisible,
-    followNow: () => followNow(true)
+    followNow: () => followNow(true),
+    applyLoginItem
   })
 
   // 2026-10-07 自动化：托盘一直在；每分钟看一眼该不该定时追更（错过了点开机补跑一次）
+  applyLoginItem()
   if (process.platform === 'win32') app.setAppUserModelId(app.isPackaged ? 'com.local.video-scraper' : process.execPath)
   tray = createTray({
     getWindow: () => win,

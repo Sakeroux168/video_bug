@@ -1,7 +1,7 @@
 import { app, ipcMain, BrowserWindow, dialog, shell, clipboard } from 'electron'
 import type { DatabaseSync } from 'node:sqlite'
 import { existsSync, statSync } from 'node:fs'
-import { createTask, listTasks, listVideos, listDeletedVideos, restoreVideos, allTaskStats, listDownloadedVideos, listAuthors, setTaskStatus, setVideoStatus, updateAuthorCategory, deleteAuthors, taskStats, insertAuthorIfAbsent, globalStats, recentDownloads } from './db'
+import { setAuthorsAutoFollow, createTask, listTasks, listVideos, listDeletedVideos, restoreVideos, allTaskStats, listDownloadedVideos, listAuthors, setTaskStatus, setVideoStatus, updateAuthorCategory, deleteAuthors, taskStats, insertAuthorIfAbsent, globalStats, recentDownloads } from './db'
 import { getSettings, saveSettings } from './settings'
 import { deleteVideoRows } from './videoDelete'
 import { scanFilesTreeAsync, deleteFileDir, deleteFileVideo, locateFileDir, locateVideoFile } from './fileManager'
@@ -48,6 +48,8 @@ export interface IpcDeps {
   setBrowserVisible: (v: boolean) => void
   /** 2026-10-07 自动化：现在追更一次（和定时器、托盘菜单同一个入口） */
   followNow: () => AutoFollowResult | null
+  /** 保存设置后按「开机自动启动」写 / 撤系统启动项 */
+  applyLoginItem?: () => void
 }
 
 export function registerIpc(deps: IpcDeps): void {
@@ -183,6 +185,10 @@ export function registerIpc(deps: IpcDeps): void {
     updateAuthorCategory(db, id, category)
     return true
   })
+  handle('authors:autoFollow', (_e, ids: unknown, on: unknown) => {
+    setAuthorsAutoFollow(db, Array.isArray(ids) ? ids.filter((n): n is number => Number.isInteger(n)) : [], on === true)
+    return true
+  })
   handle('authors:delete', (_e, ids: number[]) => {
     // #10：先掐断这些作者在下载 / 排队的视频，否则删完行后下载器照样写出没有记录的孤儿文件
     if (ids.length > 0) {
@@ -272,7 +278,7 @@ export function registerIpc(deps: IpcDeps): void {
 
   handle('settings:get', () => getSettings())
   // 自动化：设置页显示上次追更情况、现在有几个作者会被追更；「现在追更一次」
-  handle('automation:status', (): AutomationStatus => ({ ...loadAutomationState(), eligible: followAuthors(db).length }))
+  handle('automation:status', (): AutomationStatus => ({ ...loadAutomationState(), eligible: followAuthors(db, getSettings().autoFollowScope === 'picked' ? 'picked' : 'all').length }))
   handle('automation:followNow', () => {
     const r = deps.followNow()
     return r ? { authors: r.authors, created: r.created, skipped: r.skipped } : null
@@ -283,6 +289,7 @@ export function registerIpc(deps: IpcDeps): void {
     deps.reloadAnalyzer()
     // Task14: 下载目录 / ASR 就绪状态变化 → 重建 Organizer（resolveCategory 实时读 asr/analyzer）
     deps.reloadOrganizer()
+    deps.applyLoginItem?.()
     deps.downloader.updateSettings(s)
   })
 

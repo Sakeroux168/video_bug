@@ -26,6 +26,26 @@ describe('设置 · 自动化', () => {
     })))
   })
 
+  it('追更哪些作者：默认全部爬过主页的；可以改成只追标了的', async () => {
+    installFakeApi()
+    render(<SettingsPanel />)
+    const scope = await screen.findByLabelText('追更哪些作者')
+    expect((scope as HTMLSelectElement).value).toBe('all')
+    fireEvent.change(scope, { target: { value: 'picked' } })
+    save()
+    await waitFor(() => expect(window.api.saveSettings).toHaveBeenCalledWith(expect.objectContaining({ autoFollowScope: 'picked' })))
+  })
+
+  it('开机自动启动：默认关；勾上保存', async () => {
+    installFakeApi()
+    render(<SettingsPanel />)
+    const box = await screen.findByLabelText('开机自动启动（启动后缩在托盘，不弹窗口）')
+    expect(box).not.toBeChecked()
+    fireEvent.click(box)
+    save()
+    await waitFor(() => expect(window.api.saveSettings).toHaveBeenCalledWith(expect.objectContaining({ openAtLogin: true })))
+  })
+
   it('每个作者最多抓：超过 200 按 200 存，空或 0 按 1 存', async () => {
     installFakeApi()
     render(<SettingsPanel />)

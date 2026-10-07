@@ -104,6 +104,7 @@ export default function SettingsPanel({ onDirtyChange }: { onDirtyChange?: (dirt
     if (toSave !== s) setS(toSave)
     await api.saveSettings(toSave)
     setSaved(JSON.stringify(toSave))
+    void refreshAuto() // 「追更哪些作者」改了，会被追更的人数跟着变
     if (segments !== s.downloadSegments) ok(`已保存（分段数只能 1-4，已按 ${segments} 段保存）`)
     else ok(stuck === s.stuckTimeoutMin ? '已保存' : `已保存（卡住判定只能 2-60 分钟，已按 ${stuck} 分钟保存）`)
     setTimeout(() => setMsg(null), 1500)
@@ -226,6 +227,10 @@ export default function SettingsPanel({ onDirtyChange }: { onDirtyChange?: (dirt
               关窗口时缩到右下角托盘，程序在后台继续跑
             </label>
             <label className="flex items-start gap-2 leading-5 text-slate-600">
+              <input className="mt-1" type="checkbox" checked={s.openAtLogin} onChange={e => set('openAtLogin', e.target.checked)} />
+              开机自动启动（启动后缩在托盘，不弹窗口）
+            </label>
+            <label className="flex items-start gap-2 leading-5 text-slate-600">
               <input className="mt-1" type="checkbox" checked={s.notifyEnabled} onChange={e => set('notifyEnabled', e.target.checked)} />
               抓完、需要登录或验证时弹系统通知
             </label>
@@ -246,9 +251,17 @@ export default function SettingsPanel({ onDirtyChange }: { onDirtyChange?: (dirt
                     onChange={e => set('autoFollowCount', Number(e.target.value))} />
                 </label>
                 <span>条</span>
+                <label className="flex items-center gap-2">
+                  追更哪些作者
+                  <select className={inputCls} value={s.autoFollowScope ?? 'all'} onChange={e => set('autoFollowScope', e.target.value === 'picked' ? 'picked' : 'all')}>
+                    <option value="all">全部爬过主页的作者</option>
+                    <option value="picked">只追标了「定时追更」的作者</option>
+                  </select>
+                </label>
               </div>
               <p className="mt-1 pl-5 leading-5 text-slate-400">
-                到点给爬过主页的作者各建一个「只抓新视频」任务，排队一个个爬{auto ? `；现在有 ${auto.eligible} 个作者会被追更` : ''}。
+                到点给要追的作者各建一个「只抓新视频」任务，排队一个个爬{auto ? `；现在有 ${auto.eligible} 个作者会被追更` : ''}。
+                想只追其中几个：在「作者收藏」里勾上，点「加入定时追更」，再把上面改成「只追标了的」。
                 错过了点（比如下午才开电脑），开程序后会补跑一次。
               </p>
               {s.autoFollowEnabled && !s.closeToTray && (
