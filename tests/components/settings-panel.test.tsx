@@ -37,7 +37,13 @@ const SETTING_LABELS: Record<keyof AppSettings, string> = {
   organizeByOrientation: '按横屏/竖屏分文件夹',
   organizeByDuration: '按时长分文件夹',
   bridgeEnabled: '开本机接口，让发布助手能让本程序去抓某个作者的主页（只在这台电脑内部，不对外）',
-  bridgePort: '端口'
+  bridgePort: '端口',
+  // 2026-10-07 自动化
+  closeToTray: '关窗口时缩到右下角托盘，程序在后台继续跑',
+  notifyEnabled: '抓完、需要登录或验证时弹系统通知',
+  autoFollowEnabled: '每天定时追更',
+  autoFollowTime: '追更时间',
+  autoFollowCount: '每个作者最多抓'
 }
 
 describe('SettingsPanel 消息的成功/失败配色', () => {

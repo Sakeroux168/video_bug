@@ -12,6 +12,8 @@ directories:
 files:
   - out/**/*
   - package.json
+  # 托盘 / 通知图标：electron-vite 的 ?asset 按 <app>/resources/ 找，不拷进 out/
+  - resources/**/*
   - node_modules/sherpa-onnx-node/**/*
   - node_modules/sherpa-onnx-win-x64/**/*
 

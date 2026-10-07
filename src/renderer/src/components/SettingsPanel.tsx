@@ -1,8 +1,8 @@
 import React, { useEffect, useState } from 'react'
 import { api } from '../api'
-import type { AppSettings, AsrStatus, AsrProgress } from '../../../shared/types'
+import type { AppSettings, AsrStatus, AsrProgress, AutomationStatus } from '../../../shared/types'
 import { clampDownloadSegments, clampStuckTimeoutMin } from '../../../shared/types'
-import { Card, btnPrimary, inputCls } from './ui'
+import { Card, btn, btnPrimary, inputCls } from './ui'
 
 /** 字节数格式化成可读体积 */
 function fmtBytes(n: number): string {
@@ -11,6 +11,19 @@ function fmtBytes(n: number): string {
   if (n >= 1 << 20) return `${(n / (1 << 20)).toFixed(1)} MB`
   if (n >= 1 << 10) return `${(n / (1 << 10)).toFixed(1)} KB`
   return `${n} B`
+}
+
+/** 自动化：每个作者最多抓几条，1-200 */
+function clampFollowCount(n: number): number {
+  return Math.min(200, Math.max(1, Math.floor(Number(n) || 1)))
+}
+
+/** 上次追更的时间：10-07 09:00 */
+function shortTime(iso: string): string {
+  const d = new Date(iso)
+  if (!Number.isFinite(d.getTime())) return ''
+  const p = (n: number): string => String(n).padStart(2, '0')
+  return `${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`
 }
 
 /** onDirtyChange：有没有改了还没保存的内容（D3：App 据此在切页前提醒，以前切走改动就悄悄丢了） */
@@ -30,12 +43,34 @@ export default function SettingsPanel({ onDirtyChange }: { onDirtyChange?: (dirt
   const [downloading, setDownloading] = useState(false)
   const [progress, setProgress] = useState<AsrProgress | null>(null)
   const [organizing, setOrganizing] = useState(false)
+  const [auto, setAuto] = useState<AutomationStatus | null>(null)
+  const [followMsg, setFollowMsg] = useState<string | null>(null)
+  const [following, setFollowing] = useState(false)
+
+  async function refreshAuto(): Promise<void> {
+    try { setAuto(await api.automationStatus()) } catch { setAuto(null) }
+  }
+
+  async function followNow(): Promise<void> {
+    setFollowing(true)
+    try {
+      const r = await api.followNow()
+      if (!r || r.authors === 0) setFollowMsg('还没有爬过主页的作者，先去「作者收藏」爬一次')
+      else setFollowMsg(`已给 ${r.created} 个作者建了追更任务${r.skipped ? `（${r.skipped} 个已经在排队，跳过）` : ''}，去「任务」页看进度`)
+      void refreshAuto()
+    } catch {
+      setFollowMsg('追更没建成，再试一次')
+    } finally {
+      setFollowing(false)
+    }
+  }
 
   async function refreshAsr(): Promise<void> { setAsr(await api.getAsrStatus()) }
 
   useEffect(() => {
     void api.getSettings().then(v => { setS(v); setSaved(JSON.stringify(v)) })
     void refreshAsr()
+    void refreshAuto()
     // Task14：订阅 ASR 模型下载进度，画进度条；组件卸载时取消订阅
     const off = api.onAsrProgress(p => setProgress(p))
     return off
@@ -56,11 +91,16 @@ export default function SettingsPanel({ onDirtyChange }: { onDirtyChange?: (dirt
       return
     }
     // R20 复查：卡住判定只收 2-60 分钟（空、0、1 以前会被悄悄收下）；夹紧后把实际值显示回输入框
+    if (!/^\d{1,2}:\d{2}$/.test(s.autoFollowTime ?? '')) {
+      err('追更时间要写成 09:00 这样')
+      return
+    }
     const stuck = clampStuckTimeoutMin(s.stuckTimeoutMin)
     const segments = clampDownloadSegments(s.downloadSegments)
-    const toSave = stuck === s.stuckTimeoutMin && segments === s.downloadSegments
+    const followCount = clampFollowCount(s.autoFollowCount)
+    const toSave = stuck === s.stuckTimeoutMin && segments === s.downloadSegments && followCount === s.autoFollowCount
       ? s
-      : { ...s, stuckTimeoutMin: stuck, downloadSegments: segments }
+      : { ...s, stuckTimeoutMin: stuck, downloadSegments: segments, autoFollowCount: followCount }
     if (toSave !== s) setS(toSave)
     await api.saveSettings(toSave)
     setSaved(JSON.stringify(toSave))
@@ -177,6 +217,54 @@ export default function SettingsPanel({ onDirtyChange }: { onDirtyChange?: (dirt
             <input className="mt-1" type="checkbox" checked={s.allowDuplicateAuthor} onChange={e => set('allowDuplicateAuthor', e.target.checked)} />
             允许重复爬取已爬过主页的作者（取消勾选则自动去重跳过）
           </label>
+        </Card>
+
+        <Card title="自动化">
+          <div className="space-y-2 text-xs text-slate-500">
+            <label className="flex items-start gap-2 leading-5 text-slate-600">
+              <input className="mt-1" type="checkbox" checked={s.closeToTray} onChange={e => set('closeToTray', e.target.checked)} />
+              关窗口时缩到右下角托盘，程序在后台继续跑
+            </label>
+            <label className="flex items-start gap-2 leading-5 text-slate-600">
+              <input className="mt-1" type="checkbox" checked={s.notifyEnabled} onChange={e => set('notifyEnabled', e.target.checked)} />
+              抓完、需要登录或验证时弹系统通知
+            </label>
+            <p className="pl-5 leading-5 text-slate-400">窗口在前台时不弹，界面里本来就有提示。</p>
+            <div className="border-t border-slate-100 pt-2">
+              <label className="flex items-start gap-2 leading-5 text-slate-600">
+                <input className="mt-1" type="checkbox" checked={s.autoFollowEnabled} onChange={e => set('autoFollowEnabled', e.target.checked)} />
+                每天定时追更
+              </label>
+              <div className="mt-1 flex flex-wrap items-center gap-3 pl-5">
+                <label className="flex items-center gap-2">
+                  追更时间
+                  <input type="time" className={`${inputCls} w-28`} value={s.autoFollowTime} onChange={e => set('autoFollowTime', e.target.value)} />
+                </label>
+                <label className="flex items-center gap-2">
+                  每个作者最多抓
+                  <input type="number" min={1} max={200} className={`${inputCls} w-20`} value={s.autoFollowCount}
+                    onChange={e => set('autoFollowCount', Number(e.target.value))} />
+                </label>
+                <span>条</span>
+              </div>
+              <p className="mt-1 pl-5 leading-5 text-slate-400">
+                到点给爬过主页的作者各建一个「只抓新视频」任务，排队一个个爬{auto ? `；现在有 ${auto.eligible} 个作者会被追更` : ''}。
+                错过了点（比如下午才开电脑），开程序后会补跑一次。
+              </p>
+              {s.autoFollowEnabled && !s.closeToTray && (
+                <p className="mt-1 pl-5 leading-5 text-amber-600">关了窗口程序就退出了，到点也不会追更；建议同时勾上面的「缩到托盘」。</p>
+              )}
+              <div className="mt-2 flex flex-wrap items-center gap-2 pl-5">
+                <button type="button" className={btn('secondary', 'sm')} disabled={following} onClick={() => void followNow()}>现在追更一次</button>
+                {auto?.lastResult && (
+                  <span className="text-slate-400">
+                    上次追更：{shortTime(auto.lastResult.at)}{auto.lastResult.manual ? '（手动）' : ''}，建了 {auto.lastResult.created} 个任务
+                  </span>
+                )}
+              </div>
+              {followMsg && <p className="mt-1 pl-5 leading-5 text-slate-600">{followMsg}</p>}
+            </div>
+          </div>
         </Card>
 
         <Card title="和百家号发布助手打通">

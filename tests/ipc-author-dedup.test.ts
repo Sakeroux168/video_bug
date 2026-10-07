@@ -65,7 +65,7 @@ function setup(): {
     getOrganizer: () => null,
     enqueueTask: id => enqueued.push(id),
     setBrowserVisible: () => {},
-    processor: {} as never, dequeueTask: () => {}, kickQueue: () => {}
+    processor: {} as never, dequeueTask: () => {}, kickQueue: () => {}, followNow: () => null
   })
   const create = mockIpc.handlers.get('task:create')!
   return {

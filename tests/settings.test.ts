@@ -43,6 +43,12 @@ function fullSettings(over: Partial<AppSettings> = {}): AppSettings {
     organizeByDuration: true,
     bridgeEnabled: true,
     bridgePort: 47321,
+    // 2026-10-07 自动化
+    closeToTray: true,
+    notifyEnabled: false,
+    autoFollowEnabled: true,
+    autoFollowTime: '21:30',
+    autoFollowCount: 50,
     ...over
   }
 }

@@ -41,6 +41,8 @@ function freshApi(): Api {
     noteVideo: vi.fn(async () => true),
     playVideo: vi.fn(async () => ({ ok: true })),
     locateLibraryVideo: vi.fn(async () => ({ ok: true })),
+    automationStatus: vi.fn(async () => ({ lastFollowAt: null, lastResult: null, eligible: 0 })),
+    followNow: vi.fn(async () => ({ authors: 0, created: 0, skipped: 0 })),
     exportLibrary: vi.fn(async () => ({ ok: false, canceled: true })),
     restoreVideos: vi.fn(async () => ({ restored: 0 })),
     downloadPause: vi.fn(async () => true),
@@ -107,7 +109,8 @@ function makeSettings(): AppSettings {
     addressTtlMin: 10, allowDuplicateAuthor: false, organizeDebounceMs: 5000, asrMaxSec: 90,
     stallThresholdSec: 5, rescueCooldownSec: 10, stuckTimeoutMin: 5,
     organizeByKeyword: false, organizeByCategory: false, organizeByAuthor: false, organizeByOrientation: false, organizeByDuration: false,
-    bridgeEnabled: true, bridgePort: 47321
+    bridgeEnabled: true, bridgePort: 47321,
+    closeToTray: false, notifyEnabled: true, autoFollowEnabled: false, autoFollowTime: '09:00', autoFollowCount: 20
   }
 }
 

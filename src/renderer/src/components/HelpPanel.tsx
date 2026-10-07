@@ -99,6 +99,10 @@ export default function HelpPanel(): React.ReactElement {
           下好的视频去「素材库」看封面挑：可以打星标 / 待用 / 已用、写备注。勾几条点「打包交付」，
           就复制到你选的文件夹，附一份来源清单表格，还可以顺便统一分辨率；原视频不动。
         </p>
+        <p className="mt-2 rounded-md bg-slate-50 px-3 py-2 text-xs leading-5 text-slate-500">
+          想让它自己干活：去「设置 → 自动化」。可以关窗口缩到托盘后台跑、抓完弹系统通知、每天定时追更
+          （到点给爬过主页的作者各建一个「只抓新视频」任务）。程序要开着才会追更，缩在托盘也行。
+        </p>
       </Card>
 
       <Card>

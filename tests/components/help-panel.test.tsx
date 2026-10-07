@@ -91,6 +91,14 @@ describe('D7 使用说明和软件对得上', () => {
     expect(t).toContain('打包交付')
   })
 
+  // 2026-10-07 自动化
+  it('讲到托盘、系统通知、定时追更', () => {
+    const t = text()
+    expect(t).toContain('设置 → 自动化')
+    expect(t).toContain('缩到托盘')
+    expect(t).toContain('定时追更')
+  })
+
   it('「未分类」只在勾了按品类分文件夹时才有；登录不只说抖音；不再叫人截图给技术', () => {
     const t = text()
     expect(t).toMatch(/勾了「按品类分文件夹」[^。]*未分类/)
