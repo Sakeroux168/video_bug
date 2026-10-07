@@ -1,6 +1,6 @@
 # video_bug 当前交接
 
-> 当前执行快照，随进度重写；历史看 Git。更新于 2026-10-07（开源准备完成）。
+> 当前执行快照，随进度重写；历史看 Git。更新于 2026-10-07（只抓热门 + 补数据合并后）。
 
 ## 基线
 
@@ -31,7 +31,8 @@
 - 体验快修第三批 ✅ PR #28（`6f7d9b2`）：使用说明 7 处对齐（D7）；下载进度 video:progress 走单独通道 evt:download:progress、视频列表加分辨率 / 大小、标题列 ≥14rem、按钮不折行、勾选框可累加（D8）。体验快修 D1–D8 全部完成。
 - 开源准备 ✅ PR #30（`623d56c`）：锁文件补 sherpa-onnx-darwin-x64（npm ci 能过）、ffmpeg 改从 vendor/ffmpeg/bin（或 FFMPEG_BIN_DIR）、测试临时目录改到系统临时目录、GitHub Actions（windows-latest：npm ci + npm run verify，首次 1m36s 通过）。✅ PR #31（`062554e`）：README + 免责声明（按 LICENSE 称「源码可用」）、docs 只留 使用说明.md（50 份内部文档移出，本地备份在 claude工作区\内部文档备份\docs-2026-10-06，Git 历史仍在）。
 - 开源准备 ✅ PR #33（`03f97b8`）：tests/*.ts 纳入类型检查（tsconfig.tests.json，152 个错误清零，typecheck / CI 都查）。已关旧 PR #2，删掉 28 个已合并的远端分支（远端只剩 master）。
-- 接下来（按用户认可的顺序）：只抓热门 + 补数据（点赞 / 收藏门槛、原生排序、互动数补全）→ 视频处理 / 素材库 / 自动化；Electron 升级单独做；性能剩下的 C4 以后做。
+- 只抓热门 + 补数据 ✅ PR #35（`d4b69a6`）：收藏 / 分享 / 播放进 stats（字段名真机核对：抖音 collect_count / share_count，play_count 恒 0 不存；小红书 collected_count / shared_count / share_count / collectedCount / shareCount；快手 viewCount）、再抓到时更新 + updatedAt、导出加四列、列表加收藏列；最少点赞 / 最少收藏门槛（小红书列表阶段就跳过）。
+- 接下来：N01 按最多点赞排序（小红书网页筛选面板；抖音筛选面板要先真机确认），然后视频处理 / 素材库 / 自动化；Electron 升级单独做；性能 C4 以后做。
 - 待用户决定：本机接口 bridgeEnabled 新装默认是否改为关；`.ai/coordinator/` 里的本机路径要不要清理。
 - 体验测试注意：Electron 的 `window.confirm` 是系统弹窗，会卡住整个程序、远程控制关不掉；测删除这类操作前先用 CDP 把 `window.confirm` 换成返回 true 的函数。
 - 全面检查报告和总汇总在 `E:\项目文件\视频爬取\claude工作区\全面检查\`（先看 `总汇总.md`）。
