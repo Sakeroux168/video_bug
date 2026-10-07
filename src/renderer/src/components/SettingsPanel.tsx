@@ -3,6 +3,7 @@ import { api } from '../api'
 import type { AppSettings, AsrStatus, AsrProgress, AutomationStatus } from '../../../shared/types'
 import { clampDownloadConcurrency, clampDownloadSegments, clampStuckTimeoutMin } from '../../../shared/types'
 import { Card, btn, btnPrimary, inputCls } from './ui'
+import { checkSettings } from '../../../shared/settingsCheck'
 
 /** 字节数格式化成可读体积 */
 function fmtBytes(n: number): string {
@@ -82,6 +83,11 @@ export default function SettingsPanel({ onDirtyChange }: { onDirtyChange?: (dirt
 
   async function save(): Promise<void> {
     if (!s) return
+    const bad = checkSettings(s)
+    if (bad) {
+      err(bad)
+      return
+    }
     if (!Number.isFinite(s.asrMaxSec) || s.asrMaxSec < 10) {
       err('语音分析时长不能少于 10 秒')
       return

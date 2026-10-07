@@ -189,6 +189,7 @@ export const douyinAdapter: PlatformAdapter = {
   authorInputPlaceholder: 'https://www.douyin.com/user/xxx',
   downloadReferer: 'https://www.douyin.com/',
   // 视频：douyinvod / zjcdn / amemv / bytecdn；图片：douyinpic / byteimg / pstatp
+  navHosts: ['douyin.com', 'iesdouyin.com', 'zijieapi.com', 'bytedance.com', 'snssdk.com', 'amemv.com', 'bytedance.net', 'byteimg.com'],
   downloadHosts: ['douyin.com', 'douyinvod.com', 'zjcdn.com', 'amemv.com', 'bytecdn.cn', 'douyincdn.com', 'douyinstatic.com', 'douyinpic.com', 'byteimg.com', 'pstatp.com', 'snssdk.com'],
   apiUrlPatterns: [/aweme\/v1\/web\//, /aweme\/v1\/app\//],
   // 与泛化前写死在注入脚本里的两条特征逐字一致，不收窄

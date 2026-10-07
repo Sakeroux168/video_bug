@@ -4,7 +4,7 @@ import { readdirSync, statSync } from 'fs'
 import { readdir, rm, stat, unlink } from 'fs/promises'
 import { join } from 'path'
 import { deleteVideosByPathPrefix, recomputeAuthorCounts } from './db'
-import { isPathInside } from './pathSafety'
+import { isRealPathInside } from './pathSafety'
 import { deleteVideoRows } from './videoDelete'
 import type { FileDeleteResult, FilesDirNode, FilesTree, FilesVideoFile } from '../shared/types'
 
@@ -144,7 +144,7 @@ export function scanFilesTree(downloadDir: string): FilesTree {
  * 校验通过返回 { ok: true }，由 ipc 层再调 shell.showItemInFolder（本函数不触 shell，便于单测）。
  */
 export function locateFileDir(downloadDir: string, dirPath: string): { ok: boolean; error?: string } {
-  if (!isPathInside(downloadDir, dirPath)) return { ok: false, error: '非法路径：目标不在下载目录内' }
+  if (!isRealPathInside(downloadDir, dirPath)) return { ok: false, error: '非法路径：目标不在下载目录内' }
   try {
     if (!statSync(dirPath).isDirectory()) return { ok: false, error: '目录不存在' }
   } catch {
@@ -155,7 +155,7 @@ export function locateFileDir(downloadDir: string, dirPath: string): { ok: boole
 
 /** 定位视频文件校验（ipc files:locateFile）：同上，但目标必须是存在的文件 */
 export function locateVideoFile(downloadDir: string, filePath: string): { ok: boolean; error?: string } {
-  if (!isPathInside(downloadDir, filePath)) return { ok: false, error: '非法路径：目标不在下载目录内' }
+  if (!isRealPathInside(downloadDir, filePath)) return { ok: false, error: '非法路径：目标不在下载目录内' }
   try {
     if (!statSync(filePath).isFile()) return { ok: false, error: '文件不存在' }
   } catch {
@@ -175,7 +175,8 @@ function resolveManagedPath(downloadDir: string, segments: string[]): string | n
   if (!segments.every(s => typeof s === 'string' && isSafeSegment(s))) return null
   const target = join(downloadDir, ...segments)
   // 路径穿越防护（path.relative 校验逐条过）：目标必须位于 downloadDir 内，且不能是 downloadDir 自身
-  if (!isPathInside(downloadDir, target)) return null
+  // L6：按真实路径判断——下载目录里指到外面的目录联接，字面上在里面、删的却是外面的东西
+  if (!isRealPathInside(downloadDir, target)) return null
   return target
 }
 

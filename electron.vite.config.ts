@@ -1,6 +1,7 @@
 import { defineConfig, externalizeDepsPlugin } from 'electron-vite'
 import react from '@vitejs/plugin-react'
 import { resolve } from 'path'
+import { injectCsp } from './src/shared/csp'
 
 export default defineConfig({
   main: {
@@ -26,7 +27,8 @@ export default defineConfig({
     }
   },
   renderer: {
-    plugins: [react()],
+    // L5：只在构建时给主界面加 CSP（开发态 Vite 要注入内联脚本做热更新）
+    plugins: [react(), { name: 'renderer-csp', apply: 'build', transformIndexHtml: injectCsp }],
     // 必须钉成 127.0.0.1：不配 host 时 Vite 绑 'localhost'，某些机器上它先解析到 ::1
     // 就只监听 IPv6，而 Electron/Chromium 加载 http://localhost:5173 走 IPv4 →
     // ERR_CONNECTION_REFUSED、窗口白屏。绑 IPv4 两边才对得上。

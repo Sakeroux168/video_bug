@@ -66,8 +66,10 @@ export interface AsrModelFile {
 // 内容哈希，长得和 sha256 一模一样（64 位十六进制），但值不一样，
 // 拿它去校验会 100% 失败，而且报错看起来像是"文件被镜像站改过"。
 //
-// tokens.txt 不是 LFS 文件，API 只给 git blob 的 sha1，没有 sha256，
-// 所以那个只校验体积。
+// tokens.txt 不是 LFS 文件，API 只给 git blob 的 sha1，没有 sha256；
+// 2026-10-07 安全加固 L4：tokens.txt 和 silero_vad.onnx 下载下来实际算了 sha256 补上
+// （HF 和 hf-mirror 的 tokens.txt 一致；VAD 取自 GitHub 官方 Release）。有了校验，
+// 备用的第三方代理源下到被改过的文件也会被拒。
 export const FILES: AsrModelFile[] = [
   {
     key: 'model',
@@ -82,7 +84,7 @@ export const FILES: AsrModelFile[] = [
     rel: join('sense-voice', 'tokens.txt'),
     label: '词表',
     bytes: 315894,
-    sha256: '',
+    sha256: 'f449eb28dc567533d7fa59be34e2abca8784f771850c78a47fb731a31429a1dc',
     sources: hfSources('tokens.txt')
   },
   {
@@ -90,7 +92,7 @@ export const FILES: AsrModelFile[] = [
     rel: 'silero_vad.onnx',
     label: '静音检测模型',
     bytes: 643854,
-    sha256: '',
+    sha256: '9e2449e1087496d8d4caba907f23e0bd3f78d91fa552479bb9c23ac09cbb1fd6',
     sources: VAD_SOURCES
   }
 ]

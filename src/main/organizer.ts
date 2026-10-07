@@ -4,13 +4,13 @@ import { rename } from 'fs/promises'
 import { join, basename, dirname, resolve, extname } from 'path'
 import type { AuthorRow, VideoRow } from '../shared/types'
 import { listAuthorVideos, setAuthorOrganizeState } from './db'
-import { ensureUniqueStem } from './filename'
+import { ensureUniqueStem, safeSegment } from './filename'
+import { isPathInside } from './pathSafety'
 import { probeVideoDimensions, screenBucket, type VideoDimensions } from './videoMeta'
 
 /** 分类名清洗为合法目录名（Windows 非法字符替换，限长 32，空回落"未分类"）——与 scheduler 现有逻辑一致 */
 export function sanitizeCategory(category: string): string {
-  const cleaned = category.replace(/[\\/:*?"<>|\r\n]/g, '_').trim().slice(0, 32)
-  return cleaned || '未分类'
+  return safeSegment(category, 32, '未分类')
 }
 
 /** 时长分桶目录名：≤60s 归「一分钟内」，>60s 归「一分钟外」（videos.duration 单位秒，60s 整为界） */
@@ -20,8 +20,7 @@ export function durBucket(duration: number): string {
 
 /** 作者昵称清洗为合法目录名（限长 64，空回落"作者"） */
 export function sanitizeDirName(nickname: string): string {
-  const cleaned = nickname.replace(/[\\/:*?"<>|\r\n]/g, '_').trim().slice(0, 64)
-  return cleaned || '作者'
+  return safeSegment(nickname, 64, '作者')
 }
 
 /** 作者目录名：清洗昵称；若 authors 表存在**另一个**作者（不同 sec_uid）清洗后同名，则追加 `_${sec_uid.slice(-6)}` 区分 */
@@ -207,6 +206,8 @@ export class Organizer {
         if (levels.orientation) segments.push(screenBucket(width, height))
         if (levels.duration) segments.push(durBucket(v.duration))
         const destDir = join(this.deps.downloadDir, ...segments)
+        // L2：再兜一层——拼出来的目录必须还在下载目录里（名字清洗漏了也不会把文件挪出去）
+        if (!isPathInside(this.deps.downloadDir, destDir)) throw new Error('dest_outside_download_dir')
         mkdirSync(destDir, { recursive: true })
         const videoExt = extname(v.local_path)
         const coverExt = v.cover_path ? extname(v.cover_path) : '.jpg'

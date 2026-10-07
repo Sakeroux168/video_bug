@@ -22,6 +22,7 @@ import { resolveVideoSourceUrl } from './videoSource'
 import { createTaskChecked } from './taskCreate'
 import { exportFailure, revealExportFile, writeCsvToDownloads } from './csvExport'
 import { isAppUrl } from './security'
+import { checkSettings } from '../shared/settingsCheck'
 
 export interface IpcDeps {
   db: DatabaseSync
@@ -284,6 +285,9 @@ export function registerIpc(deps: IpcDeps): void {
     return r ? { authors: r.authors, created: r.created, skipped: r.skipped } : null
   })
   handle('settings:save', (_e, s: Parameters<typeof saveSettings>[0]) => {
+    // L6：界面已经先校验过；这里再挡一次，防止绕过界面直接调
+    const bad = checkSettings(s ?? {})
+    if (bad) throw new Error(bad)
     saveSettings(s)
     // I3: 保存后立即重建 Analyzer，下载参数热更新，无需重启程序
     deps.reloadAnalyzer()

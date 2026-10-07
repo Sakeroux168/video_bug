@@ -7,7 +7,7 @@ import type { ListStubResult, NativeSearchFilter, PlatformAdapter, VideoItem } f
 import type { TaskType } from '../shared/types'
 import { buildInjectScript } from './injector'
 
-import { allowedPermission } from './security'
+import { allowedPermission, ExternalOpener, isPlatformNavigation } from './security'
 import { buildBlockScript, buildFrameVisibilityScript, buildLoginStatusScript, PAGE_SIGNALS, urlIndicator, VERIFY_TEXT_PATTERN } from './pageSignals'
 import type { PlatformLoginStatus } from '../shared/types'
 export { VERIFY_TEXT_PATTERN, LOGIN_TEXT_PATTERN } from './pageSignals'
@@ -61,6 +61,7 @@ export class VideoBrowser {
   private current: PlatformAdapter | null = null
   // 注入脚本按平台构建（URL 兜底特征来自适配器），load 时刷新
   private inject = ''
+  private externalOpener = new ExternalOpener({ open: url => { void import('electron').then(({ shell }) => shell.openExternal(url)) } })
   private loginEvidence = new Map<string, { status: PlatformLoginStatus['status']; cookies: string }>()
 
   constructor(private host: BrowserWindow) {
@@ -165,7 +166,12 @@ export class VideoBrowser {
     //  2. 子框架导航 will-frame-navigate —— iframe（抖音内嵌广告/跳转）触发自定义协议；
     //  3. 服务端重定向 will-redirect —— 302/301 重定向到自定义协议。
     wc.on('will-navigate', (e, url) => {
-      if (!/^https?:/.test(url)) e.preventDefault()
+      if (!/^https?:/.test(url)) { e.preventDefault(); return }
+      // L1：主页面只在本平台的网站里跳；点到别的网站交给系统浏览器（间隔太近的不开）
+      if (!isPlatformNavigation(adapter, url)) {
+        e.preventDefault()
+        this.externalOpener.open(url)
+      }
     })
     // 子框架（iframe）导航到自定义协议时同样拦死（Electron 32+；用户实测主框架 will-navigate 拦不到的漏网路径之一）
     // 注意 Electron 32+ 该事件只带一个 details 事件对象，URL 在 e.url（与 will-navigate 的 (e, url) 不同）
@@ -177,8 +183,9 @@ export class VideoBrowser {
       if (!/^https?:/.test(url)) e.preventDefault()
     })
     // 一律不允许页面开新窗口/新标签（也拦截协议型 window.open）
+    // L1：页面弹的外部网页交给系统浏览器，但间隔太近的不开（页面不能一直往外弹）
     wc.setWindowOpenHandler(({ url }) => {
-      if (/^https?:/.test(url)) void import('electron').then(({ shell }) => shell.openExternal(url))
+      this.externalOpener.open(url)
       return { action: 'deny' }
     })
 
