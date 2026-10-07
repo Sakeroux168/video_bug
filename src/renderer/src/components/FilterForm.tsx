@@ -1,13 +1,15 @@
 import React, { useEffect, useState } from 'react'
 import { api } from '../api'
 import { useLoginStatuses, LoginStatusLight } from './LoginStatus'
-import type { CreateTaskInput, Filters, TaskType } from '../../../shared/types'
+import type { CreateTaskInput, Filters, SortBy, TaskType } from '../../../shared/types'
 import { btnPrimary, inputCls, Card } from './ui'
 import { checkDateRange, describeDateRange } from './dateRange'
 
+const SORT_LABEL: Record<SortBy, string> = { mostLiked: '最多点赞', mostCollected: '最多收藏', mostCommented: '最多评论', latest: '最新' }
+
 export default function FilterForm({ onSubmit }: { onSubmit: (t: CreateTaskInput) => Promise<{ id: number | null; skipped: boolean; reason?: string }> }) {
   // 只列已就绪的平台：接入中的平台解析器还没写，选了也跑不通
-  const [platforms, setPlatforms] = useState<Array<{ name: string; displayName: string; authorInputPlaceholder: string; supportedTaskTypes?: readonly TaskType[]; interactions?: readonly string[] }>>([])
+  const [platforms, setPlatforms] = useState<Array<{ name: string; displayName: string; authorInputPlaceholder: string; supportedTaskTypes?: readonly TaskType[]; interactions?: readonly string[]; sortOptions?: readonly SortBy[] }>>([])
   const [platform, setPlatform] = useState('douyin')
   const [type, setType] = useState<TaskType>('keyword')
   const [query, setQuery] = useState('')
@@ -24,6 +26,8 @@ export default function FilterForm({ onSubmit }: { onSubmit: (t: CreateTaskInput
   const [minLikes, setMinLikes] = useState('')
   const [minCollects, setMinCollects] = useState('')
   const [thresholdErr, setThresholdErr] = useState('')
+  // N01：在平台网页上选的排序；空 = 综合（平台默认）
+  const [sortBy, setSortBy] = useState<SortBy | ''>('')
   const [aiFilter, setAiFilter] = useState(false)
   const [aiRule, setAiRule] = useState('')
   const [aiOrganize, setAiOrganize] = useState(false)
@@ -52,6 +56,9 @@ export default function FilterForm({ onSubmit }: { onSubmit: (t: CreateTaskInput
   const supportedTypes = platforms.find(p => p.name === platform)?.supportedTaskTypes ?? ['keyword', 'author', 'hashtag']
   // 平台拿不到收藏数（快手）就不显示「最少收藏」——设了也只会把所有视频都筛掉
   const hasCollects = platforms.find(p => p.name === platform)?.interactions?.includes('collects') ?? false
+  // 只列这个平台网页上真有的排序（快手网页搜索没有）；作者主页不排序
+  const sortOptions = type === 'author' ? [] : platforms.find(p => p.name === platform)?.sortOptions ?? []
+  const effectiveSort = sortBy && sortOptions.includes(sortBy) ? sortBy : undefined
   useEffect(() => {
     if (!supportedTypes.includes(type)) setType('keyword')
   }, [platform, platforms, type])
@@ -105,6 +112,7 @@ export default function FilterForm({ onSubmit }: { onSubmit: (t: CreateTaskInput
           targetCount: target, aiFilterRule: aiFilter ? aiRule.trim() : undefined,
           minLikes: likesMin || undefined,
           minCollects: collectsMin || undefined,
+          sortBy: effectiveSort,
           detailMode: platform === 'xiaohongshu' ? detailMode : undefined
         },
         aiFilterEnabled: aiFilter, aiOrganizeEnabled: aiOrganize,
@@ -221,6 +229,15 @@ export default function FilterForm({ onSubmit }: { onSubmit: (t: CreateTaskInput
       )}
       {/* 只抓热门：点赞 / 收藏低于门槛的不要（小红书在列表阶段就跳过，不用打开详情页） */}
       <div className="mt-3 flex flex-wrap items-end gap-4 text-sm">
+        {sortOptions.length > 0 && (
+          <label htmlFor="filter-sort" className="flex flex-col gap-1 text-xs text-slate-500">
+            排序
+            <select id="filter-sort" className={inputCls} value={effectiveSort ?? ''} onChange={e => setSortBy(e.target.value as SortBy | '')}>
+              <option value="">综合（默认）</option>
+              {sortOptions.map(o => <option key={o} value={o}>{SORT_LABEL[o]}</option>)}
+            </select>
+          </label>
+        )}
         <label htmlFor="filter-min-likes" className="flex flex-col gap-1 text-xs text-slate-500">
           最少点赞
           <input id="filter-min-likes" type="number" min={0} step={1} className={`${inputCls} w-28`} placeholder="不限"
@@ -233,7 +250,7 @@ export default function FilterForm({ onSubmit }: { onSubmit: (t: CreateTaskInput
               value={minCollects} onChange={e => { setMinCollects(e.target.value); setThresholdErr('') }} />
           </label>
         )}
-        <span className="pb-2 text-xs text-slate-400">只抓热门：低于门槛的视频不要。门槛设得太高可能抓不满。</span>
+        <span className="pb-2 text-xs text-slate-400">只抓热门：可以让平台按点赞排好再抓，也可以设门槛，低于门槛的不要（设太高可能抓不满）。</span>
         {thresholdErr && <span className="pb-2 text-xs text-danger-600">{thresholdErr}</span>}
       </div>
       {customRange && (

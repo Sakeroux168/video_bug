@@ -318,26 +318,46 @@ export class VideoBrowser {
       const script = kind === 'button'
         ? `(() => {
             const visible = el => { const r=el.getBoundingClientRect(); const s=getComputedStyle(el); return r.width>0&&r.height>0&&s.display!=='none'&&s.visibility!=='hidden'; };
-            const el=[...document.querySelectorAll('div.filter')].find(x => visible(x) && (x.textContent||'').trim().includes('筛选'));
+            let el=[...document.querySelectorAll('div.filter')].find(x => visible(x) && (x.textContent||'').trim().includes('筛选'));
+            // 抖音（2026-10-07 真机）：没有 div.filter，按文字找写着「筛选」的最里层元素
+            if(!el) el=[...document.querySelectorAll('div,span,button')].filter(x => visible(x) && (x.textContent||'').trim()==='筛选')
+              .find(x => ![...x.children].some(c => (c.textContent||'').trim()==='筛选'));
             if(!el) return null; el.scrollIntoView({block:'center',inline:'center'}); const r=el.getBoundingClientRect();
             return {x:r.left+r.width/2,y:r.top+r.height/2};
           })()`
         : kind === 'panel'
           ? `(() => {
               const visible = el => { const r=el.getBoundingClientRect(); const s=getComputedStyle(el); return r.width>0&&r.height>0&&s.display!=='none'&&s.visibility!=='hidden'; };
-              const el=[...document.querySelectorAll('div.filter-panel')].find(visible); if(!el) return null;
+              let el=[...document.querySelectorAll('div.filter-panel')].find(visible);
+              // 抖音：面板没有固定 class，看第一个组标题有没有露出来，鼠标移到它上面保持面板展开
+              if(!el) el=[...document.querySelectorAll('span,div')].find(x => visible(x) && (x.textContent||'').trim()===${JSON.stringify(filters[0]?.group || '')});
+              if(!el) return null;
               const r=el.getBoundingClientRect(); return {x:r.left+r.width/2,y:r.top+Math.min(20,r.height/2)};
             })()`
           : `(() => {
               const GROUP=${JSON.stringify(filter?.group || '')}, OPTION=${JSON.stringify(filter?.option || '')};
               const visible = el => { const r=el.getBoundingClientRect(); const s=getComputedStyle(el); return r.width>0&&r.height>0&&s.display!=='none'&&s.visibility!=='hidden'; };
-              const panel=[...document.querySelectorAll('div.filter-panel')].find(visible); if(!panel) return null;
-              const group=[...panel.querySelectorAll('div.filters')].find(g => {
-                const label=[...g.children].find(x => x.tagName==='SPAN'); return label && (label.textContent||'').trim()===GROUP;
-              });
-              if(!group) return null;
-              const el=[...group.querySelectorAll('div.tags')].find(x => visible(x) && (x.textContent||'').trim()===OPTION);
-              if(!el) return null; const r=el.getBoundingClientRect(); return {x:r.left+r.width/2,y:r.top+r.height/2};
+              const rectOf = el => { const r=el.getBoundingClientRect(); return {x:r.left+r.width/2,y:r.top+r.height/2}; };
+              const panel=[...document.querySelectorAll('div.filter-panel')].find(visible);
+              if(panel) {
+                const group=[...panel.querySelectorAll('div.filters')].find(g => {
+                  const label=[...g.children].find(x => x.tagName==='SPAN'); return label && (label.textContent||'').trim()===GROUP;
+                });
+                if(!group) return null;
+                const el=[...group.querySelectorAll('div.tags')].find(x => visible(x) && (x.textContent||'').trim()===OPTION);
+                return el ? rectOf(el) : null;
+              }
+              // 抖音：按文字找。先找组标题，再从它往上几层里找写着选项文字的最里层元素（离组标题最近的那组）
+              const isLeaf = (x, text) => ![...x.children].some(c => (c.textContent||'').trim()===text);
+              const labels=[...document.querySelectorAll('span,div')].filter(x => visible(x) && (x.textContent||'').trim()===GROUP && isLeaf(x, GROUP));
+              for (const label of labels) {
+                let box=label.parentElement;
+                for (let depth=0; box && depth<3; depth++, box=box.parentElement) {
+                  const el=[...box.querySelectorAll('span,div')].find(x => visible(x) && (x.textContent||'').trim()===OPTION && isLeaf(x, OPTION));
+                  if(el) return rectOf(el);
+                }
+              }
+              return null;
             })()`
       try {
         const value = await wc.executeJavaScript(script) as { x?: unknown; y?: unknown } | null
@@ -346,6 +366,7 @@ export class VideoBrowser {
       } catch { return null }
     }
     const before = (await readNoteIds()).join(',')
+    const hasNoteCards = before !== '' // 小红书结果卡片带 data-note-id；抖音没有，点完稍等让页面发新请求即可
     let attachedHere = false
     try {
       if (!wc.debugger.isAttached()) { wc.debugger.attach('1.3'); attachedHere = true }
@@ -366,6 +387,10 @@ export class VideoBrowser {
         await wc.debugger.sendCommand('Input.dispatchMouseEvent', { type: 'mousePressed', button: 'left', clickCount: 1, ...option })
         await wc.debugger.sendCommand('Input.dispatchMouseEvent', { type: 'mouseReleased', button: 'left', clickCount: 1, ...option })
         await new Promise(resolve => setTimeout(resolve, 250))
+      }
+      if (!hasNoteCards) {
+        await new Promise(resolve => setTimeout(resolve, 1500))
+        return { applied: true, noteIds: [] }
       }
       // 等结果卡片切换；同一关键词偶尔首批 ID 恰好不变，5 秒后仍按已点击成功返回。
       for (let i = 0; i < 20; i++) {

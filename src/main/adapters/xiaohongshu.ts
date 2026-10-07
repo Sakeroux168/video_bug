@@ -1,5 +1,5 @@
 import type { PlatformAdapter, VideoItem, ListStub, ListStubResult, FastDetailOutcome } from './types'
-import type { Filters, TaskType } from '../../shared/types'
+import type { Filters, SortBy, TaskType } from '../../shared/types'
 
 /**
  * 小红书适配器。
@@ -241,9 +241,13 @@ export function parseXiaohongshuAuthorDomResult(value: unknown): ListStubResult 
   return result
 }
 
+/** 真机核对（2026-10-07）：筛选面板「排序依据」= 综合 / 最新 / 最多点赞 / 最多评论 / 最多收藏 */
+const XHS_SORT: Record<SortBy, string> = { mostLiked: '最多点赞', mostCollected: '最多收藏', mostCommented: '最多评论', latest: '最新' }
+
 export function xiaohongshuNativeSearchFilters(type: TaskType, filters: Filters) {
   if (type === 'author') return []
-  const out = [{ group: '笔记类型', option: '视频' }]
+  const out = filters.sortBy ? [{ group: '排序依据', option: XHS_SORT[filters.sortBy] }] : []
+  out.push({ group: '笔记类型', option: '视频' })
   // 站点没有“近30天”或自定义日期；这些情况只在详情阶段按时间戳精确过滤。
   if (filters.timeRange === '7d') out.push({ group: '发布时间', option: '一周内' })
   return out
@@ -549,6 +553,7 @@ export const xiaohongshuAdapter: PlatformAdapter = {
   taskReady: true,
   supportedTaskTypes: ['keyword', 'author', 'hashtag'],
   interactions: ['collects', 'shares'],
+  sortOptions: ['mostLiked', 'mostCollected', 'mostCommented', 'latest'],
   sourceHosts: ['www.xiaohongshu.com'],
   sessionPartition: 'persist:xiaohongshu',
   homeUrl: 'https://www.xiaohongshu.com/',

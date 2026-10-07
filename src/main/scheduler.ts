@@ -161,6 +161,11 @@ export class Scheduler {
   /** R20：第几次 run。看门狗/强制暂停会把它 +1，让卡在半路的旧 run 醒来后认出「我已经被接管了」，
    *  不再写库、不再发事件、不再动调度器状态（否则会把下一个任务的状态搅乱）。 */
   private runGen = 0
+  /**
+   * 只抓热门（N01）：抖音选了排序时为 true——只收按要求排过序的搜索结果（适配器 acceptsSortedResponse 判断），
+   * 页面刚打开时按综合排序返回的那批丢掉。排序没点上就改回 false，照常抓。
+   */
+  private sortedOnly = false
   /** 只抓热门：这次 run 里因为点赞 / 收藏没达到门槛被跳过的作品（去重计数，任务结束时告诉用户） */
   private thresholdSkippedIds = new Set<string>()
   get thresholdSkipped(): number { return this.thresholdSkippedIds.size }
@@ -380,6 +385,9 @@ export class Scheduler {
           ? adapter.buildHashtagUrl(task.query)
           : adapter.buildSearchUrl(task.query, this.filters)
       this.taskUrl = url // R11：重搜时复用（重新加载任务首屏，结果集重置；seen 去重保证只收新条目）
+      // N01：抖音这类「边滚边截接口」的平台，选了排序就先只收排过序的结果（小红书两段式另有自己的流程）
+      this.sortedOnly = !adapter.parseListStubs && !!adapter.acceptsSortedResponse
+        && (adapter.nativeSearchFilters?.(task.type, this.filters).length ?? 0) > 0
       await this.deps.browser.load(adapter, url)
       if (gen !== this.runGen) return // R20：加载期间被看门狗接管
       this.touch()
@@ -394,6 +402,9 @@ export class Scheduler {
 
       if (adapter.parseListStubs) {
         await this.prepareTwoStageList(adapter, task.type, stopped)
+        if (stopped()) return
+      } else if (this.sortedOnly) {
+        await this.applyNativeSort(adapter, task.type, stopped)
         if (stopped()) return
       }
 
@@ -656,6 +667,32 @@ export class Scheduler {
       this.deps.emit({ type: 'task:notice', text: `本批视频候选处理完毕，实际收集 ${this.fetched}/${target} 条；部分候选可能不符合筛选条件或详情不可用` })
     }
     return 'reached'
+  }
+
+  /**
+   * N01：在平台网页的筛选面板上点排序（抖音：悬停「筛选」→「排序依据」→「最多点赞」）。
+   * 点上了就继续只收排过序的结果；没点上（页面改版、超时）就照常按综合排序抓，并在日志里说一声。
+   */
+  private async applyNativeSort(adapter: PlatformAdapter, type: TaskRow['type'], stopped: () => boolean = () => this.aborted): Promise<void> {
+    const native = this.filters ? adapter.nativeSearchFilters?.(type, this.filters) ?? [] : []
+    const apply = this.deps.browser.applyNativeSearchFilters
+    if (native.length === 0 || !apply) { this.sortedOnly = false; return }
+    let timer: ReturnType<typeof setTimeout> | null = null
+    const result = await Promise.race([
+      apply.call(this.deps.browser, native),
+      new Promise<{ applied: boolean; noteIds: string[] }>(resolve => {
+        timer = setTimeout(() => resolve({ applied: false, noteIds: [] }), NATIVE_FILTER_TIMEOUT_MS)
+      })
+    ]).finally(() => { if (timer !== null) clearTimeout(timer) })
+    if (stopped()) return
+    const label = native.map(x => x.option).join('、')
+    if (result.applied) {
+      this.deps.onFilterLog?.(`已在网页上选「${label}」排序，只收排好序的结果`)
+    } else {
+      this.sortedOnly = false
+      this.deps.onFilterLog?.(`网页上的「${label}」排序没点上（可能页面改版了），按综合排序继续抓`)
+    }
+    this.lastFetchedAt = Date.now() // 点排序花的时间不算「没抓到新视频」
   }
 
   /** 页面原生筛选只减少无效候选；详情阶段仍会按真实时间戳与时长做最终精确过滤。 */
@@ -987,6 +1024,9 @@ export class Scheduler {
         log(`第 ${this.reSearchCount} 次重搜加载失败/超时：${err instanceof Error ? err.message : String(err)}（计数已消耗，继续）`)
       }
       if (stale()) return 'continue'
+      // N01：页面重新加载回到了综合排序，要再点一次排序
+      if (this.sortedOnly && this.task) await this.applyNativeSort(adapter, this.task.type, stale)
+      if (stale()) return 'continue'
       this.touch() // R20：重搜加载完（成功或超时）= 自救这条路还在走
       this.scrolledIds = new Set<string>() // 页面回到顶部重新翻，之前滚过的作品会再出现一遍，这是正常的
       // 重置停滞计数继续爬：lastFetchedAt 从加载完成起算；seen 去重保证只收新条目
@@ -1024,6 +1064,8 @@ export class Scheduler {
     // R20 复查：抖音作者主页接口只按路径认，上一个任务的页面（看门狗刷新 / 还没跳走）发来的数据会串进这个任务；
     // 地址里带 sec_user_id 的，对不上就不收。
     if (this.task.type === 'author' && !this.isOwnAuthorFeed(rawUrl)) return null
+    // N01：选了排序就只收排好序的那批（页面刚打开时按综合排序返回的不要）
+    if (this.sortedOnly && this.filters && adapter.acceptsSortedResponse && !adapter.acceptsSortedResponse(rawUrl, this.filters)) return null
     this.rawSinceLastRound = true
     if (this.phase === 'list') {
       const result = adapter.parseListStubs!(rawUrl, json)

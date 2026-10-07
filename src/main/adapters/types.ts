@@ -1,4 +1,4 @@
-import type { Filters, TaskType } from '../../shared/types'
+import type { Filters, SortBy, TaskType } from '../../shared/types'
 
 /** 统一视频项：各平台原始 JSON 解析后的归一结构 */
 export interface VideoItem {
@@ -75,6 +75,13 @@ export interface PlatformAdapter {
   supportedTaskTypes?: readonly TaskType[]
   /** 能拿到的额外互动数（真机核对过的）。没有的平台，界面不显示对应门槛 */
   interactions?: readonly InteractionField[]
+  /** 网页筛选面板上能选的排序（真机核对过的）；没有就不显示「排序」 */
+  sortOptions?: readonly SortBy[]
+  /**
+   * 选了排序时，这份接口响应是不是按要求排过序的（抖音靠搜索接口的 sort_type 参数分辨）。
+   * 页面刚打开时按综合排序返回的那批要丢掉，否则会混进不热门的视频。
+   */
+  acceptsSortedResponse?(url: string, filters: Filters): boolean
   /** 可由主进程打开的作品页精确主机白名单 */
   sourceHosts: readonly string[]
   /** 登录态分区，如 'persist:douyin' */

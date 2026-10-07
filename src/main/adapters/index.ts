@@ -23,6 +23,7 @@ export interface PlatformInfo {
   taskReady: boolean
   supportedTaskTypes?: PlatformAdapter['supportedTaskTypes']
   interactions?: PlatformAdapter['interactions']
+  sortOptions?: PlatformAdapter['sortOptions']
 }
 
 export function listAdapters(): PlatformInfo[] {
@@ -32,6 +33,7 @@ export function listAdapters(): PlatformInfo[] {
     authorInputPlaceholder: a.authorInputPlaceholder,
     taskReady: a.taskReady,
     supportedTaskTypes: a.supportedTaskTypes,
-    interactions: a.interactions
+    interactions: a.interactions,
+    sortOptions: a.sortOptions
   }))
 }
