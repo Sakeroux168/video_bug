@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { DatabaseSync } from 'node:sqlite'
 import { initDb, createTask, insertVideos, listVideos, setVideoStatus } from '../src/main/db'
-import { Downloader, buildUserAgent, buildRequestHeaders } from '../src/main/downloader'
+import { networkRetryDelayMs, Downloader, buildUserAgent, buildRequestHeaders } from '../src/main/downloader'
 import { mkdtempSync, readFileSync, rmSync, existsSync, readdirSync, writeFileSync } from 'fs'
 import { basename, dirname, extname, join } from 'path'
 import { tmpdir } from 'os'
@@ -936,6 +936,14 @@ describe('R20 下载卡住：一段时间没收到数据就掐断，交给原来
     dl.enqueue(v.id)
     await vi.waitFor(() => expect(listVideos(db, taskId)[0].status).toBe('done'), { timeout: 3000 })
     expect(listVideos(db, taskId)[0].file_size).toBe(256 * 8)
+  })
+})
+
+// 2026-10-07 性能 F13：整条视频网络重试以前固定 5 秒；现在第一次 5 秒、第二次 15 秒（越来越慢，别跟着限流一起猛打）
+describe('整条视频网络重试的等待', () => {
+  it('第 1 次 5 秒，第 2 次 15 秒', () => {
+    expect(networkRetryDelayMs(1)).toBe(5000)
+    expect(networkRetryDelayMs(2)).toBe(15000)
   })
 })
 

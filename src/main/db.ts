@@ -1,6 +1,6 @@
 import type { DatabaseSync, SQLInputValue } from 'node:sqlite'
 import { sep } from 'path'
-import type { CreateTaskInput, TaskRow, TaskStatus, VideoRow, AuthorRow, VideoStatus, GlobalStats, RecentDownload } from '../shared/types'
+import type { ExportVideoRow, CreateTaskInput, TaskRow, TaskStatus, VideoRow, AuthorRow, VideoStatus, GlobalStats, RecentDownload } from '../shared/types'
 import type { VideoItem } from './adapters/types'
 
 const SCHEMA = `
@@ -471,12 +471,15 @@ export function restoreVideos(db: DatabaseSync, ids: number[]): number[] {
 
 /** 跨任务列出所有已下载完成的视频，供「导出全部已下载」用。
  *  只取 done：collected/pending/failed 的行在磁盘上没有文件，混进导出表会误导人。 */
-export function listDownloadedVideos(db: DatabaseSync): VideoRow[] {
+/** 「导出数据表」用：只查表格和按文件夹筛选要用的列（2026-10-07 性能 F9：以前 v.* 连很长的下载地址、
+ *  封面地址一起整包传给界面，10 万条要 95MB） */
+export function listDownloadedVideos(db: DatabaseSync): ExportVideoRow[] {
   return db.prepare(
-    `SELECT v.*, a.nickname AS author_nickname
+    `SELECT v.id, v.platform, v.title, v.source_url, v.stats, v.publish_time, v.duration, v.local_path,
+            a.nickname AS author_nickname
      FROM videos v LEFT JOIN authors a ON a.id = v.author_id
      WHERE v.status = 'done' ORDER BY v.id`
-  ).all() as unknown as VideoRow[]
+  ).all() as unknown as ExportVideoRow[]
 }
 
 export interface TaskStats {

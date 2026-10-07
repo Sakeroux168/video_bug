@@ -235,3 +235,59 @@ describe('buildInjectScript 的 URL 兜底特征由平台提供', () => {
     expect(script).toContain('platform:raw')
   })
 })
+
+// 2026-10-07 性能 F11：页面钩子先按适配器的接口地址过滤——埋点、评论、推荐这些无关的 JSON
+// 以前都要在页面里解析一遍、再序列化两次（postMessage + IPC）送到主进程，然后被丢掉。
+// 现在无关的只报一个地址（拦截日志里还能看到「忽略」），不读内容、不解析。
+describe('页面钩子按接口地址过滤', () => {
+  const SCRIPT = buildInjectScript(douyinAdapter.rawUrlHints, douyinAdapter.apiUrlPatterns)
+
+  it('fetch：接口地址对得上 → 解析后发出', async () => {
+    const { window, post } = createPage()
+    const url = 'https://www.douyin.com/aweme/v1/web/general/search/'
+    window.fetch = vi.fn(() => Promise.resolve(jsonResponse(url, { a: 1 })))
+    window.eval(SCRIPT)
+    await window.fetch(url)
+    await flush()
+    expect(post).toHaveBeenCalledWith({ type: 'platform:raw', url, data: { a: 1 } }, '*')
+  })
+
+  it('fetch：无关的 JSON → 只报地址，不读内容', async () => {
+    const { window, post } = createPage()
+    const url = 'https://mcs.zijieapi.com/list'
+    const text = vi.fn(() => Promise.resolve('{"x":1}'))
+    window.fetch = vi.fn(() => Promise.resolve({
+      url, headers: { get: () => 'application/json' }, clone: () => ({ text })
+    }))
+    window.eval(SCRIPT)
+    await window.fetch(url)
+    await flush()
+    expect(text).not.toHaveBeenCalled()
+    expect(post).toHaveBeenCalledWith({ type: 'platform:raw', url, data: null }, '*')
+  })
+
+  it('XHR：无关的 JSON → 只报地址，不解析', async () => {
+    const { window, post } = createPage()
+    installFakeXhr(window)
+    window.eval(SCRIPT)
+    const xhr = new window.XMLHttpRequest()
+    xhr.open('GET', '//mon.zijieapi.com/monitor_browser/collect')
+    xhr.contentType = 'application/json'
+    xhr.responseText = '{"big":"payload"}'
+    xhr.send()
+    xhr.dispatchEvent(new window.Event('load'))
+    await flush()
+    expect(post).toHaveBeenCalledWith({ type: 'platform:raw', url: '//mon.zijieapi.com/monitor_browser/collect', data: null }, '*')
+  })
+
+  it('快手的正则带 i 标记也照样认', async () => {
+    const { window, post } = createPage()
+    const s = buildInjectScript(kuaishouAdapter.rawUrlHints, kuaishouAdapter.apiUrlPatterns)
+    const url = 'https://www.kuaishou.com/GRAPHQL'
+    window.fetch = vi.fn(() => Promise.resolve(jsonResponse(url, { d: 1 })))
+    window.eval(s)
+    await window.fetch(url)
+    await flush()
+    expect(post).toHaveBeenCalledWith({ type: 'platform:raw', url, data: { d: 1 } }, '*')
+  })
+})

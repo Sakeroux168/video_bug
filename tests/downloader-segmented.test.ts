@@ -62,7 +62,9 @@ function downloader(fetchImpl: typeof fetch, segments = 3, idleTimeoutMs = 60_00
     downloadDir: dir, downloadConcurrency: 1, downloadSegments: segments, addressTtlMin: 30
   }, fetchImpl, {
     validator: async file => readFileSync(file).subarray(4, 12).toString() === 'ftypisom',
-    idleTimeoutMs
+    idleTimeoutMs,
+    // 2026-10-07 性能 F13 起分段重试之间要等一会儿（默认 0.5s、1s）；这里测的是重试次数和顺序，不等
+    segmentRetryBaseMs: 0
   })
 }
 
@@ -293,5 +295,48 @@ describe('同一文件 Range 分段下载', () => {
     await vi.waitFor(() => expect(listVideos(db, taskId)[0].status).toBe('done'))
     expect(fetchImpl).toHaveBeenCalledTimes(1)
     expect(existsSync(listVideos(db, taskId)[0].local_path!)).toBe(true)
+  })
+})
+
+// 2026-10-07 性能 F13：分段失败以前立刻重试、不等；CDN 限流时一口气打 9 轮。现在两次重试之间等一会儿（0.5s、1s……），
+// 平台明确拒绝（403 / 429）就不再重试，按「平台拒绝」失败。
+describe('分段重试：等一会儿再试；被拒绝就不试了', () => {
+  it('某段失败一次 → 等够设定的时间才重试', async () => {
+    const source = sourceBytes()
+    const { taskId, id } = createVideo()
+    const badRange = 'bytes=1366-2730'
+    const times: number[] = []
+    const fetchImpl = vi.fn(async (_url: unknown, init?: RequestInit) => {
+      const range = requestedRange(init)!
+      if (range === badRange) {
+        times.push(Date.now())
+        if (times.length === 1) return rangeResponse(source, range, 'bytes 1367-2730')
+      }
+      return rangeResponse(source, range)
+    }) as unknown as typeof fetch
+    const dl = new Downloader(db, { downloadDir: dir, downloadConcurrency: 1, downloadSegments: 3, addressTtlMin: 30 }, fetchImpl, {
+      validator: async file => readFileSync(file).subarray(4, 12).toString() === 'ftypisom', segmentRetryBaseMs: 300
+    })
+    dl.enqueue(id)
+    await vi.waitFor(() => expect(listVideos(db, taskId)[0].status).toBe('done'), { timeout: 10_000 })
+    expect(times).toHaveLength(2)
+    expect(times[1] - times[0]).toBeGreaterThanOrEqual(280)
+  })
+
+  it('某段被平台拒绝（403）→ 不再重试这一段，整条按「平台拒绝」失败、不走网络重试', async () => {
+    const source = sourceBytes()
+    const { taskId, id } = createVideo()
+    const badRange = 'bytes=1366-2730'
+    let badAttempts = 0
+    const fetchImpl = vi.fn(async (_url: unknown, init?: RequestInit) => {
+      const range = requestedRange(init)!
+      if (range === badRange) { badAttempts++; return new Response('no', { status: 403 }) }
+      return rangeResponse(source, range)
+    }) as unknown as typeof fetch
+    const dl = downloader(fetchImpl)
+    dl.enqueue(id)
+    await vi.waitFor(() => expect(listVideos(db, taskId)[0].status).toBe('failed'), { timeout: 10_000 })
+    expect(badAttempts).toBe(1)
+    expect(listVideos(db, taskId)[0].error).toBe('forbidden')
   })
 })

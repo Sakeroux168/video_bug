@@ -88,6 +88,9 @@ export interface LibraryQuery {
 }
 
 /** 素材库的一条：视频行 + 所属任务的关键词 */
+/** 导出数据表要用的列（listDownloadedVideos 只查这些） */
+export type ExportVideoRow = Pick<VideoRow, 'id' | 'platform' | 'title' | 'source_url' | 'stats' | 'publish_time' | 'duration' | 'local_path' | 'author_nickname'>
+
 /** 素材库「打包交付」结果：复制了几条、文件找不到几条、复制失败几条、清单路径（一条没复制成就是 null） */
 export interface LibraryExportResult { copied: number; missing: number; failed: number; csvPath: string | null; dir: string; files: string[] }
 /** 打包交付的选项：markUsed 交付后标「已用」；normalize 复制过去后顺便统一分辨率（只处理复制过去的那几个） */
@@ -297,6 +300,13 @@ export function clampStuckTimeoutMin(v: unknown): number {
 }
 
 export const DOWNLOAD_SEGMENTS_RANGE = { min: 1, max: 4, default: 3 } as const
+
+/** 下载并发只允许 1-5（2026-10-07 性能 F13）；空值 / 非数字回默认 3 */
+export function clampDownloadConcurrency(v: unknown): number {
+  const n = Math.round(Number(v))
+  if (v === '' || v === null || v === undefined || !Number.isFinite(n)) return 3
+  return Math.min(5, Math.max(1, n))
+}
 
 /** 分段数只允许 1-4；空值/非数字回默认 3，小数四舍五入。 */
 export function clampDownloadSegments(v: unknown): number {

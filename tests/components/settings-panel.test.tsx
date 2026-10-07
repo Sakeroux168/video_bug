@@ -292,3 +292,14 @@ describe('SettingsPanel 未启用层级时的整理反馈', () => {
     await waitFor(() => expect(screen.getByText('已整理 2 个作者')).toBeInTheDocument())
   })
 })
+
+// 2026-10-07 性能 F13：下载并发以前只有输入框的 max=5，手打 20 也能存（再乘 4 段就是 80 条连接打同一个 CDN）
+describe('下载并发只能 1-5', () => {
+  it.each([['20', 5], ['0', 1], ['3', 3]])('填「%s」→ 按 %s 保存', async (typed, saved) => {
+    installFakeApi()
+    render(<SettingsPanel />)
+    fireEvent.change(await screen.findByLabelText('下载并发'), { target: { value: typed } })
+    fireEvent.click(screen.getByRole('button', { name: '保存设置' }))
+    await waitFor(() => expect(window.api.saveSettings).toHaveBeenCalledWith(expect.objectContaining({ downloadConcurrency: saved })))
+  })
+})

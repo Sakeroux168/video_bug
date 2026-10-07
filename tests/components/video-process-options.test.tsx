@@ -109,3 +109,20 @@ describe('文件管理里直接送去处理', () => {
     expect(onProcessDir).toHaveBeenCalledWith('D:/下载/美食')
   })
 })
+
+// 2026-10-07 性能 F8：几千个文件时不一次画几千行（实测 5000 行纯 DOM 就要 280ms，每次推送都重画）。
+// 最多画 200 行，失败的和正在处理的排在前面，并写明一共多少条。
+describe('文件很多时只画一部分', () => {
+  it('250 个文件：画 200 行，失败的那条一定在；写明只显示了多少', async () => {
+    render(<VideoProcessPanel />)
+    await waitFor(() => expect(pushState).not.toBeNull())
+    const items = Array.from({ length: 250 }, (_, i) => ({
+      path: `D:/视频/v${i}.mp4`, name: `v${i}.mp4`, status: (i === 240 ? 'failed' : 'skipped') as 'failed' | 'skipped',
+      ...(i === 240 ? { error: 'ffmpeg_failed' } : {})
+    }))
+    act(() => pushState!(state({ phase: 'finished', dir: 'D:/视频', total: 250, completed: 249, skipped: 249, failed: 1, items })))
+    expect(screen.getByText('v240.mp4')).toBeInTheDocument()
+    expect(screen.getByText(/只显示 200 条/)).toBeInTheDocument()
+    expect(document.querySelectorAll('tbody tr').length).toBe(200)
+  })
+})

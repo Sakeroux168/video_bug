@@ -3,7 +3,7 @@ import { DatabaseSync } from 'node:sqlite'
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync, readFileSync, readdirSync } from 'fs'
 import { join } from 'path'
 import { tmpdir } from 'os'
-import { initDb, createTask, insertVideos, listVideos, setVideoStatus } from '../src/main/db'
+import { initDb, createTask, insertVideos, listVideos, setVideoStatus, listDownloadedVideos } from '../src/main/db'
 import { listLibrary, listLibraryTasks, setVideoMark, setVideoNote, coverFileFor, videoFileFor, exportLibraryVideos } from '../src/main/library'
 import type { VideoItem } from '../src/main/adapters/types'
 import type { CreateTaskInput } from '../src/shared/types'
@@ -179,5 +179,19 @@ describe('打包交付', () => {
   it('目标文件夹不存在 → 报错', async () => {
     const { id } = seed()
     await expect(exportLibraryVideos(db, [id('A')], join(dir, '没有'), { markUsed: false })).rejects.toThrow('文件夹不存在')
+  })
+})
+
+// 2026-10-07 性能 F9：「导出全部」以前把每条视频的所有列（包括很长的下载地址、封面地址）整包传给界面，
+// 10 万条要 95MB。现在只查表格要用的几列。
+describe('导出用的已下载视频列表只带要用的列', () => {
+  it('有标题、作者、链接、点赞、本地路径；没有下载地址、封面地址', () => {
+    seed()
+    const rows = listDownloadedVideos(db)
+    expect(rows).toHaveLength(3)
+    expect(rows[0]).toMatchObject({ title: '橘猫日常', author_nickname: '作者A', platform: 'douyin' })
+    expect(rows[0].local_path).toMatch(/A\.mp4$/)
+    expect('play_addr' in rows[0]).toBe(false)
+    expect('cover_url' in rows[0]).toBe(false)
   })
 })

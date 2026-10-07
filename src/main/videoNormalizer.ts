@@ -51,7 +51,8 @@ export type NormalizeVideoResult =
 export interface VideoNormalizerDeps {
   findFfmpeg: () => string | null
   probeMedia: (file: string) => Promise<MediaProbe | null>
-  runFfmpeg: (file: string, args: string[], signal?: AbortSignal) => Promise<void>
+  /** timeoutMs：超过就结束 ffmpeg、按失败处理（2026-10-07 性能 F12） */
+  runFfmpeg: (file: string, args: string[], signal?: AbortSignal, timeoutMs?: number) => Promise<void>
   fileSize: (file: string) => number
   removeFile: (file: string) => void
 }
@@ -188,15 +189,23 @@ function abortError(): Error {
 }
 
 /** 只保留少量 stderr 供本地调试；上层只收到稳定错误码，不把文件路径写进数据库。 */
-async function runFfmpegProcess(file: string, args: string[], signal?: AbortSignal): Promise<void> {
+/** 转码时限：至少 2 分钟，长视频按片长 × 3（坏文件、网络盘卡住时不让 ffmpeg 一直占着） */
+export function ffmpegTimeoutFor(durationSec: number): number {
+  return Math.max(120_000, Math.round((Number.isFinite(durationSec) ? durationSec : 0) * 3000))
+}
+
+export async function runFfmpegProcess(file: string, args: string[], signal?: AbortSignal, timeoutMs?: number): Promise<void> {
   if (signal?.aborted) throw abortError()
   await new Promise<void>((resolve, reject) => {
     const child = spawn(file, args, { windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'] })
     let stderr = ''
     let settled = false
+    let timedOut = false
+    const timer = timeoutMs ? setTimeout(() => { timedOut = true; child.kill() }, timeoutMs) : null
     const finish = (error?: Error): void => {
       if (settled) return
       settled = true
+      if (timer) clearTimeout(timer)
       signal?.removeEventListener('abort', onAbort)
       if (error) reject(error)
       else resolve()
@@ -211,6 +220,7 @@ async function runFfmpegProcess(file: string, args: string[], signal?: AbortSign
     child.once('error', error => finish(error))
     child.once('close', code => {
       if (signal?.aborted) finish(abortError())
+      else if (timedOut) finish(new Error('ffmpeg_timeout'))
       else if (code === 0) finish()
       else finish(new Error(stderr || `FFmpeg exited with code ${String(code)}`))
     })
@@ -269,7 +279,8 @@ export async function normalizeVideo(
         maxBitrate: maxBitrateFor(source),
         copyAudio: source.audioCodec?.toLowerCase() === 'aac'
       }),
-      request.signal
+      request.signal,
+      ffmpegTimeoutFor(source.durationSec)
     )
   } catch (error) {
     deps.removeFile(request.outputPath)
