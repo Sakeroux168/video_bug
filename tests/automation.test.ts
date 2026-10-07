@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, vi } from 'vitest'
 import { DatabaseSync } from 'node:sqlite'
 import { initDb, createTask, insertVideos, setTaskStatus } from '../src/main/db'
 import {
-  shouldRunFollow, runAutoFollow, noticeForEvent, FollowTracker, Notifier, AutoFollowTimer, taskLabel, loginItemFor, startHidden
+  shouldRunFollow, runAutoFollow, lastOutputDir, noticeForEvent, FollowTracker, Notifier, AutoFollowTimer, taskLabel, loginItemFor, startHidden
 } from '../src/main/automation'
 import type { VideoItem } from '../src/main/adapters/types'
 import type { CreateTaskInput } from '../src/shared/types'
@@ -65,6 +65,19 @@ describe('定时追更建任务', () => {
     expect(row.type).toBe('author')
     expect(row.query).toBe('MS4wLjABAAAAaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')
     expect(JSON.parse(row.filters)).toMatchObject({ timeRange: 'custom', targetCount: 30 })
+  })
+
+  // 2026-10-07 和发布助手配合：发布助手以前给这个作者指定过下载文件夹（达人的暂存）→ 追更也下到那里
+  it('作者以前由发布助手指定过下载文件夹 → 追更也下到那里；文件夹没了就用下载目录', () => {
+    seed()
+    const sec = 'MS4wLjABAAAAaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa'
+    const old = createTask(db, { ...kw, type: 'author', query: sec, outputDir: 'W:\\AAA\\达人\\暂存' })
+    setTaskStatus(db, old, 'done')
+    expect(lastOutputDir(db, { platform: 'douyin', sec_uid: sec }, () => true)).toBe('W:\\AAA\\达人\\暂存')
+    expect(lastOutputDir(db, { platform: 'douyin', sec_uid: sec }, () => false)).toBeUndefined()
+    const r = runAutoFollow(db, () => {}, { count: 10, exists: () => true })
+    const row = db.prepare('SELECT output_dir FROM tasks WHERE id = ?').get(r.taskIds[0]) as { output_dir: string | null }
+    expect(row.output_dir).toBe('W:\\AAA\\达人\\暂存')
   })
 
   it('同一个作者已经在排队 → 跳过，不重复建', () => {

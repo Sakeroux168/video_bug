@@ -6,7 +6,8 @@ import { globalStats, listTasks, taskStats } from './db'
 import { createTaskChecked } from './taskCreate'
 import { checkBridgeRequest, isNetworkPath } from './security'
 import { chinaToday, isValidChinaDate } from './extractor'
-import type { CreateTaskInput, Filters } from '../shared/types'
+import { setVideoMark } from './library'
+import type { AppSettings, CreateTaskInput, Filters, SortBy, VideoMark } from '../shared/types'
 
 /**
  * R18：本机 HTTP 口，给「百家号发布助手」这类外部程序指挥本程序抓视频用。
@@ -21,6 +22,12 @@ import type { CreateTaskInput, Filters } from '../shared/types'
  *      /status 带 features: ['outputDir']，发布助手靠它认出新版。
  *
  * 默认端口 47321（settings.bridgePort），settings.bridgeEnabled=false 关掉。
+ *
+ * 2026-10-07 和发布助手配合（features 里带上才算支持，发布助手按 features 判断）：
+ *   hotFilters  ：POST /job 也收 minLikes / minCollects / sortBy（只抓热门，和界面上的同一套）
+ *   markUsed    ：POST /mark { paths: [下载时的完整路径…], mark: 'used' | 'star' | 'todo' | null } → { marked, missing }
+ *                 发布助手发完一条，就把这条在素材库里标成「已用」
+ *   followStatus：/status 带 autoFollow { enabled, time, scope }，发布助手好提示「每天自动抓交给爬取工具了」
  */
 export interface BridgeDeps {
   db: DatabaseSync
@@ -28,6 +35,8 @@ export interface BridgeDeps {
   isRunning: () => boolean
   port: number
   host?: string
+  /** 读设置（/status 报告定时追更开没开）；不给就不报 */
+  getSettings?: () => Partial<AppSettings>
 }
 
 export const DEFAULT_BRIDGE_PORT = 47321
@@ -47,9 +56,24 @@ export interface JobBody {
   outputDir?: unknown
   /** 详情取数模式（仅小红书有差异）：safe=稳妥（默认）/ fast=快速 */
   detailMode?: unknown
+  /** 2026-10-07 只抓热门：点赞 / 收藏低于这个数的不要（0 或不给 = 不限）；sortBy 只对关键词 / 话题有用 */
+  minLikes?: unknown
+  minCollects?: unknown
+  sortBy?: unknown
 }
 
-export const BRIDGE_FEATURES = ['outputDir'] as const
+export const BRIDGE_FEATURES = ['outputDir', 'hotFilters', 'markUsed', 'followStatus'] as const
+const SORTS: readonly SortBy[] = ['mostLiked', 'mostCollected', 'mostCommented', 'latest']
+const MARKS: readonly VideoMark[] = ['star', 'todo', 'used']
+const MAX_MARK_PATHS = 500
+
+/** 门槛数字：不给 / 0 = 不限；要是 0~1 亿之间的整数 */
+function threshold(v: unknown, name: string): number | undefined | string {
+  if (v === undefined || v === null || v === '') return undefined
+  const n = Number(v)
+  if (!Number.isInteger(n) || n < 0 || n > 100_000_000) return `${name} 要是 0 以上的整数`
+  return n || undefined
+}
 
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/
 
@@ -80,6 +104,16 @@ export function jobFromBody(body: JobBody): CreateTaskInput | string {
     if (body.detailMode !== 'safe' && body.detailMode !== 'fast') return 'detailMode 只能是 safe / fast'
     filters.detailMode = body.detailMode
   }
+  const minLikes = threshold(body.minLikes, 'minLikes')
+  if (typeof minLikes === 'string') return minLikes
+  const minCollects = threshold(body.minCollects, 'minCollects')
+  if (typeof minCollects === 'string') return minCollects
+  if (minLikes) filters.minLikes = minLikes
+  if (minCollects) filters.minCollects = minCollects
+  if (body.sortBy !== undefined && body.sortBy !== null && body.sortBy !== '') {
+    if (!SORTS.includes(body.sortBy as SortBy)) return `sortBy 只能是 ${SORTS.join(' / ')}`
+    filters.sortBy = body.sortBy as SortBy
+  }
   const input: CreateTaskInput = {
     platform, type, query, filters,
     aiFilterEnabled: false, aiOrganizeEnabled: false,
@@ -94,6 +128,30 @@ export function jobFromBody(body: JobBody): CreateTaskInput | string {
     input.outputDir = dir
   }
   return input
+}
+
+/** Windows 路径比较：大小写不分、斜杠统一、去掉末尾斜杠 */
+function normPath(p: string): string {
+  return p.trim().replace(/\//g, '\\').replace(/\\+$/, '').toLowerCase()
+}
+
+/** POST /mark：按下载时的完整路径找到素材库里的视频，打标记。找不到的原样列回去。 */
+export function markByPaths(db: DatabaseSync, body: { paths?: unknown; mark?: unknown }): { marked: number; missing: string[] } | string {
+  if (!Array.isArray(body.paths) || body.paths.length === 0) return 'paths 要是一组完整路径'
+  if (body.paths.length > MAX_MARK_PATHS) return `一次最多 ${MAX_MARK_PATHS} 条`
+  const mark = body.mark === undefined ? 'used' : body.mark
+  if (mark !== null && !MARKS.includes(mark as VideoMark)) return 'mark 只能是 used / star / todo / null'
+  const find = db.prepare("SELECT id FROM videos WHERE local_path IS NOT NULL AND lower(replace(local_path, '/', '\\')) = ?")
+  const ids: number[] = []
+  const missing: string[] = []
+  for (const p of body.paths) {
+    if (typeof p !== 'string' || !p.trim()) continue
+    const rows = find.all(normPath(p)) as Array<{ id: number }>
+    if (rows.length) ids.push(...rows.map(r => r.id))
+    else missing.push(p)
+  }
+  setVideoMark(db, ids, mark as VideoMark | null)
+  return { marked: ids.length, missing }
 }
 
 function send(res: ServerResponse, code: number, data: unknown): void {
@@ -125,10 +183,20 @@ export function handleRequest(deps: BridgeDeps, req: IncomingMessage, res: Serve
   void (async () => {
     try {
       if (req.method === 'GET' && path === '/status') {
+        const s = deps.getSettings?.()
         send(res, 200, {
           ok: true, app: 'video-scraper', running: deps.isRunning(), features: [...BRIDGE_FEATURES],
-          stats: globalStats(deps.db), tasks: listTasks(deps.db).slice(0, 50)
+          stats: globalStats(deps.db), tasks: listTasks(deps.db).slice(0, 50),
+          ...(s ? { autoFollow: { enabled: s.autoFollowEnabled === true, time: s.autoFollowTime ?? '', scope: s.autoFollowScope ?? 'all' } } : {})
         })
+        return
+      }
+      if (req.method === 'POST' && path === '/mark') {
+        let body: { paths?: unknown; mark?: unknown }
+        try { body = JSON.parse((await readBody(req)) || '{}') } catch { send(res, 400, { error: 'body 不是 JSON' }); return }
+        const r = markByPaths(deps.db, body ?? {})
+        if (typeof r === 'string') { send(res, 400, { error: r }); return }
+        send(res, 200, r)
         return
       }
       if (req.method === 'POST' && path === '/job') {
@@ -147,7 +215,7 @@ export function handleRequest(deps: BridgeDeps, req: IncomingMessage, res: Serve
         send(res, 200, { task, stats: taskStats(deps.db, id) })
         return
       }
-      send(res, 404, { error: '只有 GET /status、POST /job、GET /job/<id>' })
+      send(res, 404, { error: '只有 GET /status、POST /job、GET /job/<id>、POST /mark' })
     } catch (e) {
       send(res, 500, { error: String((e as Error)?.message ?? e) })
     }
