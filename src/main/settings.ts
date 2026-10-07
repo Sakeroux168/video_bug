@@ -37,7 +37,8 @@ const DEFAULTS: AppSettings = {
   autoFollowEnabled: false,
   autoFollowTime: '09:00',
   autoFollowCount: 20,
-  autoFollowScope: 'all'
+  autoFollowScope: 'all',
+  openAtLogin: false
 }
 
 /** 升级前的老用户行为：四层全开。

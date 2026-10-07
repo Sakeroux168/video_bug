@@ -111,7 +111,7 @@ function makeSettings(): AppSettings {
     stallThresholdSec: 5, rescueCooldownSec: 10, stuckTimeoutMin: 5,
     organizeByKeyword: false, organizeByCategory: false, organizeByAuthor: false, organizeByOrientation: false, organizeByDuration: false,
     bridgeEnabled: true, bridgePort: 47321,
-    closeToTray: false, notifyEnabled: true, autoFollowEnabled: false, autoFollowTime: '09:00', autoFollowCount: 20, autoFollowScope: 'all'
+    closeToTray: false, notifyEnabled: true, autoFollowEnabled: false, autoFollowTime: '09:00', autoFollowCount: 20, autoFollowScope: 'all', openAtLogin: false
   }
 }
 

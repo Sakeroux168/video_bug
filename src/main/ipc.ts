@@ -48,6 +48,8 @@ export interface IpcDeps {
   setBrowserVisible: (v: boolean) => void
   /** 2026-10-07 自动化：现在追更一次（和定时器、托盘菜单同一个入口） */
   followNow: () => AutoFollowResult | null
+  /** 保存设置后按「开机自动启动」写 / 撤系统启动项 */
+  applyLoginItem?: () => void
 }
 
 export function registerIpc(deps: IpcDeps): void {
@@ -273,6 +275,7 @@ export function registerIpc(deps: IpcDeps): void {
     deps.reloadAnalyzer()
     // Task14: 下载目录 / ASR 就绪状态变化 → 重建 Organizer（resolveCategory 实时读 asr/analyzer）
     deps.reloadOrganizer()
+    deps.applyLoginItem?.()
     deps.downloader.updateSettings(s)
   })
 

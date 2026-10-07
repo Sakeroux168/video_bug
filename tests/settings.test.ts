@@ -50,6 +50,7 @@ function fullSettings(over: Partial<AppSettings> = {}): AppSettings {
     autoFollowTime: '21:30',
     autoFollowCount: 50,
     autoFollowScope: 'picked',
+    openAtLogin: true,
     ...over
   }
 }

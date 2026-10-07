@@ -44,7 +44,8 @@ const SETTING_LABELS: Record<keyof AppSettings, string> = {
   autoFollowEnabled: '每天定时追更',
   autoFollowTime: '追更时间',
   autoFollowCount: '每个作者最多抓',
-  autoFollowScope: '追更哪些作者'
+  autoFollowScope: '追更哪些作者',
+  openAtLogin: '开机自动启动（启动后缩在托盘，不弹窗口）'
 }
 
 describe('SettingsPanel 消息的成功/失败配色', () => {

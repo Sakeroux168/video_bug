@@ -227,6 +227,10 @@ export default function SettingsPanel({ onDirtyChange }: { onDirtyChange?: (dirt
               关窗口时缩到右下角托盘，程序在后台继续跑
             </label>
             <label className="flex items-start gap-2 leading-5 text-slate-600">
+              <input className="mt-1" type="checkbox" checked={s.openAtLogin} onChange={e => set('openAtLogin', e.target.checked)} />
+              开机自动启动（启动后缩在托盘，不弹窗口）
+            </label>
+            <label className="flex items-start gap-2 leading-5 text-slate-600">
               <input className="mt-1" type="checkbox" checked={s.notifyEnabled} onChange={e => set('notifyEnabled', e.target.checked)} />
               抓完、需要登录或验证时弹系统通知
             </label>

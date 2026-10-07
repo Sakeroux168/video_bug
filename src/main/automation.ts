@@ -175,3 +175,19 @@ export class AutoFollowTimer {
     }
   }
 }
+
+/**
+ * 开机自动启动（2026-10-07）：系统启动项写什么。
+ * 只有打包版才写（开发版写进去的是 electron.exe，开机会弹一个空壳）；
+ * 便携版运行时的 exe 在临时目录，每次都变，要写原来那个 exe（electron-builder 给的 PORTABLE_EXECUTABLE_FILE）。
+ * 开机时带 --hidden：只挂托盘，不弹主窗口。
+ */
+export function loginItemFor(enabled: boolean, env: { isPackaged: boolean; execPath: string; portableFile?: string }):
+  { openAtLogin: boolean; path: string; args: string[] } | null {
+  if (!env.isPackaged) return null
+  return { openAtLogin: enabled, path: env.portableFile || env.execPath, args: ['--hidden'] }
+}
+
+export function startHidden(argv: string[]): boolean {
+  return argv.includes('--hidden')
+}
