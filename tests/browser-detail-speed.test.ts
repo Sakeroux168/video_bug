@@ -184,3 +184,51 @@ describe('快手窗口的浏览器标识是普通 Chrome 的（别的平台不�
     expect(setUserAgent).toHaveBeenCalledWith('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/152.0.7977.130 Safari/537.36')
   })
 })
+
+// 2026-10-09：快手第一次打开有时只回一行 {"result":2,...}（页面空白），刷新一次就好了（真机：同一个窗口 reload 后正常）。
+// 用户看到的「快手又看不了了」就是这个。快手页面打开后如果是这一行，自动再打开，最多 2 次。
+describe('快手第一次打开被拒 → 自动再打开', () => {
+  function fakeWin(bodies: string[]) {
+    let i = 0
+    const loadURL = vi.fn(async () => {})
+    const win = {
+      isDestroyed: () => false,
+      loadURL,
+      webContents: { mainFrame: { executeJavaScript: vi.fn(async () => bodies[Math.min(i++, bodies.length - 1)]) } }
+    }
+    return { win, loadURL }
+  }
+  function browserWith(win: unknown) {
+    const b = new VideoBrowser({} as never)
+    const anyB = b as unknown as { win: unknown; current: unknown; ensureWindow: () => Promise<void>; blockedRetryDelayMs: number }
+    anyB.win = win
+    anyB.current = kuaishouAdapter
+    anyB.ensureWindow = async () => {}
+    anyB.blockedRetryDelayMs = 0
+    return b
+  }
+  const BLOCKED = '{"result":2,"error_msg":null,"request_id":"1"}'
+
+  it('第一次是那一行 → 再打开一次，第二次正常就停', async () => {
+    const { win, loadURL } = fakeWin([BLOCKED, '搜索 上传作品 推荐 发现'])
+    await browserWith(win).load(kuaishouAdapter, 'https://www.kuaishou.com/')
+    expect(loadURL).toHaveBeenCalledTimes(2)
+  })
+
+  it('一直是那一行 → 最多再试 2 次就不试了（不无限刷）', async () => {
+    const { win, loadURL } = fakeWin([BLOCKED])
+    await browserWith(win).load(kuaishouAdapter, 'https://www.kuaishou.com/')
+    expect(loadURL).toHaveBeenCalledTimes(3)
+  })
+
+  it('第一次就正常 → 只打开一次；别的平台不管这个', async () => {
+    const ok = fakeWin(['推荐 发现'])
+    await browserWith(ok.win).load(kuaishouAdapter, 'https://www.kuaishou.com/')
+    expect(ok.loadURL).toHaveBeenCalledTimes(1)
+    const dy = fakeWin([BLOCKED])
+    const b = browserWith(dy.win)
+    ;(b as unknown as { current: unknown }).current = xiaohongshuAdapter
+    await b.load(xiaohongshuAdapter, 'https://www.xiaohongshu.com/')
+    expect(dy.loadURL).toHaveBeenCalledTimes(1)
+  })
+})
