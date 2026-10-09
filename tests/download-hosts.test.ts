@@ -14,6 +14,9 @@ describe('下载地址白名单', () => {
     expect(isAllowedMediaUrl('xiaohongshu', 'http://sns-webpic-qc.xhscdn.com/p')).toBe(true)
     expect(isAllowedMediaUrl('kuaishou', 'https://v2.kwaicdn.com/upic/x.mp4')).toBe(true)
     expect(isAllowedMediaUrl('kuaishou', 'https://p2.a.yximgs.com/c.jpg')).toBe(true)
+    // 2026-10-09 真机:快手视频地址换成了 djvod.ndcimgs.com
+    expect(isAllowedMediaUrl('kuaishou', 'https://k0u77y54ya4y89z.djvod.ndcimgs.com/ksc2/x.mp4')).toBe(true)
+    expect(isAllowedMediaUrl('douyin', 'https://k0u77y54ya4y89z.djvod.ndcimgs.com/x.mp4')).toBe(false)
   })
 
   it('别的网站、内网、本机、IP 地址、非 http 协议一律拦下', () => {
