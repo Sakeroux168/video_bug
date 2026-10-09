@@ -261,10 +261,34 @@ export class VideoBrowser {
     if (previous?.visible) this.setVisible(true)
   }
 
+  /** 快手被拒后隔多久再打开（测试里设 0） */
+  private blockedRetryDelayMs = 1500
+
   async load(adapter: PlatformAdapter, url: string): Promise<void> {
     // 按平台准备窗口（同平台复用、跨平台重建）。注入脚本也在这里随平台重建——
     // 必须在 loadURL 之前置好，dom-ready / did-finish-load 在 loadURL 期间就会读它。
     await this.ensureWindow(adapter)
+    if (!this.win) throw new Error('browser_not_initialized')
+    await this.loadOnce(adapter, url)
+    // 2026-10-09：快手第一次打开有时只回一行 {"result":2,...}（页面空白），刷新一次就好（真机实测）。
+    // 碰到这一行就隔一会儿再打开，最多 2 次，不无限刷
+    if (adapter.name !== 'kuaishou') return
+    for (let attempt = 0; attempt < 2 && await this.isKuaishouBlockedPage(); attempt++) {
+      await new Promise(resolve => setTimeout(resolve, this.blockedRetryDelayMs))
+      await this.loadOnce(adapter, url)
+    }
+  }
+
+  /** 页面正文是不是快手拒绝时那一行 {"result":2,...} */
+  private async isKuaishouBlockedPage(): Promise<boolean> {
+    if (!this.win || this.win.isDestroyed()) return false
+    try {
+      const text = await withTimeout(this.win.webContents.mainFrame.executeJavaScript('document.body ? document.body.innerText.slice(0, 200) : ""'), JS_POLL_TIMEOUT_MS, '查快手页面')
+      return /^\s*\{"result":\d+,"error_msg"/.test(String(text))
+    } catch { return false }
+  }
+
+  private async loadOnce(adapter: PlatformAdapter, url: string): Promise<void> {
     if (!this.win) throw new Error('browser_not_initialized')
     // R11-4：页面加载 30s 强制超时——loadURL 永不 resolve（网络挂起/页面卡死）时不永久卡住；
     // 超时抛 code=OP_TIMEOUT 标记错误，调度器按"加载失败"处理（重搜超时计数消耗后继续）
