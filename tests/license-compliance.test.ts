@@ -5,25 +5,27 @@ import { join } from 'node:path'
 const root = join(__dirname, '..')
 const read = (file: string): string => readFileSync(join(root, file), 'utf8')
 
+// 2026-10-07 用户改许可：MIT + Commons Clause（只禁止出售）→ PolyForm Noncommercial 1.0.0
+// （非商业用途免费；任何商业用途都要向作者买商业授权）。仓库照样公开，只是不叫开源。
 describe('项目许可契约', () => {
-  it('许可证四件套存在，并明确源码可用、允许利用输出赚钱但禁止出售软件本身', () => {
+  it('许可证四件套存在，并明确源码可用、非商业免费、商用要买授权', () => {
     for (const file of ['LICENSE', 'LICENSE.zh-CN.md', 'NOTICE', 'TRADEMARKS.md']) {
       expect(existsSync(join(root, file)), `${file} 应存在`).toBe(true)
     }
 
     const license = read('LICENSE')
-    expect(license).toContain('“Commons Clause” License Condition v1.0')
-    expect(license).toContain('right to Sell the Software')
-    expect(license).toContain('Software: video-scraper')
-    expect(license).toContain('License: MIT License')
-    expect(license).toContain('Licensor: Sakeroux168')
-    expect(license).toContain('Permission is hereby granted, free of charge')
+    expect(license).toContain('# PolyForm Noncommercial License 1.0.0')
+    expect(license).toContain('Required Notice: Copyright 2026 Sakeroux168')
+    expect(license).toContain('## Noncommercial Purposes')
+    expect(license).toContain('Any noncommercial purpose is a permitted purpose.')
+    expect(license).not.toContain('Commons Clause')
+    expect(license).not.toContain('MIT License')
 
     const chinese = read('LICENSE.zh-CN.md')
     expect(chinese).toContain('源码可用')
     expect(chinese).toContain('不属于 OSI 定义的开源软件')
-    expect(chinese).toContain('允许利用软件输出赚钱')
-    expect(chinese).toContain('禁止出售软件本身')
+    expect(chinese).toContain('非商业用途免费')
+    expect(chinese).toContain('商业授权')
     expect(chinese).toContain('英文 LICENSE')
 
     expect(read('NOTICE')).toContain('FFmpeg 8.0.1')
