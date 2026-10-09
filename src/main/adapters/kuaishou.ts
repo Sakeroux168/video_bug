@@ -276,8 +276,10 @@ export const kuaishouAdapter: PlatformAdapter = {
   authorInputPlaceholder: 'https://www.kuaishou.com/profile/xxx',
   downloadReferer: 'https://www.kuaishou.com/',
   // 视频：kwaicdn / kwimgs；图片：yximgs / kwimgs
+  plainUserAgent: true, // 快手拒绝浏览器标识里带 Electron / 程序名的请求（首页只回 {"result":2}）
   navHosts: ['kuaishou.com', 'kuaishouzt.com', 'gifshow.com', 'kwai.com', 'ksapisrv.com', 'kwaicdn.com', 'yximgs.com'],
-  downloadHosts: ['kuaishou.com', 'kwaicdn.com', 'kwimgs.com', 'yximgs.com', 'gifshow.com', 'kuaishoucdn.com', 'ksapisrv.com'],
+  // 2026-10-09:快手作品视频改从 *.djvod.ndcimgs.com 出(真机 42 条全被白名单拦成 bad_host),补上
+  downloadHosts: ['kuaishou.com', 'kwaicdn.com', 'kwimgs.com', 'yximgs.com', 'gifshow.com', 'kuaishoucdn.com', 'ksapisrv.com', 'ndcimgs.com'],
   // 真机：搜索走 /rest/v/search/feed，作者主页走 /rest/v/profile/feed；
   // /graphql 保留，详情等路由可能仍在用
   apiUrlPatterns: [/\/graphql(?:[/?#]|$)/i, /\/rest\/v\/search\/feed/i, /\/rest\/v\/profile\/feed/i],

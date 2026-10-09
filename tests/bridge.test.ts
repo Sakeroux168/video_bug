@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { DatabaseSync } from 'node:sqlite'
 import { mkdirSync, rmSync } from 'fs'
 import type { Server } from 'http'
-import { initDb, createTask } from '../src/main/db'
+import { initDb, createTask, insertVideos, setVideoStatus, listVideos } from '../src/main/db'
 
 // R18：本机 HTTP 口（给百家号发布助手指挥抓视频）。和 ipc 的 task:create 走同一条 createTaskChecked：
 // 作者链接归一化成 sec_uid、已 done 的作者去重、入库 + 入队。只绑 127.0.0.1。
@@ -14,7 +14,7 @@ vi.mock('electron', () => ({
   ipcMain: { handle: () => {}, on: () => {}, removeHandler: () => {} }
 }))
 
-import { startBridge, jobFromBody } from '../src/main/bridge'
+import { startBridge, jobFromBody, markByPaths } from '../src/main/bridge'
 import { chinaToday } from '../src/main/extractor'
 
 const AUTHOR_URL = 'https://www.douyin.com/user/abc'
@@ -169,5 +169,61 @@ describe('bridge', () => {
     }
     expect(typeof jobFromBody({ query: 'x', type: 'video' })).toBe('string')
     expect(typeof jobFromBody({ query: 'x', targetCount: 99999 })).toBe('string')
+  })
+})
+
+describe('和发布助手配合（2026-10-07）', () => {
+  it('POST /job 收只抓热门的门槛：minLikes / minCollects / sortBy 存进 filters；0 = 不限', async () => {
+    const r = await post('/job', { query: AUTHOR_URL, minLikes: 1000, minCollects: 0, sortBy: 'mostLiked' })
+    expect(r.status).toBe(200)
+    const row = db.prepare('SELECT filters FROM tasks WHERE id = ?').get(r.json.id) as { filters: string }
+    const f = JSON.parse(row.filters)
+    expect(f.minLikes).toBe(1000)
+    expect(f.minCollects).toBeUndefined()
+    expect(f.sortBy).toBe('mostLiked')
+  })
+
+  it('门槛写错 → 400 说清楚', async () => {
+    expect((await post('/job', { query: AUTHOR_URL, minLikes: -1 })).status).toBe(400)
+    expect((await post('/job', { query: AUTHOR_URL, minCollects: 1.5 })).status).toBe(400)
+    const bad = await post('/job', { query: AUTHOR_URL, sortBy: 'hot' })
+    expect(bad.status).toBe(400)
+    expect(bad.json.error).toContain('sortBy')
+  })
+
+  it('/status 报告能干什么，给了 getSettings 还报告定时追更开没开', async () => {
+    const j = await (await fetch(base + '/status')).json()
+    expect(j.features).toEqual(expect.arrayContaining(['outputDir', 'hotFilters', 'markUsed', 'followStatus']))
+    const r2 = await startBridge({ db, enqueueTask: () => {}, isRunning: () => false, port: 0,
+      getSettings: () => ({ autoFollowEnabled: true, autoFollowTime: '09:30', autoFollowScope: 'picked' }) })
+    try {
+      const j2 = await (await fetch(`http://127.0.0.1:${r2!.port}/status`)).json()
+      expect(j2.autoFollow).toEqual({ enabled: true, time: '09:30', scope: 'picked' })
+    } finally {
+      await new Promise<void>(resolve => r2!.server.close(() => resolve()))
+    }
+  })
+
+  it('POST /mark：按下载时的完整路径（大小写、斜杠不同也认）标成已用；找不到的列回去', async () => {
+    const t = createTask(db, { platform: 'douyin', type: 'author', query: 'abc', filters: { timeRange: 'all', duration: 'all', targetCount: 5 },
+      aiFilterEnabled: false, aiOrganizeEnabled: false, autoDownload: true })
+    const item = (id: string) => ({ awemeId: id, title: id, authorSecUid: 'abc', authorNickname: 'n', authorHomeUrl: 'h',
+      playUrl: 'p', coverUrl: '', width: 1, height: 1, durationSec: 1, publishTime: 1759000000, likes: 0 })
+    insertVideos(db, [item('v1'), item('v2')], t, 'douyin')
+    const vids = listVideos(db, t)
+    setVideoStatus(db, vids[0].id, 'done', { local_path: 'W:\\AAA\\达人\\暂存\\猫咪.mp4' })
+    setVideoStatus(db, vids[1].id, 'done', { local_path: 'W:\\AAA\\达人\\暂存\\狗.mp4' })
+    const r = await post('/mark', { paths: ['w:/aaa/达人/暂存/猫咪.mp4', 'W:\\AAA\\达人\\暂存\\没有这条.mp4'] })
+    expect(r.status).toBe(200)
+    expect(r.json.marked).toBe(1)
+    expect(r.json.missing).toEqual(['W:\\AAA\\达人\\暂存\\没有这条.mp4'])
+    const marks = db.prepare('SELECT local_path, mark FROM videos ORDER BY id').all() as Array<{ local_path: string; mark: string | null }>
+    expect(marks.map(m => m.mark)).toEqual(['used', null])
+  })
+
+  it('markByPaths：参数不对说清楚', () => {
+    expect(typeof markByPaths(db, {})).toBe('string')
+    expect(typeof markByPaths(db, { paths: ['x'], mark: 'hot' })).toBe('string')
+    expect(typeof markByPaths(db, { paths: new Array(501).fill('x') })).toBe('string')
   })
 })

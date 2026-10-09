@@ -32,6 +32,8 @@ export default function FilterForm({ onSubmit }: { onSubmit: (t: CreateTaskInput
   const [aiRule, setAiRule] = useState('')
   const [aiOrganize, setAiOrganize] = useState(false)
   const [autoDownload, setAutoDownload] = useState(true)
+  // 2026-10-09：默认跳过以前抓过的视频；勾上就连以前下过的也重新下
+  const [redownload, setRedownload] = useState(false)
   const [detailMode, setDetailMode] = useState<Filters['detailMode']>('safe')
   const [allowDuplicateAuthor, setAllowDuplicateAuthor] = useState<boolean | undefined>(undefined)
   const [err, setErr] = useState('')
@@ -113,6 +115,7 @@ export default function FilterForm({ onSubmit }: { onSubmit: (t: CreateTaskInput
           minLikes: likesMin || undefined,
           minCollects: collectsMin || undefined,
           sortBy: effectiveSort,
+          ...(redownload ? { redownload: true } : {}),
           detailMode: platform === 'xiaohongshu' ? detailMode : undefined
         },
         aiFilterEnabled: aiFilter, aiOrganizeEnabled: aiOrganize,
@@ -290,6 +293,10 @@ export default function FilterForm({ onSubmit }: { onSubmit: (t: CreateTaskInput
         <label className="flex items-center gap-1">
           <input type="radio" name="autoDownload" checked={!autoDownload} onChange={() => setAutoDownload(false)} />
           手动挑选
+        </label>
+        <label className="flex items-center gap-1" title="不勾：以前抓过、下过的视频跳过，不重复下载；勾上：这次抓到的全部重新下">
+          <input type="checkbox" checked={redownload} onChange={e => setRedownload(e.target.checked)} />
+          以前下过的也重新下
         </label>
         {type === 'author' && (
           <label className="flex items-center gap-1">

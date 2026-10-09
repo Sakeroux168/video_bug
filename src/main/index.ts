@@ -268,6 +268,8 @@ app.whenReady().then(() => {
     }
   })
   browser = new VideoBrowser(win!)
+  // 平台网页默认直连、不走系统代理（快手拒绝从代理过来的请求）；要在第一次打开平台页之前定好
+  void browser.setDirect(settings.platformDirect !== false)
 
   // Task14：ASR 依赖组装。ffmpeg 用 findFfmpeg()；模型路径从 asr 模型目录取。
   // asrReady 每次归档时现查（models.status().ready）：模型下载完成/设置保存后即时生效，无需重启。
@@ -384,7 +386,8 @@ app.whenReady().then(() => {
   if (settings.bridgeEnabled !== false) {
     void startBridge({
       db, enqueueTask, isRunning: () => Boolean(scheduler?.isRunning),
-      port: Number(settings.bridgePort) || DEFAULT_BRIDGE_PORT
+      port: Number(settings.bridgePort) || DEFAULT_BRIDGE_PORT,
+      getSettings
     }).then(r => { bridge = r?.server ?? null })
   }
 

@@ -25,6 +25,8 @@ export interface Filters {
   minLikes?: number
   minCollects?: number
   sortBy?: SortBy
+  /** 以前下过的也重新下（2026-10-09）：库里已有的视频也领到这个任务重新下载；不勾 = 跳过以前抓过的 */
+  redownload?: boolean
   aiFilterEnabled?: boolean // createTask 会把它序列化进 filters JSON 列（Task 6）
   aiOrganizeEnabled?: boolean // 同上，任务级开关随 filters 落库
 }
@@ -261,6 +263,8 @@ export interface AppSettings {
   autoFollowScope: 'all' | 'picked'
   /** 开机自动启动（启动后只挂托盘）；只有打包版会真的写系统启动项 */
   openAtLogin: boolean
+  /** 抖音 / 快手 / 小红书网页直连，不走系统代理（翻墙软件）。默认开：快手会拒绝从代理过来的请求 */
+  platformDirect: boolean
 }
 
 /** ASR 单个模型文件的状态（models.status() 的结果形状，跨进程用） */

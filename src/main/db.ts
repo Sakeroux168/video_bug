@@ -397,6 +397,34 @@ export function insertVideos(db: DatabaseSync, items: VideoItem[], taskId: numbe
 const SOFT_DELETE_SET = "status = 'deleted', local_path = NULL, cover_path = NULL, original_path = NULL, error = NULL"
 
 /**
+ * 删任务但记住它的视频（2026-10-09）：以前删任务会把视频记录一起删掉，以后再抓到同样的视频就会重复下载，
+ * 用户只好让用不上的任务一直堆着。现在：任务行删掉；下好的视频原样留着（素材库照样看得到）；
+ * 还没下的标成「不要了」（deleted）——记录都在，以后再抓到不会重复下。想重新下的，建任务时勾「以前下过的也重新下」。
+ */
+export function deleteTaskKeepMemory(db: DatabaseSync, taskId: number): void {
+  inTransaction(db, () => {
+    db.prepare(`UPDATE videos SET ${SOFT_DELETE_SET} WHERE task_id = ? AND status NOT IN ('done', 'deleted')`).run(taskId)
+    db.prepare('DELETE FROM tasks WHERE id = ?').run(taskId)
+  })
+}
+
+/**
+ * 「以前下过的也重新下」（2026-10-09）：库里已有这条视频时，把它领到这个任务里重新下——
+ * 换上这次拿到的地址、清掉旧的本地路径（旧文件留在磁盘上不动）。返回视频 id；不能领的返回 null：
+ * 本任务自己刚抓到的、别的任务正在排队 / 下载的（让那边下完）。
+ */
+export function reclaimSeenVideo(db: DatabaseSync, platform: string, it: VideoItem, taskId: number, status: VideoStatus): number | null {
+  const row = db.prepare('SELECT id, task_id, status FROM videos WHERE platform = ? AND aweme_id = ?').get(platform, it.awemeId) as
+    { id: number; task_id: number; status: string } | undefined
+  if (!row || row.task_id === taskId || row.status === 'downloading' || row.status === 'pending') return null
+  db.prepare(`UPDATE videos SET task_id = ?, status = ?, play_addr = ?, cover_url = COALESCE(?, cover_url), title = ?, stats = ?,
+      local_path = NULL, cover_path = NULL, original_path = NULL, error = NULL, retry_count = 0, file_size = NULL, downloaded_at = NULL,
+      fetched_at = ? WHERE id = ?`)
+    .run(taskId, status, it.playUrl, it.coverUrl || null, it.title, statsJson(it), new Date().toISOString(), row.id)
+  return row.id
+}
+
+/**
  * 按 id 删除视频（B5 软删除）：行留着、标成 deleted，返回条数。
  * 以前直接删行：追更起点（最新发布时间）往回退、重搜时去重名单里也没了它，删掉的视频会被重新下回来。
  */

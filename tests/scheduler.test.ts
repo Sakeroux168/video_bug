@@ -2156,3 +2156,43 @@ describe('#9 校验没通过的导入作者，下次再爬还要校验', () => {
     expect(state(db, authorId)).toBe('ok')
   })
 })
+
+// 2026-10-09 「以前下过的也重新下」：任务勾了这个，抓到库里已有的视频也领过来重新下，并算进这个任务的条数
+describe('任务勾了「以前下过的也重新下」', () => {
+  const url = 'https://www.douyin.com/aweme/v1/web/search/item/?keyword=x'
+  const json = (ids: string[]): unknown => ({ data: ids.map(id => ({ aweme_info: { aweme_id: id, desc: '作品', create_time: 1759000000,
+    author: { sec_uid: 'SEC_RE', nickname: '作者' }, video: { play_addr: { url_list: ['https://cdn.test/' + id + '.mp4'] } },
+    statistics: { digg_count: 1 }, duration: 8000 } })) })
+
+  async function crawl(redownload: boolean): Promise<{ db: DatabaseSync; dl: FakeDownloader; t2: number }> {
+    const db = newDb()
+    const t1 = createTask(db, input)
+    db.prepare("INSERT INTO videos (platform, task_id, aweme_id, title, status, fetched_at) VALUES ('douyin', ?, '7330000000000000301', 'old', 'deleted', '')").run(t1)
+    const t2 = createTask(db, { ...input, filters: { ...input.filters, redownload } })
+    const dl = new FakeDownloader()
+    const browser = new FakeBrowser()
+    const { s } = setup(db, dl, browser)
+    browser.blockNextLoad()
+    const p = s.run(t2)
+    await new Promise(r => setTimeout(r, 10))
+    await s.handleRaw(douyinAdapter, url, json(['7330000000000000301', '7330000000000000302']))
+    browser.releaseLoad()
+    await s.pause()
+    await p
+    return { db, dl, t2 }
+  }
+
+  it('勾了 → 以前抓过的那条也领到这个任务、进下载队列', async () => {
+    const { db, dl, t2 } = await crawl(true)
+    const rows = db.prepare('SELECT aweme_id, status FROM videos WHERE task_id = ? ORDER BY aweme_id').all(t2) as Array<{ aweme_id: string; status: string }>
+    expect(rows.map(r => r.aweme_id)).toEqual(['7330000000000000301', '7330000000000000302'])
+    expect(dl.enqueued).toHaveLength(2)
+  })
+
+  it('没勾 → 以前抓过的跳过，只下新的', async () => {
+    const { db, dl, t2 } = await crawl(false)
+    const rows = db.prepare('SELECT aweme_id FROM videos WHERE task_id = ?').all(t2) as Array<{ aweme_id: string }>
+    expect(rows.map(r => r.aweme_id)).toEqual(['7330000000000000302'])
+    expect(dl.enqueued).toHaveLength(1)
+  })
+})

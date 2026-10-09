@@ -1,4 +1,5 @@
 import type { DatabaseSync } from 'node:sqlite'
+import { existsSync } from 'fs'
 import { listAuthors } from './db'
 import { getAdapter } from './adapters'
 import { createTaskChecked } from './taskCreate'
@@ -42,14 +43,29 @@ export function followAuthors(db: DatabaseSync, scope: AppSettings['autoFollowSc
 
 export interface AutoFollowResult { authors: number; created: number; skipped: number; taskIds: number[] }
 
+/** 2026-10-07 和发布助手配合：这个作者以前由发布助手指定过下载文件夹（达人的「暂存」）→ 追更也下到那里。
+ *  文件夹现在不在了（达人挪走 / 删了）就不用，照常下到设置里的下载目录。 */
+export function lastOutputDir(db: DatabaseSync, a: { platform: string; sec_uid: string }, exists: (p: string) => boolean = existsSync): string | undefined {
+  const row = db.prepare(`SELECT output_dir FROM tasks
+    WHERE type = 'author' AND platform = ? AND (query = ? OR instr(query, ?) > 0)
+      AND output_dir IS NOT NULL AND output_dir <> ''
+    ORDER BY id DESC LIMIT 1`).get(a.platform, a.sec_uid, a.sec_uid) as { output_dir: string } | undefined
+  const dir = row?.output_dir
+  return dir && exists(dir) ? dir : undefined
+}
+
 /** 给每个爬过主页的作者建一个「只抓新视频」任务，排队一个个跑；已经在排队 / 在爬的跳过 */
-export function runAutoFollow(db: DatabaseSync, enqueue: (id: number) => void, opts: { count: number; scope?: AppSettings['autoFollowScope'] }): AutoFollowResult {
+export function runAutoFollow(db: DatabaseSync, enqueue: (id: number) => void,
+  opts: { count: number; scope?: AppSettings['autoFollowScope']; exists?: (p: string) => boolean }): AutoFollowResult {
   const authors = followAuthors(db, opts.scope)
   const taskIds: number[] = []
   let skipped = 0
   for (const a of authors) {
     try {
-      const r = createTaskChecked(db, crawlRequest(a, 'new', opts.count, true), enqueue)
+      const input = crawlRequest(a, 'new', opts.count, true)
+      const dir = lastOutputDir(db, a, opts.exists)
+      if (dir) input.outputDir = dir
+      const r = createTaskChecked(db, input, enqueue)
       if (r.id !== null && !r.skipped) taskIds.push(r.id)
       else skipped++
     } catch {

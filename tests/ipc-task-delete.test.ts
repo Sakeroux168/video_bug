@@ -122,14 +122,15 @@ describe('task:delete 必须停掉这个任务相关的活', () => {
     expect(cancelled.flat().sort()).toEqual(ids.sort())
   })
 
-  it('视频行和任务行照常删干净', async () => {
+  // 2026-10-09 起删任务：任务行删掉，视频记录留着当「记忆」（没下的标成已删除），以后再抓到不重复下
+  it('任务行删干净；视频记录留着、没下的标成已删除', async () => {
     const { db, del } = setup(0)
     const taskId = createTask(db, input)
     insertVideos(db, [item('AW1')], taskId, 'kuaishou')
 
     await del(taskId)
 
-    expect(db.prepare('SELECT COUNT(*) c FROM videos WHERE task_id=?').get(taskId)).toEqual({ c: 0 })
+    expect(db.prepare('SELECT status FROM videos WHERE task_id=?').all(taskId)).toEqual([{ status: 'deleted' }])
     expect(db.prepare('SELECT COUNT(*) c FROM tasks WHERE id=?').get(taskId)).toEqual({ c: 0 })
   })
 

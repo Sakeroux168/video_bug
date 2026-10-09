@@ -31,6 +31,11 @@ export const SCROLL_TIMEOUT_MS = 60000
  *  页面卡死、正在跳转或渲染进程无响应时 executeJavaScript 可能永远不返回——
  *  以前调度器就卡在这一步：任务一直「进行中」、一动不动，后面排队的全都等着。 */
 export const JS_EVAL_TIMEOUT_MS = 15000
+
+/** 去掉浏览器标识里的「程序名/版本」和「Electron/版本」，剩下的就是同版本普通 Chrome 的标识 */
+export function plainChromeUserAgent(ua: string): string {
+  return ua.replace(/ video-scraper\/\S+/gi, '').replace(/ Electron\/\S+/gi, '')
+}
 /** 读详情 / 读页面元素这种轮询用的短超时。Electron 44 起页面一跳转，跳转前发出的 executeJavaScript
  *  永远不返回（旧版会报错返回）；不设超时，轮询就卡在那一次上，再也不读了（真机：每条笔记都「详情超时」） */
 export const JS_POLL_TIMEOUT_MS = 3000
@@ -114,8 +119,42 @@ export class VideoBrowser {
       this.current = adapter // 同分区不同适配器实例（理论上不会有）也认新的
       return
     }
+    // 先把这个平台的分区设成直连 / 系统代理、定好浏览器标识，再建窗口加载页面
+    await this.applyProxy(adapter.sessionPartition, adapter.plainUserAgent === true)
     const previous = this.teardownWindow()
     this.createWindow(adapter, previous)
+  }
+
+  private direct = true
+
+  get isDirect(): boolean { return this.direct }
+
+  /**
+   * 平台网页直连开关（2026-10-07）：开 = 平台分区不走系统代理（翻墙软件），关 = 跟系统代理走。
+   * 起因：快手拒绝从代理过来的请求（首页只回一行 {"result":2}），用户开着翻墙软件时快手页打不开。
+   * 已经打开的平台窗口马上生效；还没打开的，打开时按这个设置。
+   */
+  async setDirect(direct: boolean): Promise<void> {
+    this.direct = direct
+    if (this.current) await this.applyProxy(this.current.sessionPartition, this.current.plainUserAgent === true)
+  }
+
+  private async applyProxy(partition: string, plainUa: boolean): Promise<void> {
+    try {
+      const { session } = await import('electron')
+      const ses = session.fromPartition(partition)
+      // 需要的平台（目前只有快手）浏览器标识用普通 Chrome 的：快手会拒绝标识里带「Electron/…」或「video-scraper/…」的请求
+      // （只回一行 {"result":2}，页面空白；2026-10-07 用两台电脑实测，跟网络、代理无关）。
+      // 小红书不改：它的登录跟浏览器标识绑着，改了就要重新登录
+      if (plainUa && typeof ses.getUserAgent === 'function') {
+        const ua = ses.getUserAgent()
+        const clean = plainChromeUserAgent(ua)
+        if (clean !== ua) ses.setUserAgent(clean)
+      }
+      await ses.setProxy(this.direct ? { mode: 'direct' } : { mode: 'system' })
+    } catch (e) {
+      console.warn('[浏览器] 设置代理方式失败：', e instanceof Error ? e.message : e)
+    }
   }
 
   /** 销毁当前窗口，返回它的位置与可见状态供新窗口继承；无窗口返回 null */
@@ -222,10 +261,34 @@ export class VideoBrowser {
     if (previous?.visible) this.setVisible(true)
   }
 
+  /** 快手被拒后隔多久再打开（测试里设 0） */
+  private blockedRetryDelayMs = 1500
+
   async load(adapter: PlatformAdapter, url: string): Promise<void> {
     // 按平台准备窗口（同平台复用、跨平台重建）。注入脚本也在这里随平台重建——
     // 必须在 loadURL 之前置好，dom-ready / did-finish-load 在 loadURL 期间就会读它。
     await this.ensureWindow(adapter)
+    if (!this.win) throw new Error('browser_not_initialized')
+    await this.loadOnce(adapter, url)
+    // 2026-10-09：快手第一次打开有时只回一行 {"result":2,...}（页面空白），刷新一次就好（真机实测）。
+    // 碰到这一行就隔一会儿再打开，最多 2 次，不无限刷
+    if (adapter.name !== 'kuaishou') return
+    for (let attempt = 0; attempt < 2 && await this.isKuaishouBlockedPage(); attempt++) {
+      await new Promise(resolve => setTimeout(resolve, this.blockedRetryDelayMs))
+      await this.loadOnce(adapter, url)
+    }
+  }
+
+  /** 页面正文是不是快手拒绝时那一行 {"result":2,...} */
+  private async isKuaishouBlockedPage(): Promise<boolean> {
+    if (!this.win || this.win.isDestroyed()) return false
+    try {
+      const text = await withTimeout(this.win.webContents.mainFrame.executeJavaScript('document.body ? document.body.innerText.slice(0, 200) : ""'), JS_POLL_TIMEOUT_MS, '查快手页面')
+      return /^\s*\{"result":\d+,"error_msg"/.test(String(text))
+    } catch { return false }
+  }
+
+  private async loadOnce(adapter: PlatformAdapter, url: string): Promise<void> {
     if (!this.win) throw new Error('browser_not_initialized')
     // R11-4：页面加载 30s 强制超时——loadURL 永不 resolve（网络挂起/页面卡死）时不永久卡住；
     // 超时抛 code=OP_TIMEOUT 标记错误，调度器按"加载失败"处理（重搜超时计数消耗后继续）

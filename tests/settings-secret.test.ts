@@ -85,3 +85,14 @@ describe('本机接口默认值', () => {
     expect(getSettings().bridgeEnabled).toBe(false)
   })
 })
+
+// 2026-10-07：平台网页直连（不走系统代理）默认开——快手拒绝从代理过来的请求
+describe('平台网页直连默认值', () => {
+  it('新装、老用户都默认开；显式关过的照旧', () => {
+    expect(getSettings().platformDirect).toBe(true)
+    writeFileSync(file(), JSON.stringify({ downloadDir: 'D:/x' }))
+    expect(getSettings().platformDirect).toBe(true)
+    writeFileSync(file(), JSON.stringify({ platformDirect: false }))
+    expect(getSettings().platformDirect).toBe(false)
+  })
+})
