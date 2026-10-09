@@ -258,13 +258,27 @@ export default function TaskList({ notify, refreshVersion = 0 }: { notify: Notif
     return off
   }, [coalescedRefresh])
 
-  /** D2：删任务会删掉它的全部视频记录（正在跑的还会被停下），以前一点就删，先确认 */
+  /** 删任务前说清楚会怎样（2026-10-09 起删任务不再让软件忘了这些视频） */
+  const DELETE_TASK_NOTE = '下好的视频留着（素材库里照样看得到），还没下的不再下；软件会记住这些视频，以后再抓到不会重复下载。想重新下，建任务时勾「以前下过的也重新下」。'
+
+  /** D2：删任务先确认（正在跑的还会被停下） */
   function deleteTask(t: TaskRow): void {
     const name = t.author_nickname ?? t.query
-    const n = stats[t.id]?.total ?? 0
     const running = t.status === 'running' ? '这个任务正在跑，会先停下来。' : ''
-    if (!window.confirm(`确定删除任务「${name}」？${running}会删掉它的 ${n} 条视频记录，已下载的文件留在磁盘上。`)) return
+    if (!window.confirm(`确定删除任务「${name}」？${running}${DELETE_TASK_NOTE}`)) return
     void api.deleteTask(t.id).then(() => { notify(`已删除任务「${name}」`); refresh() })
+  }
+
+  /** 2026-10-09：任务堆得多，勾几个一起删 */
+  async function deleteSelectedTasks(): Promise<void> {
+    const picked = pickedTasks
+    if (picked.length === 0) return
+    const running = picked.some(t => t.status === 'running') ? '其中有正在跑的任务，会先停下来。' : ''
+    if (!window.confirm(`确定删除选中的 ${picked.length} 个任务？${running}${DELETE_TASK_NOTE}`)) return
+    for (const t of picked) await api.deleteTask(t.id)
+    setSelectedTasks(new Set())
+    notify(`已删除 ${picked.length} 个任务`)
+    refresh()
   }
 
   async function toggleExpand(id: number): Promise<void> {
@@ -420,6 +434,10 @@ export default function TaskList({ notify, refreshVersion = 0 }: { notify: Notif
       <div className="mb-3 flex items-center gap-2">
         <button className={btn('secondary', 'sm')} disabled={pickedTasks.length === 0 || merging} onClick={() => void exportTasks()}>
           {merging ? '正在导出…' : `合并导出选中任务(${pickedTasks.length})`}
+        </button>
+        <button className={`rounded-md px-2 py-1 text-xs ${pickedTasks.length ? 'bg-danger-50 text-danger-600 hover:bg-danger-100' : 'text-slate-300'}`}
+          disabled={pickedTasks.length === 0} onClick={() => void deleteSelectedTasks()}>
+          删除选中任务({pickedTasks.length})
         </button>
         {downloadPaused ? (
           <button

@@ -1,7 +1,7 @@
 import { app, ipcMain, BrowserWindow, dialog, shell, clipboard } from 'electron'
 import type { DatabaseSync } from 'node:sqlite'
 import { existsSync, statSync } from 'node:fs'
-import { setAuthorsAutoFollow, createTask, listTasks, listVideos, listDeletedVideos, restoreVideos, allTaskStats, listDownloadedVideos, listAuthors, setTaskStatus, setVideoStatus, updateAuthorCategory, deleteAuthors, taskStats, insertAuthorIfAbsent, globalStats, recentDownloads } from './db'
+import { deleteTaskKeepMemory, setAuthorsAutoFollow, createTask, listTasks, listVideos, listDeletedVideos, restoreVideos, allTaskStats, listDownloadedVideos, listAuthors, setTaskStatus, setVideoStatus, updateAuthorCategory, deleteAuthors, taskStats, insertAuthorIfAbsent, globalStats, recentDownloads } from './db'
 import { getSettings, saveSettings } from './settings'
 import { deleteVideoRows } from './videoDelete'
 import { scanFilesTreeAsync, deleteFileDir, deleteFileVideo, locateFileDir, locateVideoFile } from './fileManager'
@@ -138,9 +138,8 @@ export function registerIpc(deps: IpcDeps): void {
     const videoIds = (db.prepare('SELECT id FROM videos WHERE task_id=?').all(id) as unknown as Array<{ id: number }>)
       .map(r => r.id)
     if (videoIds.length > 0) downloader.cancel(videoIds)
-    // B5：已删除的记号留着（task_id 指向已删的任务也无妨），否则重搜又会把它们下回来
-    db.prepare("DELETE FROM videos WHERE task_id=? AND status != 'deleted'").run(id)
-    db.prepare('DELETE FROM tasks WHERE id=?').run(id)
+    // 2026-10-09：删任务不再删视频记录——下好的留着，没下的标「不要了」；软件记得它们，以后不重复下
+    deleteTaskKeepMemory(db, id)
     // 放行队列：删掉的若是正在跑的任务，pause() 发的暂停事件已经会放行；这里再踢一脚兜底（重复踢无害）。
     deps.kickQueue()
   })

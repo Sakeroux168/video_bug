@@ -57,7 +57,8 @@ describe('D1 任务表：状态列只放短标签，原因放到下面整行', (
 })
 
 describe('D2 删除任务、删除作者要先确认', () => {
-  it('删任务：确认框写明会删掉几条视频记录、文件留着；点取消就不删', async () => {
+  // 2026-10-09 起删任务不再删视频记录，确认框改成说「下好的留着、不会重复下载」
+  it('删任务：确认框写明下好的留着、以后不会重复下载；点取消就不删', async () => {
     installFakeApi()
     vi.mocked(window.api.listTasks).mockResolvedValue([task()])
     vi.mocked(window.api.getTaskStats).mockResolvedValue(stats(3))
@@ -65,7 +66,8 @@ describe('D2 删除任务、删除作者要先确认', () => {
     render(<TaskList notify={() => {}} />)
     await screen.findByText('完成 3')
     fireEvent.click(screen.getByRole('button', { name: '删除' }))
-    expect(confirm).toHaveBeenCalledWith('确定删除任务「猫咪」？会删掉它的 3 条视频记录，已下载的文件留在磁盘上。')
+    expect(confirm.mock.calls[0][0]).toMatch(/^确定删除任务「猫咪」？下好的视频留着/)
+    expect(confirm.mock.calls[0][0]).toContain('不会重复下载')
     expect(window.api.deleteTask).not.toHaveBeenCalled()
   })
 

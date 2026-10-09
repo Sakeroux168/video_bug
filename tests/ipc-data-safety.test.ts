@@ -87,6 +87,7 @@ describe('B5 已删除的视频', () => {
     expect(db.prepare('SELECT status FROM videos WHERE id = ?').get(a.id)).toEqual({ status: 'deleted' })
   })
 
+  // 2026-10-09 起删任务不再删视频记录：没下的（B）也标成「已删除」留着，软件记得它，以后不重复下
   it('删任务时保留「已删除」记号（否则重搜又会下回来）', async () => {
     const { db, call } = setup()
     const taskId = createTask(db, input)
@@ -94,7 +95,9 @@ describe('B5 已删除的视频', () => {
     const [a] = listVideos(db, taskId)
     setVideoStatus(db, a.id, 'deleted')
     await call('task:delete', taskId)
-    expect(db.prepare('SELECT aweme_id, status FROM videos').all()).toEqual([{ aweme_id: 'A', status: 'deleted' }])
+    expect(db.prepare('SELECT aweme_id, status FROM videos ORDER BY aweme_id').all()).toEqual([
+      { aweme_id: 'A', status: 'deleted' }, { aweme_id: 'B', status: 'deleted' }
+    ])
   })
 
   it('恢复下载：只恢复已删除的，并交给下载器重新下载', async () => {
