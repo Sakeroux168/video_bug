@@ -1,6 +1,6 @@
 {
   "name": "video-scraper",
-  "version": "0.1.5",
+  "version": "0.1.6",
   "description": "多平台视频批量爬取工具",
   "license": "SEE LICENSE IN LICENSE",
   "main": "./out/main/index.js",
