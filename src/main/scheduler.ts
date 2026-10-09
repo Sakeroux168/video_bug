@@ -4,7 +4,7 @@ import type { AppSettings, TaskRow, TaskStatus, Filters } from '../shared/types'
 import { ERROR, clampStuckTimeoutMin } from '../shared/types'
 import { filterVideos, dedupeVideos, extractCategory, chinaDayStartSec, chinaDayEndSec, meetsThreshold } from './extractor'
 import { isRiskSignal } from './errors'
-import { upsertAuthor, setAuthorVerify, refreshSeenVideo, inTransaction, statsJson } from './db'
+import { upsertAuthor, setAuthorVerify, refreshSeenVideo, reclaimSeenVideo, inTransaction, statsJson } from './db'
 import { looseNicknameMatch } from './nicknameMatch'
 import type { Analyzer } from './analyzer'
 import type { Downloader } from './downloader'
@@ -348,7 +348,12 @@ export class Scheduler {
       this.phase = adapter.parseListStubs ? 'list' : null
       this.listStubs.clear()
       this.listEnded = false
-      this.seen = new Set<string>((db.prepare('SELECT aweme_id FROM videos WHERE platform=?').all(task.platform) as Array<{ aweme_id: string }>).map(r => r.aweme_id))
+      // 见过的视频直接跳过（不重复入库、小红书也不再开详情页）。
+      // 2026-10-09 任务勾了「以前下过的也重新下」：只跳过这个任务自己已经抓到的，以前别的任务抓过的照样要
+      const seenSql = this.filters.redownload
+        ? db.prepare('SELECT aweme_id FROM videos WHERE platform=? AND task_id=?').all(task.platform, taskId)
+        : db.prepare('SELECT aweme_id FROM videos WHERE platform=?').all(task.platform)
+      this.seen = new Set<string>((seenSql as Array<{ aweme_id: string }>).map(r => r.aweme_id))
       this.fetched = task.fetched_count
       this.emptyRounds = 0
       this.silentRounds = 0
@@ -1212,16 +1217,21 @@ export class Scheduler {
              item.sourceUrl || null, item.coverUrl || null, item.width, item.height, item.durationSec,
              new Date(item.publishTime * 1000).toISOString(), statsJson(item),
              status, 'pass', new Date().toISOString())
+        let reclaimed: number | null = null
         if (r.changes > 0) {
           if (!author.created) db.prepare('UPDATE authors SET video_count = video_count + 1 WHERE id = ?').run(author.id)
+        } else if (filters.redownload) {
+          // 2026-10-09 任务勾了「以前下过的也重新下」：库里已有的也领到这个任务重新下
+          reclaimed = reclaimSeenVideo(db, adapter.name, item, this.taskId, status)
+          if (reclaimed === null) refreshSeenVideo(db, adapter.name, item)
         } else refreshSeenVideo(db, adapter.name, item) // 已在库里：更新点赞，没下好的换新地址
-        return r
+        return { changes: r.changes, id: reclaimed ?? (r.changes > 0 ? Number(r.lastInsertRowid) : null) }
       })
-      if (info.changes > 0) {
+      if (info.id !== null) {
         this.fetched++
         this.lastFetchedAt = Date.now() // T4：有新视频入库，重置"15 秒无新视频"计时
         if (this.autoDownload) {
-          const vid = Number(info.lastInsertRowid)
+          const vid = info.id
           this.pendingVideoIds.push(vid)
           this.deps.downloader.enqueue(vid)
         }

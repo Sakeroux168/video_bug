@@ -25,6 +25,8 @@ export interface Filters {
   minLikes?: number
   minCollects?: number
   sortBy?: SortBy
+  /** 以前下过的也重新下（2026-10-09）：库里已有的视频也领到这个任务重新下载；不勾 = 跳过以前抓过的 */
+  redownload?: boolean
   aiFilterEnabled?: boolean // createTask 会把它序列化进 filters JSON 列（Task 6）
   aiOrganizeEnabled?: boolean // 同上，任务级开关随 filters 落库
 }
